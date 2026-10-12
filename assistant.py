@@ -51,6 +51,10 @@ class Assistant(LiveDriverMixin):
         self._running = False
         self._sleep_requested = False
         self._voice_change_pending = False
+        self._voice_restarted = False
+        # The connection dropped: the next session continues the conversation (voice/live_driver.py).
+        self._reconnecting = False
+        self._reconnect_attempts = 0
 
         # Conversation history for the current run only — carries over between
         # sleep/wake cycles (in-memory), but resets when the process restarts.
@@ -109,14 +113,21 @@ class Assistant(LiveDriverMixin):
 
     def _handle_sleeping(self) -> None:
         text, _, _ = self.stt.listen()
-        rest = match_wake(text) if text else None
-        if rest is None and text and BACKGROUND_LISTENING and getattr(self, "_paused", False):
-            self._background.add(text)  # the same STT that waits for «Єва, скажи» — no extra cost
-        if rest is not None:
+        if self._take_wake(text):
             logger.info("Wake phrase heard → AWAKE")
-            self._wake_request = rest  # «Єва, скажи, котра година» → the question goes to the model
-            self._wake_phrase = text
             self.state = State.AWAKE
+
+    def _take_wake(self, text: str | None) -> bool:
+        """A wake phrase in the recognised text → True (its request kept for the model). Anything
+        else said during a pause is kept as background talk."""
+        rest = match_wake(text) if text else None
+        if rest is None:
+            if text and BACKGROUND_LISTENING and getattr(self, "_paused", False):
+                self._background.add(text)  # the same STT that waits for «Єва, скажи» — no extra cost
+            return False
+        self._wake_request = rest  # «Єва, скажи, котра година» → the question goes to the model
+        self._wake_phrase = text or ""
+        return True
 
     def _summarize_background(self, text: str) -> str:
         from openai import OpenAI
@@ -142,7 +153,9 @@ class Assistant(LiveDriverMixin):
         self._memory["assistant_name"] = name
         self._save_memory()
         if self._live is not None:
-            self._live.append_instruction(f"Your name is now {name}. Introduce yourself with that name.")
+            self._live.append_instruction(
+                f"Your name is now {name}. Introduce yourself with that name.", when_quiet="name"
+            )
         return f"Ім'я асистента змінено на {name}."
 
     # ── Helpers ───────────────────────────────────────────────────────────────

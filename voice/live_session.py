@@ -38,6 +38,7 @@ from config import (
     VOICE_BUSY_CUES_ENABLED,
     VOICE_LOCAL_BARGE_IN,
 )
+from prompts.live_prompt import work_progress_note
 from tools.executor import ToolExecutionContext, ToolExecutor
 from voice.barge_in_gate import BargeInAction, BargeInGate, BargeInState
 from voice.busy_cues import BusyCueController
@@ -68,6 +69,24 @@ _IDLE_INTERJECTION_WINDOW_S = 2.0
 _STALE_DROP_MAX_S = 1.5
 
 _SHUTDOWN_WAIT_S = 3.0
+
+# Delegated work (a slow tool) keeps her silent: this long after it started she says once that she
+# is on it, when she has been quiet for _PROGRESS_QUIET_S; past _PROGRESS_GIVE_UP_S she says nothing
+# (same timings as server/live_bridge.py). The user's request may still be transcribed meanwhile.
+_PROGRESS_AFTER_S = 5.0
+_PROGRESS_QUIET_S = 2.5
+_PROGRESS_GIVE_UP_S = 20.0
+_PROGRESS_INPUT_GRACE_S = 1.5
+# A setting change (speed/style, name, language) is an instruction, and one that lands mid-answer
+# derails it (instructions.append is how a barge-in stops her): it waits for this much quiet.
+_INSTRUCTION_QUIET_S = 2.5
+_INSTRUCTION_MAX_WAIT_S = 120.0
+
+# Same wording as steer("pause") in web/app.js.
+_PAUSE_STEER = (
+    "The user said «Дякую, Єва»: stop speaking immediately and stay completely silent. Do not reply "
+    "to it. You will be woken again later — then continue with full memory of this conversation."
+)
 
 
 def _event_attr(obj: Any, name: str, default: Any = None) -> Any:
@@ -134,6 +153,28 @@ class LiveVoiceSession:
         self._conversation = conversation
         self._recent_user_text = ""  # rolling window for «Дякую, Єва» / «зміни голос …»
         self._pause_requested = False
+        # Paused («Дякую, Єва» or silence): the session stays open for a quick wake, but the model
+        # hears nothing (input muted, no mic sent) and nothing it says is played or remembered.
+        self._paused = False
+        self._input_muted = False
+        self._mic_drain: Callable[[], None] | None = None
+        # Last time anyone spoke (idle pause) and the transcripts' timing (quiet checks).
+        self._last_activity = time.monotonic()
+        self._last_output_at = 0.0
+        self._last_input_at = 0.0
+        # Recent lines of both sides for the tools (a voice change must have been asked for; a
+        # «так» acts on what she offered). A user's turn ends when she answers, hers when they speak.
+        self._user_turns: list[str] = []
+        self._turn_input = ""
+        self._assistant_turns: list[str] = []
+        self._turn_output = ""
+        # Instructions waiting for her to be quiet: kind → text (a newer one of a kind replaces it).
+        self._quiet_instructions: dict[str, str] = {}
+        self._quiet_sender: asyncio.Task | None = None
+        # Delegated work in progress: key → tools called so far; the task that says «шукаю…».
+        self._work: dict[str, list[str]] = {}
+        self._progress: dict[str, asyncio.Task] = {}
+        self._answering: set[str] = set()
         # «зміни голос на …»: the app switches the voice itself (the model often doesn't delegate it).
         self._on_voice_request = on_voice_request
         self._voice_check: asyncio.Task | None = None
@@ -223,6 +264,45 @@ class LiveVoiceSession:
         """«Дякую, Єва»: back to waiting for the wake phrase, conversation kept, no goodbye."""
         return self._pause_requested
 
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    @property
+    def closed(self) -> bool:
+        """The connection is gone — asked for, or dropped (network, server, error)."""
+        return self._closed.is_set()
+
+    @property
+    def busy(self) -> bool:
+        """A tool is still running (a pause must not close the session yet)."""
+        return any(not task.done() for task in self._tool_tasks)
+
+    def idle_for(self) -> float:
+        """Seconds since anyone last said anything."""
+        return time.monotonic() - self._last_activity
+
+    def pause(self, *, reason: str) -> None:
+        """Mute her without closing the session (silence, or the driver's own decision)."""
+        if self._paused:
+            return
+        self._enter_pause(reason)
+        self._submit(self._silence_for_pause())
+
+    def resume(self) -> None:
+        """Woken within the pause: she hears the mic again (the driver then tells her what to say)."""
+        if not self._paused:
+            return
+        if self._mic_drain is not None:
+            self._mic_drain()  # what the mic buffered during the pause is not for her
+        self._paused = False
+        self._pause_requested = False
+        self._recent_user_text = ""
+        self._last_activity = time.monotonic()
+        self._input_muted = False
+        self._run_coro(self._unmute())
+        logger.info("live.resume session_id=%s", self.session_id)
+
     def request_voice_restart(self) -> None:
         self._voice_restart_requested = True
         self._sleep_requested = True
@@ -236,12 +316,14 @@ class LiveVoiceSession:
         *,
         mic_read_chunk: Callable[[], bytes],
         backend_instructions: str | None = None,
+        mic_drain: Callable[[], None] | None = None,
     ) -> None:
         if self._thread is not None:
             raise RuntimeError("LiveVoiceSession already connected")
         self._live_instructions = instructions
         self._backend_instructions = backend_instructions or ""
         self._mic_read = mic_read_chunk
+        self._mic_drain = mic_drain
         self._closed.clear()
         self._started.clear()
         self._error = None
@@ -279,8 +361,13 @@ class LiveVoiceSession:
         if self._thread is not None:
             self._thread.join(timeout=20)
 
-    def append_instruction(self, text: str) -> None:
-        self._run_coro(self._append_instruction(text))
+    def append_instruction(self, text: str, *, when_quiet: str | None = None) -> None:
+        """when_quiet: a kind («delivery», «name», «language») — sent once she is quiet; a newer
+        instruction of the same kind replaces one still waiting."""
+        if when_quiet:
+            self._submit(self._queue_quiet_instruction(when_quiet, text))
+        else:
+            self._submit(self._append_instruction(text))
 
     def speak_context(self, text: str) -> None:
         self._run_coro(self._speak_context(text))
@@ -347,10 +434,40 @@ class LiveVoiceSession:
             self._loop = None
 
     def _run_coro(self, coro) -> Any:
+        """Run on the session loop and wait — from another thread. On the loop itself (a tool
+        handler) waiting would block the loop that has to run it: schedule it instead."""
         loop = self._loop
         if loop is None or not loop.is_running():
+            coro.close()
+            return None
+        if self._on_loop(loop):
+            self._spawn(coro)
             return None
         return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=15)
+
+    def _submit(self, coro) -> None:
+        """Run on the session loop without waiting for it (any thread)."""
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            coro.close()
+            return
+        if self._on_loop(loop):
+            self._spawn(coro)
+        else:
+            asyncio.run_coroutine_threadsafe(coro, loop)
+
+    @staticmethod
+    def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:
+        try:
+            return asyncio.get_running_loop() is loop
+        except RuntimeError:
+            return False
+
+    def _spawn(self, coro) -> asyncio.Task:
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     async def _async_main(self) -> None:
         assert self._mic_read is not None
@@ -410,6 +527,10 @@ class LiveVoiceSession:
         pending = b""
         assert self._mic_read is not None
         while not self._sleep_requested:
+            if self._input_muted:
+                # Paused: the wake-phrase recogniser has the mic (it may share this stream).
+                await asyncio.sleep(0.02)
+                continue
             try:
                 chunk = await asyncio.to_thread(self._mic_read)
             except Exception as exc:
@@ -682,8 +803,15 @@ class LiveVoiceSession:
                 self.session_id = str(remote_id)
             self._started.set()
             return
+        if self._paused and etype in (
+            "session.output_audio.delta",
+            "session.output_transcript.delta",
+            "session.input_transcript.delta",
+        ):
+            return  # whatever she says to «Дякую, Єва» is not played, and the muted mic hears nothing
         if etype == "session.output_audio.delta":
             now = time.monotonic()
+            self._last_activity = now
             if not self._output_accepted():
                 self._last_output_delta_at = now
                 if self._stale_dropped_chunks == 0:
@@ -709,14 +837,15 @@ class LiveVoiceSession:
                 if playing or self._barge_gate.state == BargeInState.POSSIBLE:
                     self._on_interjection(frag)
             self._input_buf += frag
+            self._note_user_text(frag)
             if self._conversation is not None:
                 self._conversation.add("user", frag)
             self._recent_user_text = (self._recent_user_text + frag)[-80:]
             if not self._pause_requested and is_stop(self._recent_user_text):
-                logger.info("live.pause stop_phrase session_id=%s", self.session_id)
-                self._pause_requested = True
-                self.stop_playback()
-                self._sleep_requested = True
+                # A pause, not the end: the session stays open (muted) for a quick «Єва, скажи».
+                self._enter_pause("stop_phrase")
+                self._spawn(self._silence_for_pause())
+                return
             if self._on_voice_request is not None and VOICE_REQUEST_RE.search(self._recent_user_text):
                 if self._voice_check is not None:
                     self._voice_check.cancel()  # wait for the end of the request
@@ -739,6 +868,7 @@ class LiveVoiceSession:
             self._assistant_burst += frag
             self._assistant_burst_at = now
             self._output_buf += frag
+            self._note_assistant_text(frag)
             if self._conversation is not None:
                 self._conversation.add("assistant", frag)
             self._recent_assistant_text = (self._recent_assistant_text + frag)[-_ECHO_CONTEXT_CHARS:]
@@ -787,10 +917,15 @@ class LiveVoiceSession:
             if rid and delegation_id:
                 self._delegation_ids[str(rid)] = str(delegation_id)
             self._responses.response_started(key)
+            self._work_started(key)
             return
 
         if itype in RESPONSE_FINISHED_TYPES:
-            if self._responses.response_finished(key, ok=itype == "response.completed"):
+            ok = itype == "response.completed"
+            if not ok or not self._responses.had_calls(key):
+                self._work.pop(key, None)  # the final answer (or a failure): she speaks now
+                self._answering.discard(key)
+            if self._responses.response_finished(key, ok=ok):
                 await self._continue(key, reason="response_finished")
             return
 
@@ -800,6 +935,9 @@ class LiveVoiceSession:
             if completed is None:
                 return
             self._responses.call_started(key, completed.call_id)
+            if key in self._work:
+                self._work[key].append(completed.name)
+                self._answering.discard(key)  # one more step
             logger.info(
                 "live.backend.function_call session_id=%s delegation_id=%s call_id=%s tool_name=%s",
                 self.session_id,
@@ -851,10 +989,8 @@ class LiveVoiceSession:
         ctx = ToolExecutionContext(
             session_id=self.session_id,
             delegation_id=delegation_id,
-            user_utterances=[
-                t["content"] for t in self._turns if t.get("role") == "user" and t.get("content")
-            ]
-            or None,
+            user_utterances=self.recent_user_utterances(),
+            assistant_utterances=self.recent_assistant_utterances(),
         )
         result = await self._executor.execute(name, arguments, ctx)
         self._busy_cues.on_tool_finished()
@@ -911,6 +1047,8 @@ class LiveVoiceSession:
     async def _continue(self, key: str, *, reason: str) -> None:
         """Every call of the delegated response has its result: let the model go on."""
         self._responses.mark_continued(key)
+        if key in self._work:
+            self._answering.add(key)
         if self._session_closing or self._closed.is_set() or self._connection is None:
             return
         # Cancel any lingering cue before the spoken continuation.
@@ -931,6 +1069,142 @@ class LiveVoiceSession:
                 logger.info("live.voice.restart session_id=%s by=transcript", self.session_id)
         except Exception:
             logger.exception("voice request handler failed")
+
+    # ── pause / resume ─────────────────────────────────────────────────────────
+
+    def _enter_pause(self, reason: str) -> None:
+        """Local part of a pause: cut her off now and drop whatever she says until resume()."""
+        logger.info("live.pause reason=%s session_id=%s", reason, self.session_id)
+        self._paused = True
+        self._pause_requested = True
+        self._input_muted = True
+        self._recent_user_text = ""
+        self.stop_playback()
+        self.player.set_volume(1.0)
+        self._barge_gate.reset()
+        for task in list(self._progress.values()):
+            task.cancel()
+
+    async def _silence_for_pause(self) -> None:
+        if self._connection is None or self._session_closing:
+            return
+        try:
+            await self._connection.session.instructions.append(
+                content=_PAUSE_STEER, delegation_id=None, event_id=f"pause_{uuid.uuid4().hex[:8]}"
+            )
+            await self._connection.session.input_audio.mute(event_id=f"mute_{uuid.uuid4().hex[:8]}")
+        except Exception:
+            logger.debug("live.pause mute failed", exc_info=True)
+
+    async def _unmute(self) -> None:
+        if self._connection is None or self._session_closing:
+            return
+        try:
+            await self._connection.session.input_audio.unmute(event_id=f"unmute_{uuid.uuid4().hex[:8]}")
+        except Exception:
+            logger.debug("live.resume unmute failed", exc_info=True)
+
+    # ── who said what (for the tools) ──────────────────────────────────────────
+
+    def _note_user_text(self, frag: str) -> None:
+        now = time.monotonic()
+        self._last_input_at = now
+        self._last_activity = now
+        if self._turn_output.strip():  # the user speaks: her line is over
+            self._assistant_turns = (self._assistant_turns + [self._turn_output.strip()])[-5:]
+            self._turn_output = ""
+        self._turn_input += frag
+
+    def _note_assistant_text(self, frag: str) -> None:
+        now = time.monotonic()
+        self._last_output_at = now
+        self._last_activity = now
+        if self._turn_input.strip():  # she started answering: the user's turn is complete
+            self._user_turns = (self._user_turns + [self._turn_input.strip()])[-20:]
+            self._turn_input = ""
+        self._turn_output += frag
+
+    def recent_user_utterances(self) -> list[str] | None:
+        current = [self._turn_input.strip()] if self._turn_input.strip() else []
+        return (self._user_turns + current) or None
+
+    def recent_assistant_utterances(self) -> list[str] | None:
+        current = [self._turn_output.strip()] if self._turn_output.strip() else []
+        return (self._assistant_turns + current)[-3:] or None
+
+    # ── settings applied once she is quiet ─────────────────────────────────────
+
+    def _is_quiet(self, quiet_s: float) -> bool:
+        return (
+            not self._paused
+            and not self.player.is_playing
+            and time.monotonic() - self._last_output_at >= quiet_s
+        )
+
+    async def _queue_quiet_instruction(self, kind: str, text: str) -> None:
+        if not text:
+            return
+        self._quiet_instructions[kind] = text
+        if self._quiet_sender is None or self._quiet_sender.done():
+            self._quiet_sender = self._spawn(self._send_when_quiet())
+
+    async def _send_when_quiet(self) -> None:
+        deadline = time.monotonic() + _INSTRUCTION_MAX_WAIT_S
+        # The transcript runs ahead of the audio; the player tells when she has really finished.
+        while not self._is_quiet(_INSTRUCTION_QUIET_S) and time.monotonic() < deadline:
+            if self._connection is None or self._session_closing:
+                return
+            await asyncio.sleep(0.2)
+        text = "\n\n".join(self._quiet_instructions.values())
+        kinds = ",".join(self._quiet_instructions)
+        self._quiet_instructions.clear()
+        if text:
+            logger.info("live.instruction.applied kinds=%s session_id=%s", kinds, self.session_id)
+            await self._append_instruction(text)
+
+    # ── «ще роблю» during slow delegated work ──────────────────────────────────
+
+    def _work_started(self, key: str) -> None:
+        """A delegated response started; a continuation after tool results is the same work."""
+        if key in self._work:
+            return
+        self._work[key] = []
+        try:
+            task = self._spawn(self._say_progress(key))
+        except RuntimeError:
+            return  # no running loop (unit tests feeding events synchronously)
+        self._progress[key] = task
+        task.add_done_callback(lambda _: self._progress.pop(key, None))
+
+    async def _say_progress(self, key: str) -> None:
+        """The work keeps her silent: once, she says she is on it, like a person looking something
+        up — silence sounds like the line dropped. Not once the results are in, not after the user
+        spoke again (a correction makes the work stale), not while paused."""
+        started = time.monotonic()
+        while True:
+            await asyncio.sleep(0.25)
+            now = time.monotonic()
+            if (
+                self._connection is None
+                or self._session_closing
+                or self._paused
+                or key not in self._work
+                or key in self._answering
+                or self._last_input_at > started + _PROGRESS_INPUT_GRACE_S
+                or now - started > _PROGRESS_GIVE_UP_S
+            ):
+                return
+            if now - started >= _PROGRESS_AFTER_S and self._is_quiet(_PROGRESS_QUIET_S):
+                break
+        logger.info(
+            "live.work.progress session_id=%s after_s=%.1f tools=%s",
+            self.session_id,
+            time.monotonic() - started,
+            self._work[key],
+        )
+        await self._connection.session.commentary.append(
+            content=work_progress_note(), delegation_id=None, event_id=f"progress_{uuid.uuid4().hex[:8]}"
+        )
 
     async def _append_instruction(self, text: str) -> None:
         if self._connection is None:

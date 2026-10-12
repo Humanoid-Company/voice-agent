@@ -64,6 +64,17 @@ class LiveMicCapture:
             return bytes(data)
         return resample_16k_to_24k(self._fallback())
 
+    def drain(self) -> None:
+        """Drop audio buffered while nobody read the stream (a pause): it is not what the user says now."""
+        if self._stream is None:
+            return
+        try:
+            available = self._stream.read_available
+            if available > 0:
+                self._stream.read(available)
+        except Exception:
+            pass
+
     def close(self) -> None:
         if self._stream is not None:
             try:

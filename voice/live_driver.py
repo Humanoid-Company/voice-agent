@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 
 from config import (
+    BACKGROUND_LISTENING,
+    IDLE_PAUSE_SECONDS,
+    LIVE_PROMPT_VARIANT,
     OPENAI_LIVE_VOICE,
+    PAUSE_CLOSE_SECONDS,
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
-from prompts.live_prompt import build_live_prompt
+from prompts.live_prompt import PROMPT_VARIANTS, build_live_prompt
 from tools.executor import ToolExecutionContext
 from tools.results import ToolResult
 from voice.background import wake_commentary
@@ -45,6 +50,29 @@ WAKE_GREETING = (
     "«Слухаю тебе». Vary it, then wait."
 )
 
+# Woken within a pause, the session is still open: their request can't join its history, so it is
+# handed over as context (same wording as wakeEva in web/app.js).
+ANSWER_REQUEST = "The user just said to you: «{request}». Answer it."
+
+# The connection dropped and a new session took over with the same history.
+RECONNECTED = (
+    "The connection dropped for a moment and you are back with the whole conversation. Say in a few "
+    "words that the line dropped and you are listening again («Ой, зв'язок перервався. Я тут.»), then wait."
+)
+
+# A paused session is kept open no longer than this while a tool still runs in it.
+_PAUSE_HOLD_MAX_S = 5 * 60
+# A dropped session is reopened at most this many times in a row; one that lived this long resets it.
+_MAX_RECONNECTS = 2
+_STABLE_SESSION_S = 30.0
+
+
+def _close_session(live: LiveVoiceSession, mic: LiveMicCapture) -> None:
+    try:
+        live.close()
+    finally:
+        mic.close()
+
 
 class LiveDriverMixin:
     # Set up by Assistant.__init__ / the awake-session loop.
@@ -74,57 +102,66 @@ class LiveDriverMixin:
             conversation=self._conversation,
             on_voice_request=lambda text: self._voice_by_request(text, voice),
         )
+        # A new voice or a reconnect after a dropped line: no greeting, she carries on with the same memory.
         voice_restart = getattr(self, "_voice_restarted", False)
+        reconnect = getattr(self, "_reconnecting", False)
         self._voice_restarted = False
+        self._reconnecting = False
+        silent_start = voice_restart or reconnect
         wake_request, self._wake_request = self._wake_request, ""
-        if wake_request and not voice_restart:
+        if wake_request and not silent_start:
             # Their request starts the new session's history as their own message: quoted in a
             # commentary, GPT-Live sometimes read it back instead of answering.
             self._conversation.add("user", f"Єва, скажи, {wake_request}")
             self._conversation.end_turn()
+        language_name = LANGUAGE_OPTIONS.get(self._memory.get("language", "uk"), LANGUAGE_OPTIONS["uk"])
         self._live = live
+        outcome = "end"
+        started_at = time.monotonic()
         try:
             live.connect(
                 build_live_prompt(
-                    language_name=LANGUAGE_OPTIONS.get(self._memory.get("language", "uk"), LANGUAGE_OPTIONS["uk"]),
+                    language_name=language_name,
                     assistant_name=self._memory.get("assistant_name"),
                     today=local_today(),
                     voice=voice,
                     delivery=delivery_instruction(
                         self._memory.get("speed", "normal"), self._memory.get("style", "normal")
                     ),
+                    variant=LIVE_PROMPT_VARIANT if LIVE_PROMPT_VARIANT in PROMPT_VARIANTS else "v2",
                 ),
                 mic_read_chunk=mic.read_chunk,
-                backend_instructions=build_backend_prompt(
-                    today=local_today(),
-                    language_name=LANGUAGE_OPTIONS.get(self._memory.get("language", "uk"), LANGUAGE_OPTIONS["uk"]),
-                ),
+                mic_drain=mic.drain,
+                backend_instructions=build_backend_prompt(today=local_today(), language_name=language_name),
             )
             # What she overheard during the pause goes in the same commentary as the wake reply.
-            note = self._background.digest() if getattr(self, "_paused", False) and not voice_restart else ""
-            self._paused = False
-            if note:
-                self._conversation.add_note(note)
-                logger.info("background.digest chars=%s", len(note))
-            heard = wake_commentary(note) + "\n\n" if note else ""
+            heard = self._take_background_note() if not silent_start else ""
             if voice_restart:
                 pass  # a new voice: no announcement, she just listens on with the same memory
+            elif reconnect:
+                live.speak_context(RECONNECTED)
             elif wake_request:
                 live.speak_context(heard + ANSWER_LAST)
             elif self._wake_phrase:
                 live.speak_context(heard + WAKE_GREETING.format(phrase=self._wake_phrase))
             else:
                 live.speak_context(heard + "Слухаю!")
-            t_start = time.monotonic()
-            while self._running and not live.sleep_requested and not self._sleep_requested:
-                # Live owns turn-taking; we only poll lifecycle flags.
-                time.sleep(0.05)
-            logger.info("[latency] Live awake session duration: %.1fs", time.monotonic() - t_start)
+            while True:
+                outcome = self._converse(live)
+                if outcome != "pause":
+                    break
+                # «Дякую, Єва» or silence: the session stays open (muted) for a while, so a wake
+                # within it is answered at once — like the web page.
+                if not self._wait_in_pause(live):
+                    break
+                self._wake_in_session(live)
+            logger.info("[latency] Live awake session duration: %.1fs", time.monotonic() - started_at)
             live.stop_playback()
-            # «Дякую, Єва» pauses: no goodbye, the conversation goes on after the next wake.
-            if live.pause_requested:
+            if outcome == "pause":
                 self._paused = True
-                logger.info("Live paused by «Дякую, Єва» — listening in the background until the wake phrase.")
+                logger.info("Live pause outlasted %ss — session closed; «Єва, скажи» reopens it.", int(PAUSE_CLOSE_SECONDS))
+            elif outcome == "dropped":
+                logger.warning("Live session dropped after %.1fs.", time.monotonic() - started_at)
             elif not live.voice_restart_requested and not self._voice_change_pending:
                 live.speak_context("До побачення!")
                 time.sleep(1.0)
@@ -134,18 +171,102 @@ class LiveDriverMixin:
         finally:
             turns = live.get_turns()
             self._history = turns[: self._history_cutoff] if self._history_cutoff is not None else turns
-            live.close()
             self._live = None
-            mic.close()
-            if live.voice_restart_requested or self._voice_change_pending:
+            voice_change = live.voice_restart_requested or self._voice_change_pending
+            if voice_change:
+                # The old session closes in the background: the new voice starts seconds sooner.
+                threading.Thread(target=_close_session, args=(live, mic), daemon=True, name="live-close").start()
+            else:
+                _close_session(live, mic)
+            if voice_change:
                 # Live: restart a new awake session with the new voice — do NOT kill the process.
                 logger.info("Live voice change — restarting voice session without process exit.")
                 self._voice_change_pending = False
                 self._voice_restarted = True
                 self.state = State.AWAKE
+            elif outcome == "dropped" and self._may_reconnect(time.monotonic() - started_at):
+                logger.info("Reconnecting to GPT-Live with the same conversation.")
+                self._reconnecting = True
+                self.state = State.AWAKE
             else:
+                if outcome == "dropped":
+                    self._paused = True  # nothing lost: «Єва, скажи» opens a new session with the history
                 self.state = State.SLEEPING
                 time.sleep(1.5)
+
+    # ── awake session lifecycle ──────────────────────────────────────────────
+
+    def _converse(self, live: LiveVoiceSession) -> str:
+        """Until the conversation stops: "end" (goodbye, voice change, app exit), "pause" («Дякую,
+        Єва» or nobody spoke for IDLE_PAUSE_SECONDS) or "dropped" (the connection is gone)."""
+        while self._running:
+            if live.sleep_requested or self._sleep_requested:
+                return "end"
+            if live.pause_requested:
+                return "pause"
+            if live.closed:
+                return "dropped"
+            if (
+                IDLE_PAUSE_SECONDS > 0
+                and live.idle_for() > IDLE_PAUSE_SECONDS
+                and not live.busy
+                and not live.player.is_playing
+            ):
+                logger.info("Тиша %ss — пауза, щоб не витрачати хвилини GPT-Live.", int(IDLE_PAUSE_SECONDS))
+                live.pause(reason="idle")
+                return "pause"
+            # Live owns turn-taking; we only poll lifecycle flags.
+            time.sleep(0.05)
+        return "end"
+
+    def _wait_in_pause(self, live: LiveVoiceSession) -> bool:
+        """Paused with the session open: True once the wake phrase is heard, False after
+        PAUSE_CLOSE_SECONDS (longer while a tool still runs) or when the session is gone."""
+        self._paused = True
+        paused_at = time.monotonic()
+        deadline = paused_at + PAUSE_CLOSE_SECONDS
+        while self._running and not live.closed and not live.sleep_requested:
+            now = time.monotonic()
+            if now >= deadline:
+                if not (live.busy and now - paused_at < _PAUSE_HOLD_MAX_S):
+                    return False
+                deadline = now + 5.0  # a tool still runs in this session: keep it a little longer
+            text, _, _ = self.stt.listen(timeout=max(0.5, deadline - now))
+            if self._take_wake(text):
+                return True
+        return False
+
+    def _wake_in_session(self, live: LiveVoiceSession) -> None:
+        """«Єва, скажи» heard while the paused session is still open: unmute and answer at once."""
+        wake_request, self._wake_request = self._wake_request, ""
+        heard = self._take_background_note()
+        live.resume()
+        if wake_request:
+            self._conversation.end_turn()
+            self._conversation.add("user", f"Єва, скажи, {wake_request}")
+            self._conversation.end_turn()
+            live.speak_context(heard + ANSWER_REQUEST.format(request=wake_request))
+        else:
+            live.speak_context(heard + WAKE_GREETING.format(phrase=self._wake_phrase or "Єва, скажи"))
+
+    def _take_background_note(self) -> str:
+        """What she overheard during the pause, as the start of the wake commentary ("" if nothing).
+        Ends the pause."""
+        note = self._background.digest() if getattr(self, "_paused", False) and BACKGROUND_LISTENING else ""
+        self._paused = False
+        if not note:
+            return ""
+        self._conversation.add_note(note)
+        logger.info("background.digest chars=%s", len(note))
+        return wake_commentary(note) + "\n\n"
+
+    def _may_reconnect(self, lived_s: float) -> bool:
+        attempts = 0 if lived_s >= _STABLE_SESSION_S else getattr(self, "_reconnect_attempts", 0)
+        if attempts >= _MAX_RECONNECTS or not self._running:
+            self._reconnect_attempts = 0
+            return False
+        self._reconnect_attempts = attempts + 1
+        return True
 
     def _live_set_name(self, args: dict, context: ToolExecutionContext) -> ToolResult:
         del context
@@ -157,7 +278,7 @@ class LiveDriverMixin:
 
     def _live_change_voice(self, args: dict, context: ToolExecutionContext) -> ToolResult:
         voice = str(args.get("voice", "")).strip().lower()
-        if not asked_for_voice_change(context.user_utterances):
+        if not asked_for_voice_change(context.user_utterances if context is not None else None):
             logger.info("live.voice.tool_refused voice=%s (user didn't mention the voice)", voice)
             return ToolResult(
                 ok=False,
@@ -194,7 +315,7 @@ class LiveDriverMixin:
         voice = voice_request_target(utterance, current)
         if voice is None or voice == current:
             return False
-        return self._live_change_voice({"voice": voice}, None).ok
+        return self._live_change_voice({"voice": voice}, ToolExecutionContext(user_utterances=[utterance])).ok
 
     def _live_set_voice_style(self, args: dict, context: ToolExecutionContext) -> ToolResult:
         """Speed/style of the current voice — instructions, applied from the next sentence."""
@@ -206,7 +327,7 @@ class LiveDriverMixin:
         self._memory["speed"], self._memory["style"] = speed, style
         self._save_memory()
         if self._live is not None:
-            self._live.append_instruction(delivery_instruction(speed, style, changed=True))
+            self._live.append_instruction(delivery_instruction(speed, style, changed=True), when_quiet="delivery")
         return ToolResult(ok=True, status="ok", message="Готово, говорю так з наступного речення.")
 
     def _live_change_language(self, args: dict, context: ToolExecutionContext) -> ToolResult:
@@ -222,7 +343,7 @@ class LiveDriverMixin:
         self._save_memory()
         lang_name = LANGUAGE_OPTIONS[language]
         if self._live is not None:
-            self._live.append_instruction(f"From now on speak exclusively in {lang_name}.")
+            self._live.append_instruction(f"From now on speak exclusively in {lang_name}.", when_quiet="language")
         return ToolResult(
             ok=True,
             status="ok",

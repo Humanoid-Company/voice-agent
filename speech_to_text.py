@@ -91,14 +91,14 @@ class SpeechToText:
         data, _ = self._stream.read(CHUNK_SIZE)
         return bytes(data)
 
-    def listen(self) -> tuple[str | None, bytes | None, str]:
+    def listen(self, timeout: float | None = None) -> tuple[str | None, bytes | None, str]:
         """
-        Block until a speech phrase is captured.
+        Block until a speech phrase is captured (or `timeout` s without speech start).
         Returns (transcription, raw_pcm, emotion).
         emotion is always "" — voice emotion detection is a planned feature.
         """
         try:
-            raw_pcm = self._record(timeout=STT_TIMEOUT, phrase_time_limit=STT_PHRASE_LIMIT)
+            raw_pcm = self._record(timeout=timeout or STT_TIMEOUT, phrase_time_limit=STT_PHRASE_LIMIT)
             if raw_pcm is None:
                 return None, None, ""
             text = self._transcribe(raw_pcm)

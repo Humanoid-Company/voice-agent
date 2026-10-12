@@ -80,6 +80,16 @@ VOICE_BARGE_IN_ENERGY_MARGIN_PLAYING: float = float(
 # (voice/background.py). false = she remembers nothing from her pauses.
 BACKGROUND_LISTENING: bool = os.getenv("BACKGROUND_LISTENING", "true").lower() in ("1", "true", "yes")
 
+# Same timings as the web page (web/config.js). GPT-Live bills every second a session is open, so
+# this long with nobody speaking pauses her (0 = never)…
+IDLE_PAUSE_SECONDS: float = float(os.getenv("IDLE_PAUSE_SECONDS", "90"))
+# …and a pause keeps the session open (muted) this long: «Єва, скажи» within it answers at once,
+# later it opens a new session with the whole history.
+PAUSE_CLOSE_SECONDS: float = float(os.getenv("PAUSE_CLOSE_SECONDS", "30"))
+
+# Delivery prompt (prompts/live_prompt.py): v2 (default), v1 the older one, v3 = v2 + behaves like a person.
+LIVE_PROMPT_VARIANT: str = os.getenv("LIVE_PROMPT_VARIANT", "v2").strip().lower()
+
 # Off by default: the cue is synthesized by a separate TTS voice (TTS_VOICE), so «Угу» came out
 # in a different voice than Єва's. GPT-Live now says the short acknowledgement itself.
 VOICE_BUSY_CUES_ENABLED: bool = os.getenv("VOICE_BUSY_CUES_ENABLED", "false").lower() in (

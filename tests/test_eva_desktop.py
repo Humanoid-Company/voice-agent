@@ -36,7 +36,8 @@ def test_stop_phrase_pauses_even_while_speaking_and_keeps_history():
     session.player.enqueue(b"\x00\x01" * 400)  # Єва is talking
     assert session.player.is_playing
     _feed(session, ("session.input_transcript.delta", "Дякую, "), ("session.input_transcript.delta", "Єво"))
-    assert session.pause_requested and session.sleep_requested
+    # A pause keeps the session open (muted) for a quick wake — it is not the end of it.
+    assert session.pause_requested and session.paused and not session.sleep_requested
     assert session.player.queued_bytes == 0  # speech cut immediately
     assert [t.text for t in log.turns()][0] == "Мене звати Остап."
 

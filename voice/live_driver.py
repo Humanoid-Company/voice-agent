@@ -60,6 +60,12 @@ RECONNECTED = (
     "words that the line dropped and you are listening again («Ой, зв'язок перервався. Я тут.»), then wait."
 )
 
+# Tool results that came during a pause: she said them into the muted session and nobody heard.
+UNHEARD = (
+    "While you were paused, work you had started finished, and the user has not heard the result: "
+    "{results}. Tell them briefly first."
+)
+
 # A paused session is kept open no longer than this while a tool still runs in it.
 _PAUSE_HOLD_MAX_S = 5 * 60
 # A dropped session is reopened at most this many times in a row; one that lived this long resets it.
@@ -135,7 +141,7 @@ class LiveDriverMixin:
                 backend_instructions=build_backend_prompt(today=local_today(), language_name=language_name),
             )
             # What she overheard during the pause goes in the same commentary as the wake reply.
-            heard = self._take_background_note() if not silent_start else ""
+            heard = "" if silent_start else self._take_background_note() + self._unheard_note()
             if voice_restart:
                 pass  # a new voice: no announcement, she just listens on with the same memory
             elif reconnect:
@@ -172,6 +178,8 @@ class LiveDriverMixin:
             turns = live.get_turns()
             self._history = turns[: self._history_cutoff] if self._history_cutoff is not None else turns
             self._live = None
+            # Results nobody heard (the pause outlasted the window): told at the next wake.
+            self._unheard = getattr(self, "_unheard", []) + live.take_unheard()
             voice_change = live.voice_restart_requested or self._voice_change_pending
             if voice_change:
                 # The old session closes in the background: the new voice starts seconds sooner.
@@ -239,7 +247,7 @@ class LiveDriverMixin:
     def _wake_in_session(self, live: LiveVoiceSession) -> None:
         """«Єва, скажи» heard while the paused session is still open: unmute and answer at once."""
         wake_request, self._wake_request = self._wake_request, ""
-        heard = self._take_background_note()
+        heard = self._take_background_note() + self._unheard_note(live)
         live.resume()
         if wake_request:
             self._conversation.end_turn()
@@ -259,6 +267,16 @@ class LiveDriverMixin:
         self._conversation.add_note(note)
         logger.info("background.digest chars=%s", len(note))
         return wake_commentary(note) + "\n\n"
+
+    def _unheard_note(self, live: LiveVoiceSession | None = None) -> str:
+        """Tool results nobody heard (they came during a pause), for the wake commentary ("" if none)."""
+        results = list(getattr(self, "_unheard", []))
+        if live is not None:
+            results += live.take_unheard()
+        self._unheard = []
+        if not results:
+            return ""
+        return UNHEARD.format(results=" ".join(f"«{r}»" for r in results)) + "\n\n"
 
     def _may_reconnect(self, lived_s: float) -> bool:
         attempts = 0 if lived_s >= _STABLE_SESSION_S else getattr(self, "_reconnect_attempts", 0)

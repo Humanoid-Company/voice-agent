@@ -55,6 +55,8 @@ class Assistant(LiveDriverMixin):
         # The connection dropped: the next session continues the conversation (voice/live_driver.py).
         self._reconnecting = False
         self._reconnect_attempts = 0
+        # Tool results that came during a pause and nobody heard: told at the next wake.
+        self._unheard: list[str] = []
 
         # Conversation history for the current run only — carries over between
         # sleep/wake cycles (in-memory), but resets when the process restarts.

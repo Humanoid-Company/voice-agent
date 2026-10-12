@@ -210,6 +210,7 @@ class _FakeLive:
         self.paused_by: str | None = None
         self.resumed = False
         self.said: list[str] = []
+        self.unheard: list[str] = flags.get("unheard", [])
 
     def idle_for(self) -> float:
         return self.idle
@@ -222,6 +223,10 @@ class _FakeLive:
 
     def speak_context(self, text: str) -> None:
         self.said.append(text)
+
+    def take_unheard(self) -> list[str]:
+        results, self.unheard = self.unheard, []
+        return results
 
 
 def _driver_bot():
@@ -277,3 +282,59 @@ def test_dropped_line_reconnects_a_limited_number_of_times():
     assert bot._may_reconnect(2.0) and bot._may_reconnect(2.0)
     assert not bot._may_reconnect(2.0)  # it keeps dropping right away: stop and wait for «Єва, скажи»
     assert bot._may_reconnect(120.0)  # a session that lived a while starts the count over
+
+
+# ── a pause never loses a tool's answer, and never cancels tasks from the wrong thread ──
+
+
+def test_tool_result_during_a_pause_is_kept_for_the_wake():
+    """Her answer goes into the muted session: nobody hears it, so it is handed over at the wake."""
+    session = _session(ToolExecutor({"slow_lookup": lambda a, c: ToolResult(ok=True, status="ok", message="Знайшла три кафе.")}))
+
+    async def run(name: str) -> None:
+        await session._execute_and_continue(name=name, arguments={}, call_id=name, delegation_id=None, key=name)
+
+    asyncio.run(run("slow_lookup"))
+    assert session.take_unheard() == []  # heard: not paused
+    session._enter_pause("stop_phrase")
+    asyncio.run(run("slow_lookup"))
+    assert session.take_unheard() == ["Знайшла три кафе."] and session.take_unheard() == []
+
+
+def test_wake_tells_what_came_during_the_pause():
+    bot = _driver_bot()
+    bot._wake_request = ""
+    bot._wake_phrase = "Єва, скажи"
+    live = _FakeLive(pause=True, unheard=["Знайшла три кафе."])
+    bot._wake_in_session(live)
+    assert "Знайшла три кафе." in live.said[-1] and live.said[-1].index("кафе") < live.said[-1].index("Єва, скажи")
+    # The pause outlasted the window: the next session's wake says it.
+    bot._unheard = ["Таймер спрацював."]
+    assert "Таймер спрацював." in bot._unheard_note() and bot._unheard_note() == ""
+
+
+def test_idle_pause_from_the_driver_thread_cancels_on_the_session_loop():
+    import threading
+
+    session = _session()
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        session._loop = loop
+        task = asyncio.run_coroutine_threadsafe(_current_task(), loop).result(timeout=2)  # a task on that loop
+        session._progress = {"k": task}
+        session._enter_pause("idle")  # called from this (the driver's) thread
+        deadline = time.monotonic() + 2
+        while not task.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert task.cancelled()
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+
+
+async def _current_task() -> asyncio.Task:
+    task = asyncio.get_running_loop().create_task(asyncio.sleep(30))
+    await asyncio.sleep(0)
+    return task

@@ -158,6 +158,9 @@ class LiveVoiceSession:
         self._paused = False
         self._input_muted = False
         self._mic_drain: Callable[[], None] | None = None
+        # Results of tools that finished during a pause: she said them into the muted session and
+        # nobody heard them — the driver passes them on at the wake (take_unheard).
+        self._unheard: list[str] = []
         # Last time anyone spoke (idle pause) and the transcripts' timing (quiet checks).
         self._last_activity = time.monotonic()
         self._last_output_at = 0.0
@@ -374,13 +377,18 @@ class LiveVoiceSession:
 
     def stop_playback(self) -> None:
         self.player.interrupt()
-        self._busy_cues.cancel(reason="stop_playback")
+        self._call_on_loop(lambda: self._busy_cues.cancel(reason="stop_playback"))
+
+    def take_unheard(self) -> list[str]:
+        """Tool results nobody heard (they came during a pause); cleared once taken."""
+        results, self._unheard = self._unheard, []
+        return results
 
     def close(self) -> None:
-        """Graceful close — do not wait forever for OAuth/browser worker threads."""
+        """Graceful close — do not wait forever for tools still running in worker threads."""
         self._sleep_requested = True
         self._session_closing = True
-        self._busy_cues.cancel(reason="session_close")
+        self._call_on_loop(lambda: self._busy_cues.cancel(reason="session_close"))
         loop = self._loop
         if loop is not None and loop.is_running():
             fut = asyncio.run_coroutine_threadsafe(self._shutdown(), loop)
@@ -455,6 +463,15 @@ class LiveVoiceSession:
             self._spawn(coro)
         else:
             asyncio.run_coroutine_threadsafe(coro, loop)
+
+    def _call_on_loop(self, fn: Callable[[], Any]) -> None:
+        """asyncio tasks may only be cancelled from their own loop: from another thread (the driver's
+        idle pause, stop_playback), hand the call over to it."""
+        loop = self._loop
+        if loop is not None and loop.is_running() and not self._on_loop(loop):
+            loop.call_soon_threadsafe(fn)
+        else:
+            fn()
 
     @staticmethod
     def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:
@@ -1009,6 +1026,9 @@ class LiveVoiceSession:
         if name == "change_voice" and result.ok:
             self.request_voice_restart()
         remember_tool_result(self._conversation, name, result.message)
+        if self._paused and result.message:
+            # Her answer goes into the muted session: nobody hears it. Told at the wake instead.
+            self._unheard.append(result.message)
         logger.info(
             "live.backend.function_result session_id=%s delegation_id=%s call_id=%s "
             "tool_name=%s status=%s",
@@ -1083,7 +1103,7 @@ class LiveVoiceSession:
         self.player.set_volume(1.0)
         self._barge_gate.reset()
         for task in list(self._progress.values()):
-            task.cancel()
+            self._call_on_loop(task.cancel)
 
     async def _silence_for_pause(self) -> None:
         if self._connection is None or self._session_closing:

@@ -1,0 +1,8 @@
+# Hosted web backend only (server/) — no microphone/speaker/desktop packages.
+# Render: pip install -r requirements-server.txt
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+openai[realtime]==3.22.1
+httpx==0.28.1
+python-dotenv==1.2.3
+tzdata==2026.4

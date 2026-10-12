@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Єва — голосовий агент</title>
+  <meta name="description" content="Голосовий агент Єва: розмова голосом через GPT-Live.">
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>Єва</h1>
+      <p class="sub">Голосова помічниця. Говоріть з нею як з людиною.</p>
+    </header>
+
+    <section id="gate" class="card" hidden>
+      <label for="code">Код доступу</label>
+      <div class="row">
+        <input id="code" type="password" autocomplete="off" placeholder="Отримайте в команди">
+        <button id="saveCode" class="btn">Зберегти</button>
+      </div>
+    </section>
+
+    <section class="card call">
+      <div class="status-line">
+        <span id="dot" class="dot" aria-hidden="true"></span>
+        <span id="status">Не підключено</span>
+      </div>
+      <button id="talk" class="btn primary big">Почати розмову</button>
+      <div class="row">
+        <button id="resume" class="btn primary" hidden>Продовжити</button>
+        <button id="pause" class="btn ghost" hidden>Пауза</button>
+      </div>
+      <p id="wakeHint" class="hint">Покличте Єву — «Єва, скажи», «Привіт, Єва», «Гей, Єва». «Дякую, Єва» — пауза.</p>
+      <label class="setting" for="bgListen">
+        <span class="setting-text">
+          <span class="setting-title">Слухати фоном на паузі</span>
+          <span id="bgListenInfo" class="hint">Єва запам'ятовує, про що говорять поруч, і може нагадати.</span>
+        </span>
+        <input id="bgListen" type="checkbox" class="switch" role="switch" checked>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2><label for="voice">Голос Єви</label></h2>
+      <div class="row voice-pick">
+        <select id="voice" disabled>
+          <option>Завантаження…</option>
+        </select>
+        <button id="voicePreview" class="btn" disabled>▶ Прослухати</button>
+      </div>
+      <p id="voiceInfo" class="hint"></p>
+      <button id="voiceApply" class="btn primary wide" hidden>Застосувати</button>
+      <div class="settings">
+        <div>
+          <label for="speed">Темп</label>
+          <select id="speed">
+            <option value="slow">Повільніше</option>
+            <option value="normal">Звичайний</option>
+            <option value="fast">Швидше</option>
+          </select>
+        </div>
+        <div>
+          <label for="style">Манера</label>
+          <select id="style">
+            <option value="calm">Спокійна</option>
+            <option value="normal">Звичайна</option>
+            <option value="expressive">Емоційна</option>
+          </select>
+        </div>
+      </div>
+      <div class="label-row">
+        <label for="volume">Гучність</label>
+        <span id="volumeValue" class="muted small"></span>
+      </div>
+      <input id="volume" type="range" min="0" max="100" step="5">
+      <p class="hint">Темп, манера й гучність діють одразу, навіть посеред розмови. Новий голос — після
+        «Застосувати»: Єва продовжить ним з усією пам'яттю. Тембру й точної швидкості GPT-Live не має,
+        тож темп і манеру Єва тримає сама. Зразок звучить звичайним темпом.</p>
+      <label class="setting" for="voiceNow">
+        <span class="setting-text">
+          <span class="setting-title">Міняти голос посеред відповіді</span>
+          <span id="voiceNowInfo" class="hint">Єва договорить відповідь уже новим голосом.</span>
+        </span>
+        <input id="voiceNow" type="checkbox" class="switch" role="switch" checked>
+      </label>
+      <label class="setting" for="cleanVoice">
+        <span class="setting-text">
+          <span class="setting-title">Чистіший звук · тест</span>
+          <span class="hint">Трохи більше чіткості, м'якші «с»/«ш», рівніша гучність. Можна перемикати посеред
+            розмови й порівнювати. Якщо на колонках Єва почне перебивати сама себе — вимкніть.</span>
+        </span>
+        <input id="cleanVoice" type="checkbox" class="switch" role="switch">
+      </label>
+      <div class="prompt-pick">
+        <label for="promptVariant">Промпт подачі</label>
+        <select id="promptVariant">
+          <option value="v2">v2 — «розмова, не читання» (основний)</option>
+          <option value="v3">v3 — v2 + поводиться як людина (тест)</option>
+          <option value="v1">v1 — попередній</option>
+        </select>
+        <p id="promptInfo" class="hint"></p>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Розмова</h2>
+        <button id="newChat" class="btn ghost small-btn">Нова розмова</button>
+      </div>
+      <div id="log" class="log" aria-live="polite">
+        <p class="muted empty">Тут з'являтиметься текст розмови.</p>
+      </div>
+    </section>
+
+    <footer class="muted small">Розмова зберігається лише в пам'яті сервера на час тестування.</footer>
+  </main>
+  <audio id="remote" autoplay></audio>
+</body>
+</html>

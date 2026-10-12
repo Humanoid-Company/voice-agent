@@ -1,0 +1,21 @@
+.claude/settings.local.json
+speaker_profiles/
+assistant_memory.json
+assistant.pid
+
+# Secrets & local runtime
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+*.log
+private_logs/
+
+# Archives / lock leftovers
+*.rar
+*.zip
+logs/

@@ -1,7 +1,5 @@
-// Browser side: microphone + speaker go straight to OpenAI over WebRTC — GPT-Live, or Realtime. The
-// backend only turns our SDP offer into a session (the keys stay there) and runs the tools.
-// The page speaks GPT-Live's events; for Realtime they are translated both ways (toRealtime /
-// fromRealtime), so pause, wake phrases, barge-in and voice switches work the same on both.
+// Browser side: microphone + speaker go straight to OpenAI GPT-Live over WebRTC. The backend only
+// turns our SDP offer into a session (the keys stay there) and runs the tools.
 (() => {
   const params = new URLSearchParams(location.search);
   const BACKEND = (params.get("backend") || (window.APP_CONFIG || {}).BACKEND_URL || "").replace(/\/$/, "");
@@ -22,7 +20,7 @@
   // Voice picker: the choice lives here (the server forgets it on restart) and is sent with
   // every new call. Voice is fixed for a Live session, so a change applies from the next call.
   let voices = [];
-  let voice = ""; // set below, per engine
+  let voice = store.get("va-voice") || "";
   let speed = store.get("va-speed") || "normal";
   let style = store.get("va-style") || "normal";
   let volume = parseFloat(store.get("va-volume") || "1");
@@ -34,15 +32,9 @@
 
   const DEBUG = params.get("debug") === "1";
   // Delivery prompt (prompts/live_prompt.py): v4 is the usual one (v3 with full, concrete answers),
-  // v3 v2 plus behaving like a person, v2 just the delivery, v1 the older one. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
-  // voice change does.
+  // v3 v2 plus behaving like a person, v2 just the delivery, v1 the older one. Picked in the voice
+  // card (or ?prompt=v3); a change reopens the call, as a voice change does.
   let promptVariant = params.get("prompt") || store.get("va-prompt") || "v4";
-  // Engine: GPT-Live, or Realtime with its own preset voices. Picked on the page (or ?engine=realtime).
-  let engine = (params.get("engine") || store.get("va-engine")) === "realtime" ? "realtime" : "live";
-  let sessionEngine = "live"; // what the current call was opened with
-  // Each engine keeps its own voice choice (their voice lists differ).
-  const voiceKey = () => (engine === "live" ? "va-voice" : "va-rt-voice");
-  voice = store.get(voiceKey()) || "";
   let pc = null;
   let channel = null;
   let sessionVoice = ""; // the voice the current call was opened with
@@ -528,12 +520,6 @@
       stop: "Stop speaking immediately. The user is talking. Do not finish or resume your previous sentence. Listen and answer what they say.",
       pause: "The user said «Дякую, Єва»: stop speaking immediately and stay completely silent. Do not reply to it. You will be woken again later — then continue with full memory of this conversation.",
     }[kind];
-    if (sessionEngine === "realtime") {
-      // Realtime: cut the answer itself; what the user says gets its own reply.
-      sendRaw({ type: "response.cancel" });
-      sendRaw({ type: "output_audio_buffer.clear" });
-      return;
-    }
     try {
       if (channel && channel.readyState === "open") {
         channel.send(JSON.stringify({
@@ -572,7 +558,6 @@
   }
 
   function onGateSignal(signal) {
-    if ("speaking" in signal) rtNearAt = Date.now(); // Realtime: was the person at the mic talking?
     bargeOnGate(signal);
     if ("audible" in signal) eva.lastAudibleAt = Date.now(); // when she started / stopped sounding
     if (barge.audible) eva.thinking = false;
@@ -593,13 +578,6 @@
       barge.timers.push(setTimeout(() => {
         if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; setRemoteVolume(0.5); }
       }, 400));
-      // Realtime's words arrive only once the user stops, so a voice that keeps going over her
-      // (longer than a cough or an «угу») is taken as an interruption by itself.
-      if (sessionEngine === "realtime") {
-        barge.timers.push(setTimeout(() => {
-          if (barge.speaking && barge.stage === "ducked") bargeConfirm("stop");
-        }, 1200));
-      }
     } else {
       barge.speechEndedAt = Date.now();
       if (barge.stage === "muted") { scheduleRelease(); return; }
@@ -647,10 +625,6 @@
   function onServerEvent(raw) {
     let event;
     try { event = JSON.parse(raw); } catch { return; }
-    if (sessionEngine === "realtime") {
-      event = fromRealtime(event);
-      if (!event) return;
-    }
     switch (event.type) {
       case "session.started":
         applyStart();
@@ -704,10 +678,6 @@
   // …and a pause this long closes the Live session; «Єва, скажи» reopens it with the history.
   // (config.js: PAUSE_CLOSE_SECONDS)
   const PAUSE_CLOSE_MS = (CFG.PAUSE_CLOSE_SECONDS ?? 30) * 1000;
-  // Realtime bills tokens, not open time: a muted call costs nothing, while reopening it reads the
-  // whole prompt and history again, uncached. So its pause keeps the call much longer — and the
-  // wake answers at once. (config.js: REALTIME_PAUSE_CLOSE_SECONDS; the server ends any call at 30 min)
-  const REALTIME_PAUSE_CLOSE_MS = (CFG.REALTIME_PAUSE_CLOSE_SECONDS ?? 600) * 1000;
   // A pause never keeps a call open longer than this, even while the server asks to.
   const PAUSE_HOLD_MAX_MS = 5 * 60 * 1000;
 
@@ -715,53 +685,27 @@
   // GPT-Live bills every second a session is open, so this adds up every open session: the call,
   // a pause's first PAUSE_CLOSE_MS, the standby call of a voice switch. A session counts from the
   // backend's answer (it exists then) until the page closes it. (config.js: PRICE_PER_MINUTE_USD)
-  // Realtime bills tokens instead — what it heard and said, silence is free: each response.done
-  // carries its usage, priced by config.js REALTIME_PRICES_PER_1M.
   const PRICE_PER_MIN = Number(CFG.PRICE_PER_MINUTE_USD ?? 0.05);
-  const RT_PRICES = Object.assign({ text_in: 4, audio_in: 32, cached_in: 0.4, text_out: 24, audio_out: 64 },
-    CFG.REALTIME_PRICES_PER_1M || {});
-  const meter = { doneMs: 0, doneUsd: 0, open: new Map(), timer: null };
+  const meter = { doneMs: 0, open: new Map(), timer: null };
 
   function meterReset() {
     meter.doneMs = 0;
-    meter.doneUsd = 0;
     meter.open.clear();
     showMeter();
   }
 
-  // engine: "live" — billed by the minute; "realtime" — by its usage (meterUsage).
-  function meterOpen(peer, engine = "live") {
+  function meterOpen(peer) {
     if (peer.signalingState === "closed" || meter.open.has(peer)) return;
-    meter.open.set(peer, { since: Date.now(), perMin: engine === "live" ? PRICE_PER_MIN : 0 });
+    meter.open.set(peer, Date.now());
     if (!meter.timer) meter.timer = setInterval(showMeter, 1000);
     showMeter();
   }
 
-  // A Realtime response's usage → dollars (cached input is the history read again each turn).
-  function meterUsage(usage) {
-    if (!usage) return;
-    const inp = usage.input_token_details || {};
-    const out = usage.output_token_details || {};
-    const cached = inp.cached_tokens_details || {};
-    const cachedText = cached.text_tokens || 0;
-    const cachedAudio = cached.audio_tokens || 0;
-    const usd = (
-      Math.max(0, (inp.text_tokens || 0) - cachedText) * RT_PRICES.text_in
-      + Math.max(0, (inp.audio_tokens || 0) - cachedAudio) * RT_PRICES.audio_in
-      + (cachedText + cachedAudio) * RT_PRICES.cached_in
-      + (out.text_tokens || 0) * RT_PRICES.text_out
-      + (out.audio_tokens || 0) * RT_PRICES.audio_out
-    ) / 1e6;
-    if (usd > 0) { meter.doneUsd += usd; showMeter(); }
-  }
-
   // Every call is closed here, so the meter stops counting it.
   function closePeer(peer) {
-    const open = meter.open.get(peer);
-    if (open !== undefined) {
-      const ms = Date.now() - open.since;
-      meter.doneMs += ms;
-      meter.doneUsd += (ms / 60000) * open.perMin;
+    const since = meter.open.get(peer);
+    if (since !== undefined) {
+      meter.doneMs += Date.now() - since;
       meter.open.delete(peer);
     }
     peer.close();
@@ -772,12 +716,12 @@
   function showMeter() {
     const now = Date.now();
     let ms = meter.doneMs;
-    let usd = meter.doneUsd;
-    meter.open.forEach((open) => { ms += now - open.since; usd += ((now - open.since) / 60000) * open.perMin; });
+    meter.open.forEach((since) => { ms += now - since; });
     $("meter").hidden = ms <= 0;
     if (ms <= 0) return;
     const sec = Math.floor(ms / 1000);
-    const used = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0") + " · ≈ $" + usd.toFixed(2);
+    const used = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0") +
+      " · ≈ $" + ((ms / 60000) * PRICE_PER_MIN).toFixed(2);
     $("meter").textContent = meter.open.size ? "Дзвінок: " + used
       : eva.mode === "off" ? "Останній дзвінок: " + used
       : "Дзвінок: " + used + " · на паузі не рахується";
@@ -793,206 +737,11 @@
     }, IDLE_LIMIT_MS);
   }
 
-  // Live's events as they are; for a Realtime call, translated (toRealtime).
   function sendEvent(event) {
-    const out = sessionEngine === "realtime" ? toRealtime(event) : [event];
     try {
-      if (channel && channel.readyState === "open") { out.forEach((e) => channel.send(JSON.stringify(e))); return true; }
+      if (channel && channel.readyState === "open") { channel.send(JSON.stringify(event)); return true; }
     } catch { /* channel closing */ }
     return false;
-  }
-  function sendRaw(event) {
-    try { if (channel && channel.readyState === "open") channel.send(JSON.stringify(event)); } catch { /* closing */ }
-  }
-
-  // ── Realtime ⇄ the page's Live events ──
-  const systemItem = (text) => ({
-    type: "conversation.item.create",
-    item: { type: "message", role: "system", content: [{ type: "input_text", text }] },
-  });
-  function toRealtime(event) {
-    switch (event.type) {
-      case "session.instructions.append": return [systemItem(event.content)]; // context, no reply
-      case "session.commentary.append": return [systemItem(event.content), { type: "response.create" }];
-      case "session.input_audio.mute": // paused: the model hears silence, and its answer stops
-        setMicSending(false);
-        return [{ type: "response.cancel" }, { type: "output_audio_buffer.clear" }];
-      case "session.input_audio.unmute": setMicSending(true); return [];
-      case "session.close": return []; // closing the peer connection ends a Realtime call
-      default: return [event];
-    }
-  }
-  function setMicSending(on) {
-    if (pc) pc.getSenders().forEach((sender) => { if (sender.track) sender.track.enabled = on; });
-  }
-
-  // Realtime treats any sound as a turn and would answer a cough, a quiet «угу» or the TV (Live
-  // tells those apart itself). So it never answers by itself (server/realtime_engine.py); for each
-  // turn the page judges, from the same cues Live has:
-  //  - the words: a cough / «фу» is noise; «угу», «ага», «так» alone is listening (unless she just
-  //    asked something);
-  //  - the distance: the gate's near-voice detector says whether the person at the mic spoke;
-  //  - for a far voice without her name: the model itself, asked out of band «addressed to you?»
-  //    (it heard the audio) — background talk and the TV get no answer.
-  // A turn's bubble is placed when it ends (its words come later, after an answer may have started),
-  // so the log keeps the order; a skipped turn stays greyed out.
-  const NOISE_WORDS = new Set(["фу", "кхм", "кх", "кхе", "апчхи", "тьфу", "пф", "пфф", "хм", "мм", "ммм", "м", "е", "ее", "еее",
-    "ах", "ех", "ух", "кашель", "кашляє"]);
-  // Measured on gpt-realtime-2.1 (5/5 on follow-ups vs. talk to others, a TV newsreader): asking
-  // about the «audio turn» made it answer no to a plain question addressed to her.
-  const ADDRESSED_CHECK = "Do not reply to the user. Decide only whether the user's last turn was said to you, the " +
-    "assistant, and expects your reply or action: a question or request to you, an answer to what you just asked, or " +
-    "talk with you. Answer no for talk between other people, TV or radio, someone on the phone, a cough or other noise, " +
-    "a listener's «угу». Output exactly one word: yes or no.";
-  const rtTurns = new Map(); // item_id → { el, timer, near }
-  const rtChecks = new Map(); // response id of an «addressed?» check → { item, text }
-  const rtCheckWait = new Map(); // item_id → { timer, el } while its check runs
-  let rtSpeechAt = 0; // when Realtime heard the current turn start
-  let rtNearAt = 0; // when the gate last reported the near voice starting or stopping
-
-  function rtTurnEnded(itemId) {
-    openMsg.assistant = null; // her next answer goes below this turn, not into her last bubble
-    const el = addLine("user pending", "…");
-    // No words within a few seconds (the transcription failed): answer — the model heard the audio.
-    const timer = setTimeout(() => rtHeard(itemId, null), 3000);
-    const near = !gate || barge.speaking || rtNearAt >= rtSpeechAt - 1500;
-    rtTurns.set(itemId, { el, timer, near });
-  }
-
-  // text: the turn's words; "" = nothing intelligible; null = unknown (transcription failed).
-  function rtHeard(itemId, text) {
-    const turn = rtTurns.get(itemId);
-    rtTurns.delete(itemId);
-    if (turn) clearTimeout(turn.timer);
-    const verdict = text === null ? "answer" : rtJudge(text, !turn || turn.near);
-    if (verdict === "skip") rtForget(itemId);
-    if (turn) {
-      if (!text) {
-        turn.el.remove();
-      } else if (verdict === "skip") {
-        rtSkipped(turn.el, text);
-      } else {
-        turn.el.textContent = "";
-        turn.el.className = "msg user";
-        openMsg.user = turn.el; // the words go into this bubble
-        lastDeltaAt.user = Date.now();
-      }
-    }
-    // After the words have gone through the page (barge-in, «Дякую, Єва»): answer if still on.
-    if (verdict === "answer") setTimeout(rtRespond, 0);
-    else if (verdict === "ask") rtAsk(itemId, turn && turn.el);
-    return text && verdict !== "skip" ? { type: "session.input_transcript.delta", delta: text } : null;
-  }
-
-  // A turn not for her leaves the conversation: Realtime re-reads (and bills) the whole context with
-  // every reply, and the TV or talk nearby there only pulls her off topic. The sideband sees the
-  // delete and drops it from the history of later calls too.
-  function rtForget(itemId) {
-    if (itemId) sendRaw({ type: "conversation.item.delete", item_id: String(itemId) });
-  }
-
-  function rtSkipped(el, text) {
-    if (!el) return;
-    if (text) el.textContent = text;
-    el.className = "msg user skipped";
-    el.title = "Не до Єви — без відповіді";
-  }
-
-  // "answer" | "skip" | "ask" (the model decides).
-  function rtJudge(text, near) {
-    const words = splitWords(text).flatMap((w) => w.split("-")).filter(Boolean); // «кхм-кхм», «ага-ага»
-    if (!words.length || words.every((w) => NOISE_WORDS.has(w))) return "skip";
-    if (words.length <= 3 && words.every((w) => BACKCHANNEL.has(w) || NOISE_WORDS.has(w))) return lastAnswerAsked() ? "answer" : "skip";
-    if (near || evaTokens(text).some((w) => EVA_NAME_FORMS.has(w))) return "answer";
-    return "ask";
-  }
-
-  function lastAnswerAsked() {
-    const bubbles = $("log").querySelectorAll(".msg.assistant");
-    const last = bubbles.length ? bubbles[bubbles.length - 1].textContent.trim() : "";
-    return /\?[»")]*$/.test(last);
-  }
-
-  // Out of band (not in the conversation, text only): the model says whether the turn was for her.
-  function rtAsk(itemId, el) {
-    const timer = setTimeout(() => { rtCheckWait.delete(itemId); rtRespond(); }, 2500); // no verdict in time: answer
-    rtCheckWait.set(itemId, { timer, el });
-    const bubbles = $("log").querySelectorAll(".msg.assistant");
-    const said = bubbles.length ? bubbles[bubbles.length - 1].textContent.trim().slice(-300) : "";
-    // gpt-realtime-2.x reasons first and that counts against max_output_tokens: at 16 it ran out
-    // before the word (empty = «no», she ignored the user). Minimal reasoning: ~0.5 s instead of ~0.9 s.
-    // Only this turn and her last words as input, not the whole call: same verdicts (measured), far fewer tokens.
-    sendRaw({ type: "response.create", response: {
-      conversation: "none", output_modalities: ["text"], max_output_tokens: 256, reasoning: { effort: "minimal" },
-      metadata: { purpose: "addressed", item: String(itemId) },
-      instructions: ADDRESSED_CHECK + (said ? " Your last words were: «" + said + "»" : ""),
-      input: [{ type: "item_reference", id: String(itemId) }],
-    } });
-  }
-
-  function rtCheckDone(check) {
-    const wait = rtCheckWait.get(check.item);
-    if (!wait) return; // timed out: already answered
-    rtCheckWait.delete(check.item);
-    clearTimeout(wait.timer);
-    if (/^[\s"'«.*]*(yes|так)/i.test(check.text)) { rtRespond(); return; }
-    rtSkipped(wait.el, "");
-    rtForget(check.item);
-    eva.thinking = false;
-    showState();
-  }
-
-  // Answer the user's turn; if she is still talking, what they said is an interruption.
-  function rtRespond() {
-    if (eva.mode !== "active" || sessionEngine !== "realtime") return;
-    if (barge.audible) {
-      sendRaw({ type: "response.cancel" });
-      sendRaw({ type: "output_audio_buffer.clear" });
-    }
-    sendRaw({ type: "response.create" });
-  }
-
-  function fromRealtime(e) {
-    switch (e.type) {
-      case "session.created": return { type: "session.started" };
-      case "input_audio_buffer.speech_started":
-        rtSpeechAt = Date.now();
-        return null;
-      case "input_audio_buffer.committed":
-        if (eva.mode === "active") rtTurnEnded(e.item_id);
-        return null;
-      case "conversation.item.input_audio_transcription.delta":
-        return null; // the whole turn is judged at once
-      case "conversation.item.input_audio_transcription.completed":
-        return rtHeard(e.item_id, (e.transcript || "").trim());
-      case "conversation.item.input_audio_transcription.failed":
-        return rtHeard(e.item_id, null);
-      case "response.output_audio_transcript.delta":
-        return { type: "session.output_transcript.delta", delta: e.delta || "" };
-      case "response.created": {
-        const meta = (e.response && e.response.metadata) || {};
-        if (meta.purpose === "addressed") rtChecks.set(e.response.id, { item: meta.item, text: "" });
-        return null;
-      }
-      case "response.output_text.delta": {
-        const check = rtChecks.get(e.response_id);
-        if (check) check.text += e.delta || "";
-        return null;
-      }
-      case "response.done": {
-        meterUsage(e.response && e.response.usage); // Realtime bills what was heard and said
-        const id = e.response && e.response.id;
-        const check = rtChecks.get(id);
-        if (check) { rtChecks.delete(id); rtCheckDone(check); }
-        return null;
-      }
-      case "error": {
-        const code = e.error && e.error.code;
-        return code === "response_cancel_not_active" || code === "conversation_already_has_active_response" ? null : e;
-      }
-      default:
-        return null;
-    }
   }
 
   const eventId = (prefix) => prefix + "_" + Math.random().toString(16).slice(2, 10);
@@ -1025,7 +774,6 @@
       mic = stream;
       const peer = new RTCPeerConnection();
       pc = peer;
-      sessionEngine = engine;
       peer.ontrack = (e) => attachVoice(e.streams[0]);
       // A voice switch keeps the gate too (it is built on the same mic): no new AudioContext.
       if (gate && (gate.stream !== mic || !gate.alive())) { gate.close(); gate = null; }
@@ -1055,7 +803,7 @@
       if (!res.ok) throw new Error("Сервер відповів " + res.status);
       const { sdp } = await res.json();
       if (my !== attempt) return;
-      meterOpen(peer, sessionEngine);
+      meterOpen(peer);
       await peer.setRemoteDescription({ type: "answer", sdp });
     } catch (err) {
       if (my !== attempt) return;
@@ -1065,9 +813,9 @@
     }
   }
 
-  // What a new call is opened with: voice, delivery, engine.
+  // What a new call is opened with: voice and delivery.
   const sessionBody = (extra) => Object.assign({
-    voice: voice || undefined, speed, style, prompt: promptVariant, engine,
+    voice: voice || undefined, speed, style, prompt: promptVariant,
   }, extra);
 
   // The offer's Opus line says how we want to receive her voice. Browser defaults leave the bitrate
@@ -1143,11 +891,6 @@
     else if (gate) { gate.close(); gate = null; }
     if (mic && !keepMic) { mic.getTracks().forEach((t) => t.stop()); mic = null; }
     channel = null;
-    rtTurns.forEach((turn) => { clearTimeout(turn.timer); turn.el.remove(); });
-    rtTurns.clear();
-    rtCheckWait.forEach((wait) => clearTimeout(wait.timer));
-    rtCheckWait.clear();
-    rtChecks.clear();
     closeBubbles();
     bargeReset();
     barge.recentAssistant = "";
@@ -1200,7 +943,7 @@
         if (me && me.keep_session) { schedulePauseClose(pausedAt); return; }
       }
       teardown({ keepMic: true }); // the wake phrase listener needs it anyway; the next wake skips getUserMedia
-    }, sessionEngine === "realtime" ? REALTIME_PAUSE_CLOSE_MS : PAUSE_CLOSE_MS);
+    }, PAUSE_CLOSE_MS);
   }
 
   function pauseEva() {
@@ -1390,9 +1133,9 @@
     showState();
     const me = await fetchMe();
     if (eva.mode !== "connecting") return; // the user did something meanwhile
-    if (me && me.reconnect && engine === "live" && voices.some((x) => x.id === me.voice)) {
+    if (me && me.reconnect && voices.some((x) => x.id === me.voice)) {
       voice = me.voice;
-      store.set(voiceKey(), voice);
+      store.set("va-voice", voice);
       showVoice();
       addLine("system", "Голос змінено на «" + voiceLabel(voice) + "»" + (me.voice_note ? " (" + me.voice_note + ")" : "") + ".");
       eva.mode = "switching";
@@ -1406,8 +1149,6 @@
   }
 
   // ── voice settings ──
-  // web/samples/: every GPT-Live voice; of Realtime's, the ones it shares with Live.
-  const SAMPLES = new Set(["gleam", "bossa", "willow", "marin", "meridian", "ripple", "stone", "tempo", "verse", "cedar"]);
   const voiceLabel = (id) => (voices.find((x) => x.id === id) || { label: id }).label;
 
   // The picker may show a voice that isn't applied yet (to listen to it first).
@@ -1416,17 +1157,15 @@
     const picked = voices.find((x) => x.id === $("voice").value);
     $("voiceInfo").textContent = picked ? picked.description : "";
     $("voiceApply").hidden = !picked || picked.id === voice;
-    $("voicePreview").disabled = !picked || !SAMPLES.has(picked.id);
-    $("voicePreview").title = picked && !SAMPLES.has(picked.id) ? "Зразка цього голосу ще немає — послухайте в розмові." : "";
   }
 
   async function loadVoices() {
     try {
-      const res = await fetch(BACKEND + "/api/voices" + (engine === "realtime" ? "?engine=realtime" : ""));
+      const res = await fetch(BACKEND + "/api/voices");
       if (!res.ok) return;
       const data = await res.json();
       voices = data.voices || [];
-      voice = store.get(voiceKey()) || "";
+      voice = store.get("va-voice") || "";
       if (!voices.some((x) => x.id === voice)) voice = data.default;
       if (!voices.some((x) => x.id === voice) && voices.length) voice = voices[0].id;
       const group = (label, list) => {
@@ -1440,6 +1179,7 @@
         group("Чоловічі", voices.filter((x) => !x.feminine)),
       );
       $("voice").disabled = !voices.length;
+      $("voicePreview").disabled = !voices.length;
       showVoice();
     } catch { /* backend offline: picker stays disabled */ }
   }
@@ -1451,13 +1191,11 @@
     const id = $("voice").value;
     if (!voices.some((x) => x.id === id) || id === voice) return;
     voice = id;
-    store.set(voiceKey(), id);
+    store.set("va-voice", id);
     showVoice();
     // Not awaited: the new call carries the voice itself (/api/session), this only keeps the server
-    // in step (it remembers Live's voice; Realtime's lives only here).
-    if (engine === "live") {
-      fetch(BACKEND + "/api/voice", { method: "POST", headers: headers(), body: JSON.stringify({ voice: id }) }).catch(() => {});
-    }
+    // in step (it remembers the voice).
+    fetch(BACKEND + "/api/voice", { method: "POST", headers: headers(), body: JSON.stringify({ voice: id }) }).catch(() => {});
     if (eva.mode === "active") {
       const later = !voiceNow && answering();
       addLine("system", later
@@ -1489,7 +1227,7 @@
     standby = null;
     if (!s) return;
     clearTimeout(s.timer);
-    try { if (s.engine === "live" && s.channel.readyState === "open") s.channel.send(JSON.stringify({ type: "session.close" })); } catch { /* closing */ }
+    try { if (s.channel.readyState === "open") s.channel.send(JSON.stringify({ type: "session.close" })); } catch { /* closing */ }
     if (s.peer) closePeer(s.peer);
   }
 
@@ -1517,7 +1255,7 @@
   async function switchVoiceFast(announce = false, command = false) {
     dropStandby();
     if (!pc || !mic) { restartSession("switching", { switched: true }); return; }
-    const s = { voice, engine, mark: logMark(), ready: false, announce, command };
+    const s = { voice, mark: logMark(), ready: false, announce, command };
     standby = s;
     const fail = () => {
       if (standby !== s) return;
@@ -1552,7 +1290,7 @@
       if (!res.ok) throw new Error("session " + res.status);
       const { sdp } = await res.json();
       if (standby !== s) return;
-      meterOpen(peer, s.engine);
+      meterOpen(peer);
       await peer.setRemoteDescription({ type: "answer", sdp });
     } catch {
       fail();
@@ -1588,7 +1326,6 @@
     pc = s.peer;
     channel = s.channel;
     sessionVoice = s.voice;
-    sessionEngine = s.engine;
     wireCall(s.peer, s.channel);
     attachVoice(s.stream);
     s.peer.ontrack = (e) => attachVoice(e.streams[0]);
@@ -1695,7 +1432,6 @@
     };
   }
 
-  const RT_SPEED = { slow: 0.9, normal: 1, fast: 1.12 }; // as server/realtime_engine.py
   function sendDeliveryWhenQuiet() {
     clearTimeout(deliveryTimer);
     if (!pendingDelivery) return;
@@ -1705,9 +1441,6 @@
       return;
     }
     sendEvent({ type: "session.instructions.append", content: pendingDelivery, delegation_id: null, event_id: eventId("style") });
-    if (sessionEngine === "realtime") {
-      sendRaw({ type: "session.update", session: { type: "realtime", audio: { output: { speed: RT_SPEED[speed] || 1 } } } });
-    }
     pendingDelivery = "";
   }
 
@@ -1736,7 +1469,6 @@
   // «зміни голос …» in the Live transcript too (browsers without a recogniser, or it missed it):
   // once the user pauses, like voice/options.py on the server — which now waits for the page.
   function checkVoiceRequest(delta) {
-    if (sessionEngine !== "live") return; // Realtime: the voice is picked on the page
     eva.inputBuf = (eva.inputBuf + delta).slice(-300);
     clearTimeout(eva.voiceCheckTimer);
     if (!VOICE_REQUEST_RE.test(eva.inputBuf)) return;
@@ -1750,14 +1482,14 @@
   // Heard «зміни голос …» ourselves: the page switches without a gap; the server's own transcript
   // check is only a fallback (it waits longer and dedups with this).
   async function requestVoiceChange(text) {
-    if (eva.voiceRequestBusy || sessionEngine !== "live") return;
+    if (eva.voiceRequestBusy) return;
     eva.voiceRequestBusy = true;
     try {
       const res = await fetch(BACKEND + "/api/voice-request", { method: "POST", headers: headers(), body: JSON.stringify({ text }) });
       const data = res.ok ? await res.json() : null;
       if (data && data.switched && eva.mode === "active" && voices.some((x) => x.id === data.voice)) {
         voice = data.voice;
-        store.set(voiceKey(), voice);
+        store.set("va-voice", voice);
         showVoice();
         addLine("system", "Голос змінено на «" + voiceLabel(voice) + "» (почула: «" + text.trim().slice(0, 80) + "»).");
         // The old call goes on for a few seconds: it must not answer the request meanwhile.
@@ -1834,9 +1566,9 @@
       assistantName = me.assistant_name || ""; // renamed by voice: the copied conversation uses it
       const { voice: serverVoice, speed: serverSpeed, style: serverStyle } = me;
       // Set on the server only when chosen there (e.g. asked by voice) — adopt it then.
-      if (engine === "live" && serverVoice && serverVoice !== voice && voices.some((x) => x.id === serverVoice)) {
+      if (serverVoice && serverVoice !== voice && voices.some((x) => x.id === serverVoice)) {
         voice = serverVoice;
-        store.set(voiceKey(), voice);
+        store.set("va-voice", voice);
         showVoice();
       }
       // «Говори повільніше» by voice: show it (a restarted server reports "normal" — keep ours then).
@@ -1868,33 +1600,7 @@
     else if (eva.mode === "waiting") restartSession("switching", {});
   }
 
-  // ── engine: GPT-Live | Realtime ──
-  const ENGINE_INFO = {
-    live: "GPT-Live: підтакує, поки ви говорите, чує тон голосу. Оплата — за кожну хвилину відкритої сесії.",
-    realtime: "Realtime: відповідає, коли ви договорили, думає перед відповіддю і точніше тримає прохання. " +
-      "Свої голоси, міняються тут, на сторінці. Оплата — за сказане й почуте, тиша безкоштовна.",
-  };
-  function showEngine() {
-    document.querySelectorAll(".engine-opt").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.engine === engine)));
-    $("engineInfo").textContent = ENGINE_INFO[engine];
-  }
-
-  // A new engine: its voices in the picker, and a running call moves over (a new call beside the
-  // current one, as for a voice change — memory carries over).
-  async function changeEngine(next) {
-    if (next === engine) return;
-    engine = next;
-    store.set("va-engine", engine);
-    stopPreview();
-    showEngine();
-    await loadVoices();
-    if (eva.mode === "active") switchVoiceFast(false, true);
-    else if (eva.mode === "waiting") restartSession("switching", {});
-  }
-
   async function init() {
-    document.querySelectorAll(".engine-opt").forEach((b) => b.addEventListener("click", () => changeEngine(b.dataset.engine)));
-    showEngine();
     $("talk").addEventListener("click", () => {
       if (eva.mode !== "off") { stop(); return; }
       meterReset(); // a new call counts from zero

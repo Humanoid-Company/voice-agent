@@ -2,9 +2,9 @@
 
     uvicorn server.app:app --host 0.0.0.0 --port 8000
 
-The browser (web/, deployed on Vercel) talks to OpenAI directly over WebRTC for audio — GPT-Live,
-or Realtime (server/realtime_engine.py); this server only:
-  - creates the session from the browser's SDP offer (the OpenAI key never leaves it),
+The browser (web/, deployed on Vercel) talks to OpenAI GPT-Live directly over WebRTC for
+audio; this server only:
+  - creates the Live session from the browser's SDP offer (the OpenAI key never leaves it),
   - attaches a sideband to that session and runs the tools (voice, name, language…).
 
 Env: OPENAI_API_KEY, PUBLIC_BACKEND_URL, FRONTEND_ORIGINS, optional ACCESS_CODE. See DEPLOY.md.
@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -33,17 +33,14 @@ from config import (
     OPENAI_LIVE_VOICE,
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
-from prompts.live_prompt import PROMPT_VARIANTS, build_live_prompt, build_realtime_prompt
+from prompts.live_prompt import PROMPT_VARIANTS, build_live_prompt
 from server.live_bridge import SidebandToolBridge
-from server.realtime_engine import RealtimeBridge, history_text, realtime_session
 from server.web_users import WebUser, WebUserRegistry
 from tools.live_schemas import LIVE_BACKEND_TOOLS
 from voice.background import wake_commentary
 from voice.delegation import responses_delegation
 from voice.options import (
     LANGUAGE_OPTIONS,
-    REALTIME_DEFAULT_VOICE,
-    REALTIME_PERSONAS,
     SPEED_OPTIONS,
     STYLE_OPTIONS,
     VOICE_PERSONAS,
@@ -163,8 +160,6 @@ class SessionRequest(BaseModel):
     keep_old: bool = False
     # Delivery prompt: v4 (default), v3, v2 or v1.
     prompt: str | None = None
-    # Engine: "live" (GPT-Live) or "realtime" (its own preset voices, picked on the page).
-    engine: str = "live"
 
 
 # A kept old call still open this long after its successor opened is closed anyway (page gone).
@@ -208,9 +203,7 @@ async def create_session(
 ) -> dict:
     """Browser SDP offer in → SDP answer out; tools run here over a sideband."""
     user = _user(x_client_id, x_access_code)
-    realtime = body.engine == "realtime"
-    # A Realtime voice is the page's choice for that engine: GPT-Live's own stays as it was.
-    if not realtime and body.voice and body.voice.strip().lower() in VOICE_PERSONAS:
+    if body.voice and body.voice.strip().lower() in VOICE_PERSONAS:
         user.voice = body.voice.strip().lower()
     if body.speed in SPEED_OPTIONS:
         user.speed = body.speed
@@ -221,8 +214,6 @@ async def create_session(
     if body.user_text and body.user_text.strip():
         user.conversation.add("user", body.user_text.strip()[:500])
         user.conversation.end_turn()
-    if realtime:
-        return await _create_realtime(body, user)
     try:
         result = await openai_client.live.create(
             session=_session_config(user), transport={"type": "webrtc", "sdp": body.sdp}
@@ -262,61 +253,6 @@ async def create_session(
     return {"sdp": result.transport.sdp, "session_id": session_id}
 
 
-async def _create_realtime(body: SessionRequest, user: WebUser) -> dict:
-    """The Realtime engine: a WebRTC call in one of its preset voices; the sideband runs the tools
-    and keeps the transcript. The conversation so far goes into the instructions."""
-    language = LANGUAGE_OPTIONS.get(user.language, LANGUAGE_OPTIONS["uk"])
-    voice = body.voice if body.voice in REALTIME_PERSONAS else REALTIME_DEFAULT_VOICE
-    # Speed is the session's own parameter here; the manner stays an instruction.
-    instructions = build_realtime_prompt(
-        language_name=language,
-        assistant_name=user.assistant_name,
-        today=local_today(),
-        voice=voice,
-        delivery=delivery_instruction("normal", user.style),
-        variant=user.prompt_variant,
-        history=history_text(user.conversation),
-    ) + _WEB_NOTE
-    try:
-        result = await openai_client.realtime.calls.create(
-            sdp=body.sdp,
-            session=realtime_session(instructions=instructions, language=user.language, voice=voice, speed=user.speed),
-        )
-    except Exception as exc:
-        logger.exception("realtime.session.create_failed")
-        raise HTTPException(status_code=502, detail=f"realtime_create_failed: {type(exc).__name__}") from exc
-    # The call id is only in the Location header: /v1/realtime/calls/{call_id}
-    call_id = (result.response.headers.get("location") or "").rstrip("/").rsplit("/", 1)[-1]
-    if not call_id:
-        raise HTTPException(status_code=502, detail="realtime_no_call_id")
-    old_bridges = list(user.bridges)
-    if not body.keep_old:
-        for old in old_bridges:
-            try:
-                await old.close()
-            except Exception:
-                logger.debug("closing old session failed", exc_info=True)
-    bridge = RealtimeBridge(
-        client=openai_client,
-        call_id=call_id,
-        executor=user.executor,
-        conversation=user.conversation,
-        on_closed=user.bridges.discard,
-        max_duration_s=MAX_SESSION_S,
-    )
-    user.bridges.add(bridge)
-    task = asyncio.create_task(bridge.run())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-    if body.keep_old:
-        for old in old_bridges:
-            closer = asyncio.create_task(_close_if_replaced(old, bridge, KEEP_OLD_MAX_S))
-            _background_tasks.add(closer)
-            closer.add_done_callback(_background_tasks.discard)
-    logger.info("realtime.session.created call_id=%s voice=%s keep_old=%s", call_id, voice, body.keep_old)
-    return {"sdp": result.text, "session_id": call_id}
-
-
 @app.get("/api/me")
 def me(
     x_client_id: str | None = Header(default=None),
@@ -336,16 +272,13 @@ def me(
 
 
 @app.get("/api/voices")
-def voices(engine: str = Query(default="live")) -> dict:
-    """Voices for the page's picker (GPT-Live's, or Realtime's own presets); the chosen one applies
-    from the next call."""
-    realtime = engine == "realtime"
-    personas = REALTIME_PERSONAS if realtime else VOICE_PERSONAS
+def voices() -> dict:
+    """Voices for the page's picker; the chosen one applies from the next call."""
     return {
-        "default": REALTIME_DEFAULT_VOICE if realtime else OPENAI_LIVE_VOICE,
+        "default": OPENAI_LIVE_VOICE,
         "voices": [
             {"id": p.voice, "label": p.label, "description": p.description, "feminine": p.feminine}
-            for p in personas.values()
+            for p in VOICE_PERSONAS.values()
         ],
     }
 

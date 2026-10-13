@@ -1,7 +1,7 @@
-"""Short conversation prompt for gpt-live-1 (voice layer only), and its Realtime version."""
+"""Short conversation prompt for gpt-live-1 (voice layer only)."""
 from __future__ import annotations
 
-from voice.options import REALTIME_PERSONAS, VOICE_PERSONAS
+from voice.options import VOICE_PERSONAS
 
 _LIVE_PROMPT_STYLE: str = (
     "Role: You are Єва, a personal voice assistant you can simply talk to. Character: friendly "
@@ -380,9 +380,8 @@ PROMPT_VARIANTS: tuple[str, ...] = ("v1", "v2", "v3", "v4")
 
 
 def _person(variant: str) -> str:
-    """v3's «being a person» block — what she says, so it goes with any delivery. GPT-Live's v4 builds
-    its own; for Realtime (its own length rules) v4 is v3."""
-    return _LIVE_PROMPT_PERSON if variant in ("v3", "v4") else ""
+    """v3's «being a person» block — what she says, so it goes with any delivery (v4 builds its own)."""
+    return _LIVE_PROMPT_PERSON if variant == "v3" else ""
 
 def build_live_prompt(
     *,
@@ -411,64 +410,3 @@ def build_live_prompt(
     if assistant_name and assistant_name != "Єва":
         extra += f" Your name is {assistant_name}. Introduce yourself with that name."
     return prompt + extra
-
-
-# The Realtime engine (the page's second choice): it hears the whole turn and answers after it, and
-# the page decides which turns are for her (server/realtime_engine.py, web/app.js). gpt-realtime-2.x
-# reasons before it speaks and by default says a preamble first — in a conversation that sounds
-# like a call centre, so it is kept for tools only. Rules from OpenAI's voice prompting guide.
-_REALTIME_NOTE: str = (
-    "How this call works:\n"
-    "- You hear the user's whole turn and answer once they have finished; you don't make listening "
-    "sounds while they talk. The app filters what reaches you: a cough, a lone «угу» or talk "
-    "between other people is not passed on as a request.\n"
-    "- Think silently and briefly. No preamble before an ordinary answer — your first words are "
-    "the answer itself, not «Добре, зараз скажу», «Хороше питання», «Дай подумати». Only before a "
-    "tool call: at most one short word («Так.», «Добре.»).\n"
-    "- Length: you tend to say too much. One to three short spoken sentences, said as one breath "
-    "of talk — never two paragraphs, never both sides of a choice: when asked which, say which "
-    "and why in a few words. Longer only when they ask for detail or a story.\n"
-    "- Variety: never begin two replies in a row the same way, and never say a sentence you have "
-    "already said in this conversation. The example lines in these instructions show the tone — "
-    "never say them word for word.\n"
-    "- Unclear audio (noise, cut off, mumbled, half a sentence): don't guess and don't reason about "
-    "it — ask briefly and naturally, a different way each time.\n"
-    "- Language: never switch because of an accent, surzhyk or a single Russian or English word.\n"
-    "- Tools: you call them yourself — set_assistant_name, change_language, set_voice_style (speed "
-    "or manner), end_conversation. Wherever these instructions say «delegate», call the tool. The "
-    "voice itself is picked on the page in this mode: if asked to change it, say in a few words "
-    "that the voice is chosen in «Голос Єви» on the page (this overrides the voice-change rules "
-    "above).\n"
-)
-
-
-def build_realtime_prompt(
-    *,
-    language_name: str,
-    assistant_name: str | None,
-    today: str,
-    voice: str | None = None,
-    delivery: str = "",
-    variant: str = "v3",
-    history: str = "",
-) -> str:
-    """Instructions for the Realtime engine: the Live prompt without the listening backchannels
-    (Realtime answers after the turn) plus how a Realtime call works. history: the conversation so
-    far — in the instructions, so the first reply of a new call already knows it."""
-    persona = REALTIME_PERSONAS.get(voice or "")
-    style = _LIVE_PROMPT_DELIVERY if variant == "v1" else _LIVE_PROMPT_DELIVERY_V2
-    prompt = (
-        _LIVE_PROMPT_STYLE + _person(variant) + style + (persona.instructions() + "\n\n" if persona else "")
-        + _LIVE_PROMPT_HEAD + _LIVE_PROMPT_TAIL + "\n" + _REALTIME_NOTE
-    )
-    prompt += f"\nToday is {today}. Speak exclusively in {language_name}."
-    if delivery:
-        prompt += f" {delivery}"
-    if assistant_name and assistant_name != "Єва":
-        prompt += f" Your name is {assistant_name}. Introduce yourself with that name."
-    if history:
-        prompt += (
-            "\n\nThe conversation so far (from earlier calls; you remember it — never repeat or retell "
-            "your past replies unless asked):\n" + history
-        )
-    return prompt

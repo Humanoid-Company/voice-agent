@@ -40,28 +40,6 @@ OPENAI_LIVE_BACKEND_EFFORT: str = os.getenv("OPENAI_LIVE_BACKEND_EFFORT", "").st
 OPENAI_LIVE_VOICE: str = os.getenv("OPENAI_LIVE_VOICE", "gleam")
 OPENAI_LIVE_AUDIO_RATE: int = int(os.getenv("OPENAI_LIVE_AUDIO_RATE", "24000"))
 
-# ── OpenAI Realtime (the web page's second engine) ────────────────────────────
-# The reasoning 2.x line: better instruction following and calmer with silence, noise and
-# interruptions than gpt-realtime. «-mini» is cheaper.
-OPENAI_REALTIME_MODEL: str = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
-# minimal|low|medium|high — every step up adds a pause before she speaks. Empty = model default.
-OPENAI_REALTIME_EFFORT: str = os.getenv("OPENAI_REALTIME_EFFORT", "low").strip().lower()
-# The user's words for the page (it decides whether a turn is for her) and for the history.
-OPENAI_REALTIME_TRANSCRIBE: str = os.getenv("OPENAI_REALTIME_TRANSCRIBE", "gpt-4o-mini-transcribe")
-# End of the user's turn: "semantic" — a model judges they have finished (no cut-off at a pause
-# mid-thought, like Live); "server" — plain silence of REALTIME_SILENCE_MS.
-REALTIME_TURN_DETECTION: str = os.getenv("REALTIME_TURN_DETECTION", "semantic").strip().lower()
-# semantic: low waits longest for a finished thought, high answers soonest; auto = medium.
-REALTIME_EAGERNESS: str = os.getenv("REALTIME_EAGERNESS", "auto").strip().lower()
-REALTIME_SILENCE_MS: int = int(os.getenv("REALTIME_SILENCE_MS", "600"))
-# Realtime bills tokens, and every reply reads the whole call again (cached, but still billed).
-# Past this many tokens after the instructions the oldest turns are dropped, down to 75% of it
-# (dropping in steps keeps the cache warm). Her speech is ~20 tokens a second: 16k ≈ 10+ minutes.
-# Earlier calls stay in the instructions as text (history_text).
-REALTIME_MAX_CONTEXT_TOKENS: int = int(os.getenv("REALTIME_MAX_CONTEXT_TOKENS", "16000"))
-# A runaway answer is cut here (reasoning counts too): ~1 minute of her speech.
-REALTIME_MAX_OUTPUT_TOKENS: int = int(os.getenv("REALTIME_MAX_OUTPUT_TOKENS", "1500"))
-
 # ── Live voice UX: local barge-in + busy cues ─────────────────────────────────
 # Local WebRTC VAD stops assistant playback before transcripts arrive.
 VOICE_LOCAL_BARGE_IN: bool = os.getenv("VOICE_LOCAL_BARGE_IN", "true").lower() in (

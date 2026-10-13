@@ -108,7 +108,7 @@ uv run python main.py
 | `PUBLIC_BACKEND_URL`, `FRONTEND_ORIGINS`, `ACCESS_CODE` | веб-бекенд: адреса, дозволені сторінки, пароль |
 | `BACKGROUND_LISTENING` | десктоп: слухати фоном на паузі |
 | `IDLE_PAUSE_SECONDS`, `PAUSE_CLOSE_SECONDS` | десктоп: пауза після тиші (90 с, 0 — ніколи) і скільки пауза тримає сесію відкритою (30 с) |
-| `LIVE_PROMPT_VARIANT` | десктоп: промпт голосу `v1` / `v2` / `v3` (за замовчуванням `v2`) |
+| `LIVE_PROMPT_VARIANT` | десктоп: промпт голосу `v1` / `v2` / `v3` (за замовчуванням `v3`) |
 
 Повний перелік із налаштуваннями перебивання — у `.env.example`.
 

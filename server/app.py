@@ -158,7 +158,7 @@ class SessionRequest(BaseModel):
     # A voice switch opens the new call beside the current one: the page closes the old call
     # itself once the new one has taken over (the old one goes on talking meanwhile).
     keep_old: bool = False
-    # Delivery prompt: v2 (default), v1 or v3.
+    # Delivery prompt: v3 (default), v2 or v1.
     prompt: str | None = None
 
 
@@ -209,7 +209,7 @@ async def create_session(
         user.speed = body.speed
     if body.style in STYLE_OPTIONS:
         user.style = body.style
-    user.prompt_variant = body.prompt if body.prompt in PROMPT_VARIANTS else "v2"
+    user.prompt_variant = body.prompt if body.prompt in PROMPT_VARIANTS else "v3"
     user.reconnect_pending = False
     if body.user_text and body.user_text.strip():
         user.conversation.add("user", body.user_text.strip()[:500])

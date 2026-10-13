@@ -87,8 +87,8 @@ IDLE_PAUSE_SECONDS: float = float(os.getenv("IDLE_PAUSE_SECONDS", "90"))
 # later it opens a new session with the whole history.
 PAUSE_CLOSE_SECONDS: float = float(os.getenv("PAUSE_CLOSE_SECONDS", "30"))
 
-# Delivery prompt (prompts/live_prompt.py): v2 (default), v1 the older one, v3 = v2 + behaves like a person.
-LIVE_PROMPT_VARIANT: str = os.getenv("LIVE_PROMPT_VARIANT", "v2").strip().lower()
+# Delivery prompt (prompts/live_prompt.py): v3 (default) = v2 + behaves like a person, v2, v1 the older one.
+LIVE_PROMPT_VARIANT: str = os.getenv("LIVE_PROMPT_VARIANT", "v3").strip().lower()
 
 # Off by default: the cue is synthesized by a separate TTS voice (TTS_VOICE), so «Угу» came out
 # in a different voice than Єва's. GPT-Live now says the short acknowledgement itself.

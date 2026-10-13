@@ -318,7 +318,7 @@ def build_live_prompt(
     today: str,
     voice: str | None = None,
     delivery: str = "",
-    variant: str = "v2",
+    variant: str = "v3",
 ) -> str:
     # The voice's character goes right after the general delivery rules, where it shapes how
     # every line sounds — appended at the very end of this long prompt it was mostly ignored.

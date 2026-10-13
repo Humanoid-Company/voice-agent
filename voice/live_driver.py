@@ -134,7 +134,7 @@ class LiveDriverMixin:
                     delivery=delivery_instruction(
                         self._memory.get("speed", "normal"), self._memory.get("style", "normal")
                     ),
-                    variant=LIVE_PROMPT_VARIANT if LIVE_PROMPT_VARIANT in PROMPT_VARIANTS else "v2",
+                    variant=LIVE_PROMPT_VARIANT if LIVE_PROMPT_VARIANT in PROMPT_VARIANTS else "v3",
                 ),
                 mic_read_chunk=mic.read_chunk,
                 mic_drain=mic.drain,

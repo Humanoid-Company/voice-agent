@@ -31,10 +31,10 @@
   if (!(volume >= 0 && volume <= 1)) volume = 1;
 
   const DEBUG = params.get("debug") === "1";
-  // Delivery prompt (prompts/live_prompt.py): v2 is the usual one, v1 the older one, v3 is v2 plus
-  // behaving like a person. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
+  // Delivery prompt (prompts/live_prompt.py): v3 is the usual one (v2 plus behaving like a person),
+  // v2 just the delivery, v1 the older one. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
   // voice change does.
-  let promptVariant = params.get("prompt") || store.get("va-prompt") || "v2";
+  let promptVariant = params.get("prompt") || store.get("va-prompt") || "v3";
   let pc = null;
   let channel = null;
   let sessionVoice = ""; // the voice the current call was opened with
@@ -1608,7 +1608,7 @@
     $("voiceNow").addEventListener("change", toggleVoiceNow);
     $("cleanVoice").checked = cleanVoice;
     $("cleanVoice").addEventListener("change", toggleCleanVoice);
-    $("promptVariant").value = ["v1", "v3"].includes(promptVariant) ? promptVariant : "v2";
+    $("promptVariant").value = ["v1", "v2"].includes(promptVariant) ? promptVariant : "v3";
     $("promptVariant").addEventListener("change", changePrompt);
     showPromptInfo();
     showVoiceNow();

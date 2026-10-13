@@ -6,4 +6,6 @@ window.APP_CONFIG = {
   // (not while a tool still runs); silence this long during a call pauses her.
   PAUSE_CLOSE_SECONDS: 30,
   IDLE_PAUSE_SECONDS: 90,
+  // Approximate GPT-Live price per open minute, for the call meter under the status line.
+  PRICE_PER_MINUTE_USD: 0.05,
 };

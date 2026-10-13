@@ -124,6 +124,7 @@ h2 label { display: inline; margin: 0; font-weight: inherit; }
 .label-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; }
 .label-row label { margin-bottom: 6px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; }
+.meter { margin: 6px 0 0; font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .log { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
 .msg { padding: 8px 12px; border-radius: 12px; max-width: 90%; white-space: pre-wrap; word-wrap: break-word; }
 .msg.user { background: var(--user); align-self: flex-end; }

@@ -339,6 +339,7 @@
     $("wakeHint").textContent = eva.wakeSupported
       ? "Покличте Єву — «Єва, скажи», «Привіт, Єва», «Гей, Єва», «Єво, слухай». «Дякую, Єва» — пауза. Браузер попросить доступ до мікрофона."
       : "Цей браузер не вміє слухати «Єва, скажи» (потрібен Chrome, Edge або Safari) — користуйтеся кнопками «Пауза» / «Продовжити». «Дякую, Єва» працює.";
+    showMeter(); // «Останній дзвінок» once she is off
   }
 
   // Barge-in, like the desktop app: the Live model alone reacts slowly and keeps talking over
@@ -677,6 +678,52 @@
   // A pause never keeps a call open longer than this, even while the server asks to.
   const PAUSE_HOLD_MAX_MS = 5 * 60 * 1000;
 
+  // ── call meter: minutes and approximate cost from «Почати розмову» to «Завершити» ──
+  // GPT-Live bills every second a session is open, so this adds up every open session: the call,
+  // a pause's first PAUSE_CLOSE_MS, the standby call of a voice switch. A session counts from the
+  // backend's answer (it exists then) until the page closes it. (config.js: PRICE_PER_MINUTE_USD)
+  const PRICE_PER_MIN = Number(CFG.PRICE_PER_MINUTE_USD ?? 0.05);
+  const meter = { doneMs: 0, open: new Map(), timer: null };
+
+  function meterReset() {
+    meter.doneMs = 0;
+    meter.open.clear();
+    showMeter();
+  }
+
+  function meterOpen(peer) {
+    if (peer.signalingState === "closed" || meter.open.has(peer)) return;
+    meter.open.set(peer, Date.now());
+    if (!meter.timer) meter.timer = setInterval(showMeter, 1000);
+    showMeter();
+  }
+
+  // Every call is closed here, so the meter stops counting it.
+  function closePeer(peer) {
+    const since = meter.open.get(peer);
+    if (since !== undefined) {
+      meter.doneMs += Date.now() - since;
+      meter.open.delete(peer);
+    }
+    peer.close();
+    if (!meter.open.size) { clearInterval(meter.timer); meter.timer = null; }
+    showMeter();
+  }
+
+  function showMeter() {
+    const now = Date.now();
+    let ms = meter.doneMs;
+    meter.open.forEach((since) => { ms += now - since; });
+    $("meter").hidden = ms <= 0;
+    if (ms <= 0) return;
+    const sec = Math.floor(ms / 1000);
+    const used = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0") +
+      " · ≈ $" + ((ms / 60000) * PRICE_PER_MIN).toFixed(2);
+    $("meter").textContent = meter.open.size ? "Дзвінок: " + used
+      : eva.mode === "off" ? "Останній дзвінок: " + used
+      : "Дзвінок: " + used + " · на паузі не рахується";
+  }
+
   function touchActivity() {
     clearTimeout(idleTimer);
     if (!pc || eva.mode !== "active") return;
@@ -753,6 +800,7 @@
       if (!res.ok) throw new Error("Сервер відповів " + res.status);
       const { sdp } = await res.json();
       if (my !== attempt) return;
+      meterOpen(peer);
       await peer.setRemoteDescription({ type: "answer", sdp });
     } catch (err) {
       if (my !== attempt) return;
@@ -835,7 +883,7 @@
     clearTimeout(dropTimer);
     clearTimeout(idleTimer);
     sendEvent({ type: "session.close" });
-    if (pc) { pc.close(); pc = null; }
+    if (pc) { closePeer(pc); pc = null; }
     if (gate && keepMic) gate.listenTo(null);
     else if (gate) { gate.close(); gate = null; }
     if (mic && !keepMic) { mic.getTracks().forEach((t) => t.stop()); mic = null; }
@@ -1177,7 +1225,7 @@
     if (!s) return;
     clearTimeout(s.timer);
     try { if (s.channel.readyState === "open") s.channel.send(JSON.stringify({ type: "session.close" })); } catch { /* closing */ }
-    s.peer.close();
+    if (s.peer) closePeer(s.peer);
   }
 
   // The log from `mark` on: what the old call said / heard after the new one got the history.
@@ -1239,6 +1287,7 @@
       if (!res.ok) throw new Error("session " + res.status);
       const { sdp } = await res.json();
       if (standby !== s) return;
+      meterOpen(peer);
       await peer.setRemoteDescription({ type: "answer", sdp });
     } catch {
       fail();
@@ -1506,7 +1555,11 @@
   }
 
   async function init() {
-    $("talk").addEventListener("click", () => (eva.mode === "off" ? start(defaultStart()) : stop()));
+    $("talk").addEventListener("click", () => {
+      if (eva.mode !== "off") { stop(); return; }
+      meterReset(); // a new call counts from zero
+      start(defaultStart());
+    });
     $("pause").addEventListener("click", pauseEva);
     $("resume").addEventListener("click", () => wakeEva(""));
     $("bgListen").addEventListener("change", toggleBgListen);

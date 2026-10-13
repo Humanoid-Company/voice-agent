@@ -13,6 +13,12 @@ BACKEND_PROMPT: str = (
     "TOOLS: set_assistant_name, change_voice, set_voice_style (speed / manner), change_language, "
     "end_conversation. Call a tool only for what the user asked; never invent a result. If a tool "
     "says the request is not possible, pass its message on.\n"
+    "\n"
+    "Sometimes the voice model hands you a question instead of a task (a game, a topic, advice). "
+    "When no tool fits, answer it yourself, in full — not a short result: the three to five points "
+    "that matter, with real names, numbers and steps, as plain spoken text (no lists, no markdown, "
+    "no links), in the user's language. The voice model says it as it is, so a one-line answer "
+    "becomes a one-line reply.\n"
 )
 
 

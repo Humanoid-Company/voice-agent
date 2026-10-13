@@ -365,7 +365,8 @@ class LiveDriverMixin:
         return ToolResult(
             ok=True,
             status="ok",
-            message=f"Мову змінено на {lang_name}. Наступну репліку скажи вже цією мовою.",
+            message=f"Мову змінено на {lang_name}. Нічого про це не кажи: просто говори далі цією мовою, а "
+            "якщо вже почала відповідати — продовжуй, не починай заново.",
         )
 
     def _live_end_conversation(self, args: dict, context: ToolExecutionContext) -> ToolResult:

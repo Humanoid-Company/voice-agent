@@ -530,3 +530,30 @@ def test_prompt_v4_is_the_default_and_v1_v3_only_when_the_page_asks(monkeypatch)
         assert "Voice changes:" in text and "Interruption policy" in text
         assert "You are a voice assistant first" in text and "зараз прикину" in text
     web.users.get(headers["X-Client-Id"]).bridges.clear()
+
+
+def test_language_change_reaches_the_running_call():
+    """The call was started with «Speak exclusively in українською»: without a note in the call itself
+    she went back to Ukrainian a few replies after switching to English."""
+
+    class _Bridge:
+        def __init__(self) -> None:
+            self.notes: list[str] = []
+
+        async def append_instruction(self, text: str, **_) -> None:
+            self.notes.append(text)
+
+    async def scenario():
+        user = web.users.get("language-switch-0123456789")
+        bridge = _Bridge()
+        user.bridges.add(bridge)
+        result = await user.executor.execute("change_language", {"language": "en"}, ToolExecutionContext())
+        await asyncio.sleep(0)  # the note goes out in the background
+        await asyncio.sleep(0)
+        user.bridges.clear()
+        return user, bridge, result
+
+    user, bridge, result = asyncio.run(scenario())
+    assert result.ok and user.language == "en"
+    assert bridge.notes == ["From now on speak exclusively in англійською."]
+    assert "не починай заново" in result.message  # she goes on, no «Sure… Okay… Sure…»

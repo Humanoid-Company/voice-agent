@@ -84,6 +84,14 @@ class WebUser:
         """A pause closes the Live session after 30 s — but not while a tool still runs in it."""
         return any(getattr(bridge, "busy", False) for bridge in self.bridges)
 
+    async def append_instruction(self, text: str) -> None:
+        """Tell the running call something without a reply (e.g. the new language)."""
+        for bridge in list(self.bridges):
+            try:
+                await bridge.append_instruction(text)
+            except Exception:
+                logger.debug("append_instruction failed", exc_info=True)
+
     async def apply_delivery(self) -> None:
         """Push the current speed/style into the running call."""
         text = delivery_instruction(self.speed, self.style, changed=True)
@@ -130,7 +138,20 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         if language not in LANGUAGE_OPTIONS:
             return ToolResult(ok=False, status="needs_more_info", message="Доступні мови: uk, ru, en.")
         user.language = language
-        return ToolResult(ok=True, status="ok", message=f"Далі говорю {LANGUAGE_OPTIONS[language]}.")
+        lang_name = LANGUAGE_OPTIONS[language]
+        # The running call was started with «Speak exclusively in …» the old language: without this
+        # she went back to it a few replies later (the desktop did this already).
+        task = asyncio.get_running_loop().create_task(
+            user.append_instruction(f"From now on speak exclusively in {lang_name}.")
+        )
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+        return ToolResult(
+            ok=True,
+            status="ok",
+            message=f"Мову змінено на {lang_name}. Нічого про це не кажи: просто говори далі цією мовою, а "
+            "якщо вже почала відповідати — продовжуй, не починай заново.",
+        )
 
     def change_voice(args: dict, ctx: ToolExecutionContext) -> ToolResult:
         voice = str(args.get("voice") or "").strip().lower()

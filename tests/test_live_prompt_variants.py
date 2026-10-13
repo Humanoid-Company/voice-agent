@@ -30,7 +30,8 @@ def test_v4_answers_in_full():
     # what kept her answers thin is gone from v4 only
     assert "Brief by default (one to three sentences)" in v3 and "Brief by default" not in v4
     assert "one good thought beats a full overview" in v3 and "one good thought" not in v4
-    assert "end most replies with one short, specific question" not in v4 and "End on the answer" in v4
+    assert "end most replies with one short, specific question" not in v4
+    assert "Answer first, then keep the talk going" in v4 and "never in place of the content" in v4
     assert "Listening like a person" not in v4 and "let them finish" in v4
     # the rest stays: sound, being a person, hearing, interruptions, delegation
     for part in ("you are talking, not reading", "Being a person", "Interruption policy", "Delegation:", "Pronunciation"):

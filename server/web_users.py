@@ -15,8 +15,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from config import WEB_SEARCH_MAX_CALLS_PER_TURN
+from integrations.web_search import WebSearchRateLimiter
 from tools.executor import ToolExecutionContext, ToolExecutor
 from tools.results import ToolResult
+from tools.web_search_tool import web_search_tool_result
 from voice.background import BackgroundLog, make_openai_summarizer
 from voice.conversation import ConversationLog
 from voice.options import (
@@ -194,11 +197,20 @@ def _build_executor(user: WebUser) -> ToolExecutor:
     def end_conversation(args: dict, ctx: ToolExecutionContext) -> ToolResult:
         return ToolResult(ok=True, status="ok", message="Попрощайся коротко.")
 
+    # At most a few searches per request (per browser), so one question can't loop the paid API.
+    limiter = WebSearchRateLimiter(max_per_turn=WEB_SEARCH_MAX_CALLS_PER_TURN)
+
+    def web_search(args: dict, ctx: ToolExecutionContext) -> ToolResult:
+        return web_search_tool_result(
+            args, session_id=ctx.session_id, delegation_id=ctx.delegation_id, limiter=limiter
+        )
+
     executor.register("set_assistant_name", set_name)
     executor.register("change_language", change_language)
     executor.register("change_voice", change_voice)
     executor.register("set_voice_style", set_voice_style)
     executor.register("end_conversation", end_conversation)
+    executor.register("web_search", web_search, run_in_thread=True)  # network: off the event loop
     return executor
 
 

@@ -51,6 +51,27 @@ LIVE_BACKEND_TOOLS: list[dict] = [
         required=["language"],
     ),
     _fn(
+        "web_search",
+        "Search the public web for current or externally verifiable information. "
+        "Use for recent events, news, current facts, software versions, companies, "
+        "products, technologies, or information that may have changed after the model's "
+        "knowledge cutoff. Do not use for translation, summarization, writing, "
+        "or questions answerable without external lookup. "
+        "recency_days limits results to roughly the last N days (e.g. 1 for «сьогодні» / latest news).",
+        {
+            "query": {"type": "string", "description": "Search query"},
+            "max_results": {
+                "type": "integer",
+                "description": "How many results to return (default 5, hard max 10)",
+            },
+            "recency_days": {
+                "type": "integer",
+                "description": "Prefer results from the last N days (optional)",
+            },
+        },
+        required=["query"],
+    ),
+    _fn(
         "end_conversation",
         "End the conversation and return to sleep. Call silently.",
         {},

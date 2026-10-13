@@ -24,7 +24,7 @@ _KEEP_TURNS = 400
 # Tools whose results matter for later turns (a new session after a pause or a voice change knows
 # only the history). Session tools (voice, name, end…) carry nothing; add the prefixes of new
 # tools whose answers she may need later, e.g. ("calendar_", "web_search").
-REMEMBERED_TOOL_PREFIXES: tuple[str, ...] = ()
+REMEMBERED_TOOL_PREFIXES: tuple[str, ...] = ("web_search",)
 
 
 def remember_tool_result(log: ConversationLog | None, tool: str, message: str) -> None:

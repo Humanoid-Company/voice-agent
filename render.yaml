@@ -21,3 +21,5 @@ services:
         sync: false
       - key: TIMEZONE # for «сьогодні» and the time of day in the prompts
         value: Europe/Kyiv
+      - key: WEB_SEARCH_API_KEY # Tavily, for the web_search tool; empty = she says search is unavailable
+        sync: false

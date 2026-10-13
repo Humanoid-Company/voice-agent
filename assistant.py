@@ -24,10 +24,13 @@ import json
 import logging
 from pathlib import Path
 
-from config import BACKGROUND_LISTENING
+from config import BACKGROUND_LISTENING, WEB_SEARCH_MAX_CALLS_PER_TURN
+from integrations.web_search import WebSearchRateLimiter
 from speech_to_text import SpeechToText
 from text_to_speech import TextToSpeech
-from tools.executor import ToolExecutor
+from tools.executor import ToolExecutionContext, ToolExecutor
+from tools.results import ToolResult
+from tools.web_search_tool import web_search_tool_result
 from voice.background import BackgroundLog, make_openai_summarizer
 from voice.base import State
 from voice.conversation import ConversationLog
@@ -72,6 +75,7 @@ class Assistant(LiveDriverMixin):
 
         # Long-term settings (name, voice, language, speed/style) — persist between runs.
         self._memory: dict = self._load_memory()
+        self._web_search_limiter = WebSearchRateLimiter(max_per_turn=WEB_SEARCH_MAX_CALLS_PER_TURN)
         self._tool_executor = self._build_tool_executor()
 
     def _build_tool_executor(self) -> ToolExecutor:
@@ -83,7 +87,13 @@ class Assistant(LiveDriverMixin):
         executor.register("set_voice_style", self._live_set_voice_style)
         executor.register("change_language", self._live_change_language)
         executor.register("end_conversation", self._live_end_conversation)
+        executor.register("web_search", self._web_search, run_in_thread=True)
         return executor
+
+    def _web_search(self, args: dict, context: ToolExecutionContext) -> ToolResult:
+        return web_search_tool_result(
+            args, session_id=context.session_id, delegation_id=context.delegation_id, limiter=self._web_search_limiter
+        )
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

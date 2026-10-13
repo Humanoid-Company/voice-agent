@@ -40,6 +40,14 @@ OPENAI_LIVE_BACKEND_EFFORT: str = os.getenv("OPENAI_LIVE_BACKEND_EFFORT", "").st
 OPENAI_LIVE_VOICE: str = os.getenv("OPENAI_LIVE_VOICE", "gleam")
 OPENAI_LIVE_AUDIO_RATE: int = int(os.getenv("OPENAI_LIVE_AUDIO_RATE", "24000"))
 
+# ── Public web search (tool `web_search`, as in Assistant-agent) ───────────────
+# Tavily Search API key. Empty → the tool says web search is unavailable (the call goes on).
+WEB_SEARCH_API_KEY: str = os.getenv("WEB_SEARCH_API_KEY", "").strip()
+WEB_SEARCH_TIMEOUT_S: float = float(os.getenv("WEB_SEARCH_TIMEOUT_S", "9"))
+WEB_SEARCH_MAX_RESULTS_DEFAULT: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS_DEFAULT", "5"))
+WEB_SEARCH_MAX_RESULTS_HARD: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS_HARD", "10"))
+WEB_SEARCH_MAX_CALLS_PER_TURN: int = int(os.getenv("WEB_SEARCH_MAX_CALLS_PER_TURN", "3"))
+
 # ── Live voice UX: local barge-in + busy cues ─────────────────────────────────
 # Local WebRTC VAD stops assistant playback before transcripts arrive.
 VOICE_LOCAL_BARGE_IN: bool = os.getenv("VOICE_LOCAL_BARGE_IN", "true").lower() in (

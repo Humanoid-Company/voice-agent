@@ -34,10 +34,13 @@ _PAGE_FIRST_S = 1.5
 # Delegated work (a slow tool) runs while she is silent: this long after it started she
 # says once that she is on it, when she has been quiet for _PROGRESS_QUIET_S — the transcript runs
 # ahead of her audio. Past _PROGRESS_GIVE_UP_S she says nothing. A second «taking long» line made
-# three fillers in a row with her own «Секунду».
-_PROGRESS_AFTER_S = 5.0
-_PROGRESS_QUIET_S = 2.5
+# three fillers in a row with her own «Секунду». At 5 s / 2.5 s every delegated question got two
+# fillers (her «Секунду» + this line) and a question with a follow-up four; now it waits until her
+# own word has been followed by a real silence, and says it at most once in _PROGRESS_REPEAT_S.
+_PROGRESS_AFTER_S = 8.0
+_PROGRESS_QUIET_S = 4.0
 _PROGRESS_GIVE_UP_S = 20.0
+_PROGRESS_REPEAT_S = 30.0
 # The user's own request may still be transcribed this long after the work started.
 _PROGRESS_INPUT_GRACE_S = 1.5
 
@@ -94,6 +97,7 @@ class SidebandToolBridge:
         self._progress: dict[str, asyncio.Task] = {}
         # Work whose results are in: the backend is writing the answer, she is about to speak it.
         self._answering: set[str] = set()
+        self._last_progress_at = -1e9  # loop time of the last «still working» line
 
     async def run(self) -> None:
         expiry: asyncio.Task | None = None
@@ -293,7 +297,10 @@ class SidebandToolBridge:
             ):
                 return
             if now - started >= _PROGRESS_AFTER_S and now - self._last_output_at >= _PROGRESS_QUIET_S:
+                if now - self._last_progress_at < _PROGRESS_REPEAT_S:
+                    return  # she said it moments ago, for the request this one follows up
                 break
+        self._last_progress_at = loop.time()
         logger.info(
             "web.work.progress session_id=%s after_s=%.1f tools=%s",
             self.session_id, loop.time() - started, self._work[key],

@@ -112,3 +112,24 @@ def test_no_progress_while_she_talks(monkeypatch):
         assert _said(conn) == []
 
     asyncio.run(run())
+
+
+def test_one_progress_line_for_a_question_and_its_follow_up(monkeypatch):
+    """«Порадь персонажів для Дудлоку» → «Дедлок»: two delegations a few seconds apart said «я працюю»
+    twice, on top of her own «Секунду» each time."""
+    bridge, conn = _bridge(monkeypatch)
+
+    async def run():
+        for rid, call in (("r1", "c1"), ("r2", "c2")):
+            bridge._work.clear()
+            await bridge._handle_event(_event({"type": "response.created", "response": {"id": rid}}))
+            await bridge._handle_event(_call(call))
+            await asyncio.sleep(0.6)
+        assert len(_said(conn)) == 1
+
+    asyncio.run(run())
+
+
+def test_progress_waits_longer_than_a_quick_answer():
+    # her own «Секунду», then the backend's answer usually comes before this
+    assert live_bridge._PROGRESS_AFTER_S >= 8 and live_bridge._PROGRESS_QUIET_S >= 4

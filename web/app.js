@@ -16,6 +16,7 @@
     store.set("va-client-id", clientId);
   }
   let accessCode = store.get("va-access-code") || "";
+  let assistantName = ""; // set when renamed by voice (/api/me); «Єва» otherwise
   // Voice picker: the choice lives here (the server forgets it on restart) and is sent with
   // every new call. Voice is fixed for a Live session, so a change applies from the next call.
   let voices = [];
@@ -1506,6 +1507,45 @@
     restartSession("connecting", { greet: true });
   }
 
+  // «Скопіювати»: the dialogue as plain text, without the page's own notes.
+  function conversationText() {
+    const name = assistantName || "Єва";
+    return [...$("log").querySelectorAll(".msg.user, .msg.assistant")]
+      .map((el) => [el.classList.contains("user") ? "Ви" : name, el.textContent.trim()])
+      .filter(([, text]) => text)
+      .map(([who, text]) => who + ": " + text)
+      .join("\n\n");
+  }
+
+  // The async clipboard needs a secure page with focus; the old way works where it doesn't.
+  function copyFallback(text) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try { return document.execCommand("copy"); } finally { area.remove(); }
+  }
+
+  // The button says what happened for a moment, then goes back to its label.
+  function flashButton(btn, text) {
+    btn.dataset.label = btn.dataset.label || btn.textContent;
+    clearTimeout(btn.flashTimer);
+    btn.textContent = text;
+    btn.flashTimer = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1800);
+  }
+
+  async function copyConversation() {
+    const text = conversationText();
+    const btn = $("copyChat");
+    if (!text) { flashButton(btn, "Поки порожньо"); return; }
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = copyFallback(text); }
+    flashButton(btn, ok ? "Скопійовано ✓" : "Не вдалося");
+  }
+
   // The server's view of this browser (voice settings, call state); null if unreachable.
   async function fetchMe() {
     try {
@@ -1521,6 +1561,7 @@
     try {
       const me = await fetchMe();
       if (!me) return;
+      assistantName = me.assistant_name || ""; // renamed by voice: the copied conversation uses it
       const { voice: serverVoice, speed: serverSpeed, style: serverStyle } = me;
       // Set on the server only when chosen there (e.g. asked by voice) — adopt it then.
       if (serverVoice && serverVoice !== voice && voices.some((x) => x.id === serverVoice)) {
@@ -1572,6 +1613,7 @@
     showPromptInfo();
     showVoiceNow();
     $("newChat").addEventListener("click", newConversation);
+    $("copyChat").addEventListener("click", copyConversation);
     $("voice").addEventListener("change", () => { stopPreview(); showVoice(true); });
     $("voicePreview").addEventListener("click", togglePreview);
     $("voiceApply").addEventListener("click", applyVoice);

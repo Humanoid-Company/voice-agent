@@ -16,6 +16,12 @@
       <p class="sub">Голосова помічниця. Говоріть з нею як з людиною.</p>
     </header>
 
+    <div class="engine" role="radiogroup" aria-label="Голосовий двигун">
+      <button type="button" class="engine-opt" data-engine="live" role="radio">GPT-Live</button>
+      <button type="button" class="engine-opt" data-engine="realtime" role="radio">Realtime</button>
+    </div>
+    <p id="engineInfo" class="hint engine-info"></p>
+
     <section id="gate" class="card" hidden>
       <label for="code">Код доступу</label>
       <div class="row">
@@ -30,7 +36,7 @@
         <span id="status">Не підключено</span>
       </div>
       <p id="meter" class="meter" hidden
-        title="Час, поки відкрита сесія GPT-Live (разом з першими 30 с паузи), і орієнтовна ціна за ним. Інструменти й підсумок фонового слухання оплачуються окремо й тут не враховані."></p>
+        title="Час, поки відкрита сесія (разом з першими 30 с паузи), і орієнтовна ціна: GPT-Live — за хвилини, Realtime — за сказане й почуте (тиша безкоштовна). Інструменти, розпізнавання тексту й підсумок фонового слухання оплачуються окремо й тут не враховані."></p>
       <button id="talk" class="btn primary big">Почати розмову</button>
       <div class="row">
         <button id="resume" class="btn primary" hidden>Продовжити</button>

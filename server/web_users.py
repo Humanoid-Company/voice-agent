@@ -90,6 +90,8 @@ class WebUser:
         for bridge in list(self.bridges):
             try:
                 await bridge.append_instruction(text)
+                if hasattr(bridge, "set_speed"):  # Realtime: speed is a session parameter too
+                    await bridge.set_speed(self.speed)
             except Exception:
                 logger.debug("apply_delivery failed", exc_info=True)
 

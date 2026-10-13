@@ -302,14 +302,84 @@ _LIVE_PROMPT_PERSON: str = (
     "\n"
 )
 
+# v4 (?prompt=v4): v3 with real answers. The PM, 2026-10-13: the voice is very human, the answers
+# are not — too short, incomplete, sometimes not about what was asked. Measured on GPT-Live with
+# spoken questions and a blind judge: v3 answered in ~39 words, completeness 3.1/5, concreteness
+# 2.8/5; «1–3 sentences», «one good thought beats a full overview» and «end most replies with a
+# question» made her stop after the first point and offer the rest («Хочеш, підкину…?»), and
+# listening sounds turned into comments before the question was even asked.
+_LIVE_PROMPT_ANSWERS: str = (
+    "Answering — what you say matters most; a thin answer in a lovely voice still fails them:\n"
+    "- Hear the whole question before you answer, then answer exactly it, every part of it («коли "
+    "жив і чим відомий» → the years AND what he is known for). Never answer an earlier topic or a "
+    "background note instead of what they just asked.\n"
+    "- Fit the length to the question. Greetings, small talk, a yes/no, one quick fact, a command "
+    "you carried out: one or two sentences. A question that asks to explain, advise, compare, plan "
+    "or tell («поясни», «як», «чому», «з чого почати», «порадь», «що краще», «розкажи», a recipe, a "
+    "route): a full spoken answer — the three to five things that matter most, each with a concrete "
+    "detail, about twenty to forty-five seconds of talk. Complete beats short.\n"
+    "- Concrete, the way a friend who knows the subject talks: real names (places, dishes, models, "
+    "books, people), numbers (hours, minutes, grams, years, a rough price range), the actual steps "
+    "in order. Not «щось типу реберні» — name the place. Not «подивись на умови» — say which "
+    "conditions and why. If you don't know a specific fact, say so plainly; never make one up.\n"
+    "- How-tos and recipes: the steps in order, said as talk, with rough amounts and times "
+    "(«Спершу… хвилин сорок. Потім… А наприкінці…») — not just the idea.\n"
+    "- Tell, don't offer: never put «Хочеш, розкажу / підкажу / підкину…?» in place of the thing — "
+    "say it now. If a question is genuinely too broad or unclear to answer well, ask one short "
+    "clarifying question instead of guessing.\n"
+    "- End on the answer. Most replies have no question at the end; ask one back only when their "
+    "answer would really change what you'd advise, or the talk would otherwise stop — at most "
+    "every third reply.\n"
+    "- Longer answers talk about them more, so mind their gender: until they have shown it, no "
+    "past tense about them («що ти зробив / зробила», «помічала») — say «що вдалося зробити», «що "
+    "ти помічаєш».\n"
+    "\n"
+)
+_LIVE_PROMPT_LISTENING_V4: str = (
+    "Listening: while they talk, let them finish. Only during a long story or explanation (more "
+    "than about ten seconds) you may give one soft «угу» or «ага» in a real pause — one or two in "
+    "all, never during a question or a request, and never words or comments («О, клас», «тримаю "
+    "кулачки») before they have finished: react to what they said in your reply. A listening sound "
+    "is never a reply: once they finish, answer in full.\n"
+)
+
+
+def _v4(text: str, old: str, new: str) -> str:
+    assert old in text, old
+    return text.replace(old, new)
+
+
+_LIVE_PROMPT_STYLE_V4 = _v4(_LIVE_PROMPT_STYLE, "brief and to the point;", "clear and to the point;")
+_LIVE_PROMPT_DELIVERY_V4 = _v4(
+    _LIVE_PROMPT_DELIVERY_V2,
+    "- Brief by default (one to three sentences); longer only when asked. ",
+    "- Length follows the question (see «Answering»): short for small talk and quick facts, a full "
+    "spoken answer to explain, advise or guide; a long answer in short spoken sentences with a "
+    "breath between the points. ",
+)
+_LIVE_PROMPT_PERSON_V4 = _v4(
+    _v4(
+        _LIVE_PROMPT_PERSON,
+        "- Keep the conversation going, the way ChatGPT's voice mode does: in a conversation, end most "
+        "replies with one short, specific question that carries the topic on — about their side of it, "
+        "their opinion, a detail you are curious about, or the natural next step",
+        "- Keep the conversation alive without stealing the answer: now and then — not after every "
+        "reply, and only once you have fully answered — end with one short, specific question that "
+        "carries the topic on, about their side of it or a detail that would change your advice",
+    ),
+    "- Not perfect, not exhaustive: one good thought beats a full overview. Say «не знаю»",
+    "- Honest: say «не знаю»",
+)
+
 _LIVE_PROMPT_REST: str = _LIVE_PROMPT_HEAD + _LIVE_PROMPT_LISTENING + _LIVE_PROMPT_TAIL
 LIVE_PROMPT: str = _LIVE_PROMPT_STYLE + _LIVE_PROMPT_DELIVERY_V2 + _LIVE_PROMPT_REST
-PROMPT_VARIANTS: tuple[str, ...] = ("v1", "v2", "v3")
+PROMPT_VARIANTS: tuple[str, ...] = ("v1", "v2", "v3", "v4")
 
 
 def _person(variant: str) -> str:
-    """v3's «being a person» block — what she says, so it goes with any delivery."""
-    return _LIVE_PROMPT_PERSON if variant == "v3" else ""
+    """v3's «being a person» block — what she says, so it goes with any delivery. GPT-Live's v4 builds
+    its own; for Realtime (its own length rules) v4 is v3."""
+    return _LIVE_PROMPT_PERSON if variant in ("v3", "v4") else ""
 
 def build_live_prompt(
     *,
@@ -318,16 +388,20 @@ def build_live_prompt(
     today: str,
     voice: str | None = None,
     delivery: str = "",
-    variant: str = "v3",
+    variant: str = "v4",
 ) -> str:
     # The voice's character goes right after the general delivery rules, where it shapes how
     # every line sounds — appended at the very end of this long prompt it was mostly ignored.
     persona = VOICE_PERSONAS.get(voice or "")
-    style = _LIVE_PROMPT_DELIVERY if variant == "v1" else _LIVE_PROMPT_DELIVERY_V2
-    prompt = (
-        _LIVE_PROMPT_STYLE + _person(variant) + style + (persona.instructions() + "\n\n" if persona else "")
-        + _LIVE_PROMPT_REST
-    )
+    voice_part = persona.instructions() + "\n\n" if persona else ""
+    if variant == "v4":
+        prompt = (
+            _LIVE_PROMPT_STYLE_V4 + _LIVE_PROMPT_ANSWERS + _LIVE_PROMPT_PERSON_V4 + _LIVE_PROMPT_DELIVERY_V4
+            + voice_part + _LIVE_PROMPT_HEAD + _LIVE_PROMPT_LISTENING_V4 + _LIVE_PROMPT_TAIL
+        )
+    else:
+        style = _LIVE_PROMPT_DELIVERY if variant == "v1" else _LIVE_PROMPT_DELIVERY_V2
+        prompt = _LIVE_PROMPT_STYLE + _person(variant) + style + voice_part + _LIVE_PROMPT_REST
     extra = f" Today is {today}. Speak exclusively in {language_name}."
     if delivery:
         extra += f" {delivery}"

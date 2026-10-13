@@ -118,7 +118,7 @@ def test_session_opens_a_realtime_call(monkeypatch):
     session = seen["session"]
     assert session["audio"]["output"] == {"voice": "ash", "speed": 0.9}
     assert "«Еш»" in session["instructions"] and "Як справи?" in session["instructions"]
-    assert "Being a person" in session["instructions"]  # the page sent no prompt: v3
+    assert "Being a person" in session["instructions"]  # the page sent no prompt: v4, for Realtime the same as v3
     assert user.voice == "gleam"  # Live's own voice choice is untouched
     assert [type(b).__name__ for b in user.bridges] == ["RealtimeBridge"]
     # An unknown voice (a Live one) falls back to Realtime's default.

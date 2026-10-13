@@ -33,10 +33,10 @@
   if (!(volume >= 0 && volume <= 1)) volume = 1;
 
   const DEBUG = params.get("debug") === "1";
-  // Delivery prompt (prompts/live_prompt.py): v3 is the usual one (v2 plus behaving like a person),
-  // v2 just the delivery, v1 the older one. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
+  // Delivery prompt (prompts/live_prompt.py): v4 is the usual one (v3 with full, concrete answers),
+  // v3 v2 plus behaving like a person, v2 just the delivery, v1 the older one. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
   // voice change does.
-  let promptVariant = params.get("prompt") || store.get("va-prompt") || "v3";
+  let promptVariant = params.get("prompt") || store.get("va-prompt") || "v4";
   // Engine: GPT-Live, or Realtime with its own preset voices. Picked on the page (or ?engine=realtime).
   let engine = (params.get("engine") || store.get("va-engine")) === "realtime" ? "realtime" : "live";
   let sessionEngine = "live"; // what the current call was opened with
@@ -1852,6 +1852,9 @@
       "короткі розмовні речення, людські звуки рідше.",
     v3: "Звучить як v2, а поводиться як людина: має свою думку, цікавиться вами, спершу реагує на " +
       "ваші новини, повертається до сказаного раніше, без «чим ще можу допомогти?».",
+    v4: "v3 з повними відповідями: довжина за питанням (коротко на дрібниці, розгорнуто на «поясни», «порадь», " +
+      "«як»), конкретні назви, числа й кроки, без «хочеш, розкажу?» замість відповіді, рідше питання наприкінці, " +
+      "не перебиває, поки ви не договорили.",
   };
   const showPromptInfo = () => { $("promptInfo").textContent = PROMPT_INFO[$("promptVariant").value] || ""; };
 
@@ -1902,7 +1905,7 @@
     $("voiceNow").addEventListener("change", toggleVoiceNow);
     $("cleanVoice").checked = cleanVoice;
     $("cleanVoice").addEventListener("change", toggleCleanVoice);
-    $("promptVariant").value = ["v1", "v2"].includes(promptVariant) ? promptVariant : "v3";
+    $("promptVariant").value = ["v1", "v2", "v3"].includes(promptVariant) ? promptVariant : "v4";
     $("promptVariant").addEventListener("change", changePrompt);
     showPromptInfo();
     showVoiceNow();

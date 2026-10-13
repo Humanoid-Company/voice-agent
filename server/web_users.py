@@ -48,7 +48,7 @@ class WebUser:
     voice: str | None = None
     speed: str = "normal"
     style: str = "normal"
-    prompt_variant: str = "v3"  # delivery prompt (v3 default = v2 + a person, v2, v1 the older one), sent by the page with every call
+    prompt_variant: str = "v4"  # delivery prompt (v4 default = v3 + full answers, v3 = v2 + a person, v2, v1 the older one), sent by the page with every call
     # The voice was changed during a call: the page reconnects with the new voice and the same
     # conversation once the current session closes.
     reconnect_pending: bool = False

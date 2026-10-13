@@ -120,6 +120,10 @@
         // Barge-in only listens to "near" voice: the person at the mic is far louder than
         // people talking in the background, a TV or a door bang (those are short).
         this.near = (options.processorOptions || {}).near || 0.06;
+        // How loud this user speaks, learned while Єва is silent: the «near voice» bar follows it, so a
+        // quiet user can still interrupt her (a fixed 0.06 missed them even in headphones), while
+        // background voices and a TV, quieter than the user, still don't count.
+        this.voice = 0;
         this.speaking = false; this.nearFrames = 0; this.nearQuietFor = 1;
         this.audible = false; this.outQuietFor = 1;       // assistant playback
         // Mic level per unit of assistant output level while only the assistant talks. Starts
@@ -137,7 +141,8 @@
         // and break off mid-sentence. So while the assistant talks keep the old 0.04 bar unless the mic plainly
         // hears no echo at all (headphones). this.echo starts high, so "speakers" is the default.
         const headset = this.echo < 0.05;
-        const threshold = Math.max(audible && !headset ? 0.04 : 0.006, this.floor * 4, echoLevel);
+        // 3× the room's noise (was 4×): very quiet speech by a laptop fan lost whole words at 4×.
+        const threshold = Math.max(audible && !headset ? 0.04 : 0.006, this.floor * 3, echoLevel);
         // Learn the echo while the gate is shut (the user isn't talking over the assistant).
         if (audible && !this.open && outLevel > 0.01) {
           const ratio = level / outLevel;
@@ -148,7 +153,9 @@
         if (!this.open && this.loud >= 2) this.open = true;
         // 0.6 s: a quiet word ending or a short pause mid-sentence is not cut off.
         else if (this.open && this.quietFor > 0.6) this.open = false;
-        const nearThreshold = Math.max(audible ? this.near * 1.3 : this.near, this.floor * 8, echoLevel * 1.3);
+        if (this.open && !audible && level > threshold * 1.5) this.voice += (level - this.voice) * (this.voice ? 0.02 : 1);
+        const near = this.voice ? Math.min(this.near, Math.max(0.01, this.voice * 0.5)) : this.near;
+        const nearThreshold = Math.max(audible ? near * 1.3 : near, this.floor * 8, echoLevel * 1.3);
         if (level > nearThreshold) { this.nearFrames += 1; this.nearQuietFor = 0; }
         else { this.nearQuietFor += 0.02; if (this.nearQuietFor > 0.25) this.nearFrames = 0; }
         // Near voice: ~120 ms of loud frames to start (a click/bang is shorter), 250 ms gap to end.
@@ -578,6 +585,14 @@
       barge.timers.push(setTimeout(() => {
         if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; setRemoteVolume(0.5); }
       }, 400));
+      // A quiet voice over her on speakers: the gate rightly keeps it below her echo, so its words never
+      // reach the model and nothing confirms the barge-in — she went on and the user felt ignored.
+      // Someone who keeps talking to her for 1.5 s with none of their own words heard (only her echo,
+      // or nothing) wants the floor; once she stops, the rest of what they say gets through. Their
+      // own words, an «угу» included, are judged by bargeOnWords as before.
+      barge.timers.push(setTimeout(() => {
+        if (barge.speaking && barge.stage === "ducked" && !ownWords().length) bargeConfirm("stop");
+      }, 1500));
     } else {
       barge.speechEndedAt = Date.now();
       if (barge.stage === "muted") { scheduleRelease(); return; }
@@ -592,6 +607,13 @@
   }
 
   // User transcript while the assistant talks: decide by the words, not just the sound.
+  // The user's words since this barge-in started; words she herself just said are her echo, not the
+  // user — stop words included.
+  function ownWords() {
+    const echo = new Set(splitWords(barge.recentAssistant));
+    return splitWords(barge.heard).filter((w) => !echo.has(w));
+  }
+
   function bargeOnWords(delta) {
     if (barge.stage === "muted" || !(barge.audible || barge.stage === "ducked")) return;
     if (herBackchannel() && !splitWords(delta).some((w) => STOP_WORDS.has(w))) return;
@@ -599,10 +621,7 @@
     // heard with no one at the mic are background talk.
     if (!barge.speaking && Date.now() - barge.speechEndedAt > 1200) return;
     barge.heard += delta;
-    const words = splitWords(barge.heard);
-    // Words the assistant itself just said are its echo, not the user — stop words included.
-    const echo = new Set(splitWords(barge.recentAssistant));
-    const own = words.filter((w) => !echo.has(w));
+    const own = ownWords();
     if (own.some((w) => STOP_WORDS.has(w))) { bargeConfirm("ack"); return; }
     const meaningful = own.filter((w) => !BACKCHANNEL.has(w));
     if (meaningful.length >= 3) bargeConfirm("stop");

@@ -31,6 +31,7 @@ from config import (
     OPENAI_LIVE_MODEL,
     OPENAI_LIVE_PARALLEL_TOOLS,
     OPENAI_LIVE_VOICE,
+    WEB_SEARCH_API_KEY,
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import PROMPT_VARIANTS, build_live_prompt
@@ -85,6 +86,8 @@ async def _lifespan(_app: FastAPI):
     if KEEP_AWAKE_S > 0 and PUBLIC_BACKEND_URL.startswith("https://"):
         task = asyncio.create_task(_keep_awake())
         logger.info("keep-awake every %ss → %s/healthz", int(KEEP_AWAKE_S), PUBLIC_BACKEND_URL)
+    if not WEB_SEARCH_API_KEY:
+        logger.warning("WEB_SEARCH_API_KEY is not set: web search answers «unavailable»")
     yield
     if task is not None:
         task.cancel()
@@ -186,6 +189,8 @@ def healthz() -> dict:
         "ok": True,
         "commit": os.getenv("RENDER_GIT_COMMIT", "")[:7] or None,
         "branch": os.getenv("RENDER_GIT_BRANCH") or None,
+        # Without the Tavily key she says «пошук зараз не працює» — check it here, not by asking her.
+        "web_search": bool(WEB_SEARCH_API_KEY),
     }
 
 

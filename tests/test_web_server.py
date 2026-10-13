@@ -21,7 +21,8 @@ def client(monkeypatch):
 
 
 def test_health_and_config(client):
-    assert client.get("/healthz").json()["ok"] is True
+    health = client.get("/healthz").json()
+    assert health["ok"] is True and isinstance(health["web_search"], bool)
     assert set(client.get("/api/config").json()) == {"access_code_required"}
 
 

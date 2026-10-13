@@ -522,7 +522,9 @@
 
   function steer(kind) {
     const content = {
-      ack: "Stop your previous answer immediately. Do not continue or resume it. Reply with at most one short acknowledgement such as «Добре.» Then wait silently for the user.",
+      // A stop word is often followed by what they want instead («Stop, stop. Explain it to a kid»):
+      // «say only Добре and wait» made her answer «Добре.» and nothing else.
+      ack: "Stop your previous answer immediately. Do not continue or resume it. If the user goes on with a question or request, answer that. If they only told you to stop, say at most one short «Добре.» and wait silently.",
       stop: "Stop speaking immediately. The user is talking. Do not finish or resume your previous sentence. Listen and answer what they say.",
       pause: "The user said «Дякую, Єва»: stop speaking immediately and stay completely silent. Do not reply to it. You will be woken again later — then continue with full memory of this conversation.",
     }[kind];

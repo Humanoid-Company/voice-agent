@@ -52,6 +52,11 @@ def test_realtime_session_config(monkeypatch):
     vad = session["audio"]["input"]["turn_detection"]
     assert vad == {"type": "semantic_vad", "eagerness": "auto", "create_response": False, "interrupt_response": False}
     assert session["tools"] == REALTIME_TOOLS
+    # Tokens: old turns are dropped in steps past 16k (keeps the cache warm), a runaway answer is cut.
+    assert session["truncation"] == {
+        "type": "retention_ratio", "retention_ratio": 0.75, "token_limits": {"post_instructions": 16000},
+    }
+    assert session["max_output_tokens"] == 1500
     # An older model has no reasoning; silence-based turns on request.
     monkeypatch.setattr(engine, "OPENAI_REALTIME_MODEL", "gpt-realtime")
     monkeypatch.setattr(engine, "REALTIME_TURN_DETECTION", "server")
@@ -215,3 +220,30 @@ def test_spoken_speed_change_updates_realtime_speed():
     assert sent[0]["type"] == "conversation.item.create"  # the manner, as an instruction
     assert sent[1] == {"type": "session.update", "session": {"type": "realtime", "audio": {"output": {"speed": 0.9}}}}
 
+
+def test_a_turn_the_page_deletes_leaves_the_history():
+    async def scenario():
+        log = ConversationLog()
+        bridge, _ = _bridge(log)
+        await bridge._handle_event({"type": "conversation.item.input_audio_transcription.completed",
+                                    "item_id": "item_1", "transcript": "Привіт, Єво"})
+        await bridge._handle_event({"type": "response.output_audio_transcript.done", "transcript": "Привіт!"})
+        await bridge._handle_event({"type": "conversation.item.input_audio_transcription.completed",
+                                    "item_id": "item_2", "transcript": "Сашко, винеси сміття"})
+        await bridge._handle_event({"type": "conversation.item.deleted", "item_id": "item_2"})
+        await bridge._handle_event({"type": "conversation.item.deleted", "item_id": "unknown"})
+        return log, bridge
+
+    log, bridge = asyncio.run(scenario())
+    assert [t.text for t in log.turns()] == ["Привіт, Єво", "Привіт!"]
+    assert bridge._user_turns == ["Привіт, Єво"]  # tools don't see it as the user's words either
+
+
+def test_forget_removes_only_the_latest_matching_turn():
+    log = ConversationLog()
+    for role, text in (("user", "Так"), ("assistant", "Добре"), ("user", "Так")):
+        log.add(role, text)
+        log.end_turn()
+    log.forget("user", " Так ")
+    log.forget("user", "нема такого")
+    assert [(t.role, t.text) for t in log.turns()] == [("user", "Так"), ("assistant", "Добре")]

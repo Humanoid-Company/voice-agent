@@ -702,6 +702,10 @@
   // …and a pause this long closes the Live session; «Єва, скажи» reopens it with the history.
   // (config.js: PAUSE_CLOSE_SECONDS)
   const PAUSE_CLOSE_MS = (CFG.PAUSE_CLOSE_SECONDS ?? 30) * 1000;
+  // Realtime bills tokens, not open time: a muted call costs nothing, while reopening it reads the
+  // whole prompt and history again, uncached. So its pause keeps the call much longer — and the
+  // wake answers at once. (config.js: REALTIME_PAUSE_CLOSE_SECONDS; the server ends any call at 30 min)
+  const REALTIME_PAUSE_CLOSE_MS = (CFG.REALTIME_PAUSE_CLOSE_SECONDS ?? 600) * 1000;
   // A pause never keeps a call open longer than this, even while the server asks to.
   const PAUSE_HOLD_MAX_MS = 5 * 60 * 1000;
 
@@ -859,6 +863,7 @@
     rtTurns.delete(itemId);
     if (turn) clearTimeout(turn.timer);
     const verdict = text === null ? "answer" : rtJudge(text, !turn || turn.near);
+    if (verdict === "skip") rtForget(itemId);
     if (turn) {
       if (!text) {
         turn.el.remove();
@@ -875,6 +880,13 @@
     if (verdict === "answer") setTimeout(rtRespond, 0);
     else if (verdict === "ask") rtAsk(itemId, turn && turn.el);
     return text && verdict !== "skip" ? { type: "session.input_transcript.delta", delta: text } : null;
+  }
+
+  // A turn not for her leaves the conversation: Realtime re-reads (and bills) the whole context with
+  // every reply, and the TV or talk nearby there only pulls her off topic. The sideband sees the
+  // delete and drops it from the history of later calls too.
+  function rtForget(itemId) {
+    if (itemId) sendRaw({ type: "conversation.item.delete", item_id: String(itemId) });
   }
 
   function rtSkipped(el, text) {
@@ -903,11 +915,16 @@
   function rtAsk(itemId, el) {
     const timer = setTimeout(() => { rtCheckWait.delete(itemId); rtRespond(); }, 2500); // no verdict in time: answer
     rtCheckWait.set(itemId, { timer, el });
+    const bubbles = $("log").querySelectorAll(".msg.assistant");
+    const said = bubbles.length ? bubbles[bubbles.length - 1].textContent.trim().slice(-300) : "";
     // gpt-realtime-2.x reasons first and that counts against max_output_tokens: at 16 it ran out
     // before the word (empty = «no», she ignored the user). Minimal reasoning: ~0.5 s instead of ~0.9 s.
+    // Only this turn and her last words as input, not the whole call: same verdicts (measured), far fewer tokens.
     sendRaw({ type: "response.create", response: {
       conversation: "none", output_modalities: ["text"], max_output_tokens: 256, reasoning: { effort: "minimal" },
-      metadata: { purpose: "addressed", item: String(itemId) }, instructions: ADDRESSED_CHECK,
+      metadata: { purpose: "addressed", item: String(itemId) },
+      instructions: ADDRESSED_CHECK + (said ? " Your last words were: «" + said + "»" : ""),
+      input: [{ type: "item_reference", id: String(itemId) }],
     } });
   }
 
@@ -918,6 +935,7 @@
     clearTimeout(wait.timer);
     if (/^[\s"'«.*]*(yes|так)/i.test(check.text)) { rtRespond(); return; }
     rtSkipped(wait.el, "");
+    rtForget(check.item);
     eva.thinking = false;
     showState();
   }
@@ -1180,7 +1198,7 @@
         if (me && me.keep_session) { schedulePauseClose(pausedAt); return; }
       }
       teardown({ keepMic: true }); // the wake phrase listener needs it anyway; the next wake skips getUserMedia
-    }, PAUSE_CLOSE_MS);
+    }, sessionEngine === "realtime" ? REALTIME_PAUSE_CLOSE_MS : PAUSE_CLOSE_MS);
   }
 
   function pauseEva() {

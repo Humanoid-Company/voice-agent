@@ -8,6 +8,8 @@ window.APP_CONFIG = {
   IDLE_PAUSE_SECONDS: 90,
   // Approximate GPT-Live price per open minute, for the call meter under the status line.
   PRICE_PER_MINUTE_USD: 0.05,
+  // Realtime: a muted call costs nothing, a reopened one reads the prompt again — pause keeps it longer.
+  REALTIME_PAUSE_CLOSE_SECONDS: 600,
   // Realtime bills tokens, not minutes: $ per 1M tokens of gpt-realtime-2.1 (change with the model).
   REALTIME_PRICES_PER_1M: { text_in: 4, audio_in: 32, cached_in: 0.4, text_out: 24, audio_out: 64 },
 };

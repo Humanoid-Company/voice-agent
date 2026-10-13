@@ -90,6 +90,15 @@ class ConversationLog:
         with self._lock:
             return [Turn(t.role, t.text.strip()) for t in self._turns if t.role != "boundary" and t.text.strip()]
 
+    def forget(self, role: str, text: str) -> None:
+        """Remove the latest turn of this speaker with these words (a turn that wasn't for her)."""
+        text = text.strip()
+        with self._lock:
+            for i in range(len(self._turns) - 1, -1, -1):
+                if self._turns[i].role == role and self._turns[i].text.strip() == text:
+                    del self._turns[i]
+                    return
+
     def __len__(self) -> int:
         return len(self.turns())
 

@@ -54,6 +54,13 @@ REALTIME_TURN_DETECTION: str = os.getenv("REALTIME_TURN_DETECTION", "semantic").
 # semantic: low waits longest for a finished thought, high answers soonest; auto = medium.
 REALTIME_EAGERNESS: str = os.getenv("REALTIME_EAGERNESS", "auto").strip().lower()
 REALTIME_SILENCE_MS: int = int(os.getenv("REALTIME_SILENCE_MS", "600"))
+# Realtime bills tokens, and every reply reads the whole call again (cached, but still billed).
+# Past this many tokens after the instructions the oldest turns are dropped, down to 75% of it
+# (dropping in steps keeps the cache warm). Her speech is ~20 tokens a second: 16k ≈ 10+ minutes.
+# Earlier calls stay in the instructions as text (history_text).
+REALTIME_MAX_CONTEXT_TOKENS: int = int(os.getenv("REALTIME_MAX_CONTEXT_TOKENS", "16000"))
+# A runaway answer is cut here (reasoning counts too): ~1 minute of her speech.
+REALTIME_MAX_OUTPUT_TOKENS: int = int(os.getenv("REALTIME_MAX_OUTPUT_TOKENS", "1500"))
 
 # ── Live voice UX: local barge-in + busy cues ─────────────────────────────────
 # Local WebRTC VAD stops assistant playback before transcripts arrive.

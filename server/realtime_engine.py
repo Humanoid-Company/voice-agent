@@ -24,6 +24,8 @@ from config import (
     OPENAI_REALTIME_MODEL,
     OPENAI_REALTIME_TRANSCRIBE,
     REALTIME_EAGERNESS,
+    REALTIME_MAX_CONTEXT_TOKENS,
+    REALTIME_MAX_OUTPUT_TOKENS,
     REALTIME_SILENCE_MS,
     REALTIME_TURN_DETECTION,
 )
@@ -85,6 +87,12 @@ def realtime_session(*, instructions: str, language: str, voice: str, speed: str
         },
         "tools": REALTIME_TOOLS,
         "tool_choice": "auto",
+        "max_output_tokens": REALTIME_MAX_OUTPUT_TOKENS,
+        "truncation": {
+            "type": "retention_ratio",
+            "retention_ratio": 0.75,
+            "token_limits": {"post_instructions": REALTIME_MAX_CONTEXT_TOKENS},
+        },
     }
     # Reasoning models only (gpt-realtime-2.x); the lowest effort keeps the pause before she speaks short.
     if OPENAI_REALTIME_EFFORT in _EFFORTS and "realtime-2" in OPENAI_REALTIME_MODEL:
@@ -125,6 +133,8 @@ class RealtimeBridge:
         self._assistant_turns: list[str] = []
         # The page's «is this addressed to you?» checks (out of band): not part of the conversation.
         self._side_responses: set[str] = set()
+        # item id → the user's words: a turn the page deletes (not for her) leaves the history too.
+        self._heard: dict[str, str] = {}
         self.end_requested = False
         self.restart_for_voice = False  # set by change_voice on Live calls; nothing to restart here
 
@@ -216,6 +226,18 @@ class RealtimeBridge:
                 self._conversation.add("user", text)
                 self._conversation.end_turn()
                 self._user_turns = (self._user_turns + [text])[-20:]
+                self._heard[_attr(event, "item_id")] = text
+                while len(self._heard) > 50:
+                    self._heard.pop(next(iter(self._heard)))
+            return
+        if etype == "conversation.item.deleted":
+            # The page judged it not for her (talk nearby, the TV): it must not come back with the
+            # history of the next call, nor cost tokens there.
+            text = self._heard.pop(_attr(event, "item_id"), None)
+            if text:
+                self._conversation.forget("user", text)
+                if text in self._user_turns:
+                    self._user_turns.remove(text)
             return
         if etype == "response.output_audio_transcript.done":
             text = (_attr(event, "transcript") or "").strip()

@@ -107,6 +107,7 @@ uv run python main.py
 | `OPENAI_API_KEY` | ключ OpenAI (обов'язково) |
 | `OPENAI_LIVE_MODEL`, `OPENAI_LIVE_BACKEND_MODEL`, `OPENAI_LIVE_VOICE` | моделі GPT-Live і голос за замовчуванням |
 | `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_EFFORT` | модель Realtime (`gpt-realtime-2.1`) і глибина роздумів (`low`; вище — довша пауза перед відповіддю) |
+| `REALTIME_MAX_CONTEXT_TOKENS`, `REALTIME_MAX_OUTPUT_TOKENS` | Realtime, економія токенів: понад 16 000 токенів розмови старі репліки відкидаються (≈ 10+ хв), відповідь — не довше ~1 хв мовлення |
 | `REALTIME_TURN_DETECTION`, `REALTIME_EAGERNESS` | Realtime: кінець репліки за змістом (`semantic`, за замовчуванням) або за тишею (`server`); `low` чекає довше, `high` відповідає раніше |
 | `TIMEZONE` | часовий пояс, за замовчуванням `Europe/Kyiv` |
 | `PUBLIC_BACKEND_URL`, `FRONTEND_ORIGINS`, `ACCESS_CODE` | веб-бекенд: адреса, дозволені сторінки, пароль |

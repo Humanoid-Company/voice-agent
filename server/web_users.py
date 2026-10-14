@@ -40,6 +40,12 @@ _MAX_USERS = 500
 _IDLE_EVICT_S = 24 * 3600
 _background: set[asyncio.Task] = set()
 VOICE_SWITCH_DEDUP_S = 15.0
+# Camera (look_at_camera): the page sends a frame every 2 s during an active call. A frame this old
+# still counts as «now»…
+FRAME_FRESH_S = 5.0
+# …and with the camera on but no fresh frame yet (she was just woken: frames stop on a pause), the
+# tool waits this long for the next one.
+FRAME_WAIT_S = 3.0
 
 
 @dataclass
@@ -65,6 +71,16 @@ class WebUser:
     background: BackgroundLog = field(default_factory=lambda: BackgroundLog(_summarize_background))
     last_seen: float = field(default_factory=time.time)
     bridges: set[Any] = field(default_factory=set)  # open calls (SidebandToolBridge)
+    # The latest camera frame (JPEG), in memory only; camera_on is false once the page turns it off.
+    camera_on: bool = False
+    camera_frame: bytes | None = None
+    camera_frame_at: float = 0.0
+
+    def set_camera_frame(self, jpeg: bytes) -> None:
+        self.camera_frame, self.camera_frame_at, self.camera_on = jpeg, time.time(), True
+
+    def camera_off(self) -> None:
+        self.camera_on, self.camera_frame, self.camera_frame_at = False, None, 0.0
 
     def switch_voice_by_request(self, utterance: str) -> bool:
         """«Єва, зміни голос на …» heard in the transcript: switch now (the page reconnects)."""
@@ -205,12 +221,42 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             args, session_id=ctx.session_id, delegation_id=ctx.delegation_id, limiter=limiter
         )
 
+    def look_at_camera(args: dict, ctx: ToolExecutionContext) -> ToolResult:
+        deadline = time.monotonic() + FRAME_WAIT_S
+        while True:  # runs in a worker thread: waiting here never stalls the call
+            if not user.camera_on:
+                return ToolResult(
+                    ok=False,
+                    status="camera_off",
+                    message="Камера вимкнена. Скажи коротко, що не бачиш, і попроси увімкнути «Камера» на сторінці.",
+                )
+            frame, age = user.camera_frame, time.time() - user.camera_frame_at
+            if frame and age <= FRAME_FRESH_S:
+                break
+            if time.monotonic() >= deadline:
+                return ToolResult(
+                    ok=False,
+                    status="no_frame",
+                    message="Камера увімкнена, але кадр не надходить. Попроси перевірити камеру на сторінці.",
+                )
+            time.sleep(0.2)
+        question = str(args.get("question") or "").strip()[:300]
+        logger.info("web.camera.look bytes=%s age_s=%.1f", len(frame), age)
+        return ToolResult(
+            ok=True,
+            status="ok",
+            message="Кадр з камери користувача — у зображенні нижче. Опиши, що на ньому"
+            + (f", відповідаючи на питання: «{question}»." if question else "."),
+            image_jpeg=frame,
+        )
+
     executor.register("set_assistant_name", set_name)
     executor.register("change_language", change_language)
     executor.register("change_voice", change_voice)
     executor.register("set_voice_style", set_voice_style)
     executor.register("end_conversation", end_conversation)
     executor.register("web_search", web_search, run_in_thread=True)  # network: off the event loop
+    executor.register("look_at_camera", look_at_camera, run_in_thread=True)  # may wait for a frame
     return executor
 
 

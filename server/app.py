@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -37,7 +37,7 @@ from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import PROMPT_VARIANTS, build_live_prompt
 from server.live_bridge import SidebandToolBridge
 from server.web_users import WebUser, WebUserRegistry
-from tools.live_schemas import LIVE_BACKEND_TOOLS
+from tools.live_schemas import LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
 from voice.background import wake_commentary
 from voice.delegation import responses_delegation
 from voice.options import (
@@ -60,6 +60,17 @@ ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
 MAX_SESSION_S = float(os.getenv("MAX_SESSION_MINUTES", "30")) * 60
 
 _WEB_NOTE = "\nWeb demo: you run in a browser tab for the team to try."
+# GPT-Live takes no images: the backend looks through the camera (look_at_camera) and tells her. This
+# overrides «answer everything else yourself» in the delegation rules.
+_CAMERA_NOTE = (
+    "\nCamera: the page can show the backend the user's camera. You cannot see by yourself, so anything "
+    "about what is visible — «подивись на мене», «що в мене в руці», «що тут написано», «як я "
+    "виглядаю», «що ти бачиш» — always goes to the backend at once (it looks and tells you), even if "
+    "you think the camera is off. Say what it saw as if you looked yourself («Бачу…»), in your own "
+    "words; never guess or describe anything it did not report."
+)
+# A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
+MAX_FRAME_BYTES = 600_000
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{16,64}$")
 _background_tasks: set[asyncio.Task] = set()
 
@@ -131,12 +142,13 @@ def _session_config(user: WebUser) -> dict:
             delivery=delivery_instruction(user.speed, user.style),
             variant=user.prompt_variant,
         )
-        + _WEB_NOTE,
+        + _WEB_NOTE
+        + _CAMERA_NOTE,
         "audio": {"output": {"voice": voice}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
-            instructions=build_backend_prompt(today=today, language_name=language),
-            tools=LIVE_BACKEND_TOOLS,
+            instructions=build_backend_prompt(today=today, language_name=language, camera=True),
+            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
         ),
@@ -373,6 +385,36 @@ def overheard_digest(
     user.conversation.add_note(note)
     logger.info("web.background.digest chars=%s", len(note))
     return {"commentary": wake_commentary(note)}
+
+
+@app.post("/api/frame")
+async def camera_frame(
+    request: Request,
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    """The page's latest camera frame (raw JPEG body), kept in memory for look_at_camera."""
+    user = _user(x_client_id, x_access_code)
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_FRAME_BYTES:
+        raise HTTPException(status_code=413, detail="frame_too_large")  # before reading it in
+    body = await request.body()
+    if len(body) > MAX_FRAME_BYTES:
+        raise HTTPException(status_code=413, detail="frame_too_large")
+    if not body.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(status_code=415, detail="jpeg_expected")
+    user.set_camera_frame(body)
+    return {"ok": True}
+
+
+@app.delete("/api/frame")
+def camera_off(
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    """Camera turned off on the page: forget the last frame."""
+    _user(x_client_id, x_access_code).camera_off()
+    return {"ok": True}
 
 
 @app.delete("/api/conversation")

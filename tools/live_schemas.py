@@ -77,3 +77,14 @@ LIVE_BACKEND_TOOLS: list[dict] = [
         {},
     ),
 ]
+
+# Web only (the page sends camera frames; the desktop has no camera yet): server/app.py adds it.
+LOOK_AT_CAMERA_TOOL: dict = _fn(
+    "look_at_camera",
+    "Look through the user's camera: returns the latest frame as an image. Use for anything about "
+    "what is visible — «подивись на мене», «що в мене в руці», «що тут написано», «як я виглядаю», "
+    "«що це за рослина». Then describe what the image actually shows that answers the question. "
+    "If the result says the camera is off, pass that on.",
+    {"question": {"type": "string", "description": "What the user wants to know about the view"}},
+    required=["question"],
+)

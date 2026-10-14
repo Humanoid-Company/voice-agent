@@ -349,7 +349,7 @@ class SidebandToolBridge:
         )
         await self._connection.response.item.create(
             event_id=f"tool_result_{call_id}",
-            item={"type": "function_call_output", "call_id": call_id, "output": result.to_json()},
+            item={"type": "function_call_output", "call_id": call_id, "output": result.to_output()},
         )
         if self._responses.call_finished(key, call_id):
             await self._continue(key, reason="results_in")

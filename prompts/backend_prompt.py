@@ -37,5 +37,18 @@ def local_today() -> str:
     return f"{now:%A}, {now:%Y-%m-%d}, local time {now:%H:%M} ({TIMEZONE})"
 
 
-def build_backend_prompt(*, today: str, language_name: str) -> str:
-    return BACKEND_PROMPT + f" Today is {today}. Prefer tool messages in {language_name}."
+# Web only, with the look_at_camera tool (tools/live_schemas.py).
+CAMERA_PROMPT: str = (
+    "\nCAMERA: you can see through the user's camera with look_at_camera. Call it for anything about "
+    "what is visible — the user, what they hold or show, text, a place — never answer that from "
+    "memory or the conversation. Then describe what the frame really shows that answers their "
+    "question: two to four plain spoken sentences in the user's language, the concrete things "
+    "(objects, colours, text read out, expression), no lists. Say plainly what is unclear or out of "
+    "frame; never invent details. Do not guess who a person is from their face. If the tool says the "
+    "camera is off, tell them to turn on «Камера» on the page.\n"
+)
+
+
+def build_backend_prompt(*, today: str, language_name: str, camera: bool = False) -> str:
+    prompt = BACKEND_PROMPT + (CAMERA_PROMPT if camera else "")
+    return prompt + f" Today is {today}. Prefer tool messages in {language_name}."

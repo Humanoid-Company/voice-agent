@@ -696,6 +696,11 @@
       case "session.closed":
         onSessionClosed();
         break;
+      case "session.delegation.created":
+        // A request went to the backend: if it is «що ти бачиш», the frame is on the server before
+        // the backend has even decided to look (the tool takes any frame since the work started).
+        snapForLook("");
+        break;
       case "response.event": {
         // The backend is about to look through the camera: snap what is in front of it right now.
         const inner = event.event || {};
@@ -1869,9 +1874,13 @@
     if (cam) await toggleCamera();
   }
 
+  let lastSnapAt = 0;
+  // callId "" = a request just went to the backend; a call id = the backend calls look_at_camera — then
+  // only if nothing was snapped in the last 2 s (the frame from the start of the work is fresh enough).
   function snapForLook(callId) {
-    if (!cam || (callId && snapped.has(callId))) return;
+    if (!cam || (callId && (snapped.has(callId) || Date.now() - lastSnapAt < 2000))) return;
     if (callId) snapped.add(callId);
+    lastSnapAt = Date.now();
     if (snapped.size > 50) snapped.clear();
     // The next fallback frame (smaller) comes a full interval later: it must not replace this one
     // before the tool has taken it.

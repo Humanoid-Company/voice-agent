@@ -40,10 +40,12 @@ _MAX_USERS = 500
 _IDLE_EVICT_S = 24 * 3600
 _background: set[asyncio.Task] = set()
 VOICE_SWITCH_DEDUP_S = 15.0
-# Camera (look_at_camera). A look is what is in front of the camera now: the page snaps a frame the
-# moment its data channel shows this tool called. Taking the latest periodic frame (up to 5 s old) missed
-# what was just held up — prod: «підніс до камери, а вона нічого не побачила». A frame that arrived this
-# long before the call still counts as taken for it…
+# Camera (look_at_camera). A look is what is in front of the camera now: the page snaps a frame as soon
+# as the request goes to the backend (and again when this tool is called). Taking the latest periodic
+# frame (up to 5 s old) missed what was just held up — prod: «підніс до камери, а вона нічого не
+# побачила». A frame that arrived after the work started, or this long before the call, is «now»: the
+# one snapped at the start is there before the backend has even decided to look (measured on GPT-Live:
+# the tool no longer waits ~0.4 s for the upload)…
 FRAME_FOR_LOOK_S = 0.5
 # …the tool waits this long for it…
 FRAME_WAIT_S = 2.5
@@ -227,6 +229,9 @@ def _build_executor(user: WebUser) -> ToolExecutor:
 
     def look_at_camera(args: dict, ctx: ToolExecutionContext) -> ToolResult:
         called_at = time.time()
+        fresh_since = called_at - FRAME_FOR_LOOK_S
+        if ctx.extras.get("work_started_at"):
+            fresh_since = min(fresh_since, ctx.extras["work_started_at"])
         deadline = time.monotonic() + FRAME_WAIT_S
         while True:  # runs in a worker thread: waiting here never stalls the call
             if not user.camera_on:
@@ -236,7 +241,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                     message="Камера вимкнена. Скажи коротко, що не бачиш, і попроси увімкнути «Камера» на сторінці.",
                 )
             frame, frame_at = user.camera_frame, user.camera_frame_at
-            if frame and frame_at >= called_at - FRAME_FOR_LOOK_S:
+            if frame and frame_at >= fresh_since:
                 break  # snapped for this look
             if time.monotonic() >= deadline:
                 if frame and time.time() - frame_at <= FRAME_FALLBACK_S:

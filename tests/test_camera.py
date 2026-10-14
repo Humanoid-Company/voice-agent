@@ -96,6 +96,45 @@ def test_look_takes_the_frame_snapped_for_it_not_an_older_one(monkeypatch):
     assert result.ok and result.image_jpeg == JPEG
 
 
+def test_look_takes_the_frame_snapped_when_the_request_went_to_the_backend(monkeypatch):
+    """The page snaps as the delegation starts: by the time the backend decides to look, that frame —
+    taken after the question — is on the server, and the tool returns it without waiting."""
+    monkeypatch.setattr(web_users, "FRAME_WAIT_S", 2.0)
+    user = web.users.get("cam10-browser-0123456789")
+    work_started = time.time() - 1.5
+    user.set_camera_frame(JPEG)
+    user.camera_frame_at = work_started + 0.4  # uploaded 1.1 s before the call, after the work began
+    started = time.monotonic()
+    result = asyncio.run(user.executor.execute(
+        "look_at_camera", {"question": "що ти бачиш?"},
+        ToolExecutionContext(session_id="s", extras={"work_started_at": work_started}),
+    ))
+    assert result.ok and result.image_jpeg == JPEG and time.monotonic() - started < 0.3
+
+
+def test_bridge_tells_the_tool_when_the_work_started():
+    seen = {}
+
+    def look(args, ctx):
+        seen.update(ctx.extras)
+        return ToolResult(ok=True, status="ok", message="Кадр.")
+
+    bridge = SidebandToolBridge(client=SimpleNamespace(), session_id="s1", executor=ToolExecutor({"look_at_camera": look}))
+    bridge._connection = SimpleNamespace(response=SimpleNamespace(item=SimpleNamespace(create=AsyncMock()), create=AsyncMock()))
+
+    async def run():
+        await bridge._handle_event({"type": "response.event", "delegation_id": "d", "event": {"type": "response.created", "response": {"id": "r"}}})
+        await bridge._handle_event({"type": "response.event", "delegation_id": "d", "event": {
+            "type": "response.output_item.done",
+            "item": {"type": "function_call", "call_id": "c1", "name": "look_at_camera", "arguments": "{}"},
+        }})
+        await asyncio.gather(*bridge._tool_tasks)
+
+    before = time.time()
+    asyncio.run(run())
+    assert before - 1 < seen["work_started_at"] <= time.time()
+
+
 def test_look_falls_back_to_a_recent_frame_when_none_is_snapped(monkeypatch):
     monkeypatch.setattr(web_users, "FRAME_WAIT_S", 0.3)
     user = web.users.get("cam9-browser-0123456789a")

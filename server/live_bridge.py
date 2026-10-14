@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -101,6 +102,8 @@ class SidebandToolBridge:
         # Delegated work in progress: key → the tools it has called so far, and the task that says
         # «шукаю…» while it runs.
         self._work: dict[str, list[str]] = {}
+        # Wall time each piece of work started: a camera frame the page snapped since then is «now».
+        self._work_started_at: dict[str, float] = {}
         self._progress: dict[str, asyncio.Task] = {}
         # Work whose results are in: the backend is writing the answer, she is about to speak it.
         self._answering: set[str] = set()
@@ -249,6 +252,7 @@ class SidebandToolBridge:
             ok = itype == "response.completed"
             if not ok or not self._responses.had_calls(key):
                 self._work.pop(key, None)  # the final answer (or a failure): she speaks now
+                self._work_started_at.pop(key, None)
                 self._answering.discard(key)
             if self._responses.response_finished(key, ok=ok):
                 await self._continue(key, reason="response_finished")
@@ -286,6 +290,7 @@ class SidebandToolBridge:
         if key in self._work:
             return
         self._work[key] = []
+        self._work_started_at[key] = time.time()
         task = asyncio.create_task(self._say_progress(key))
         self._progress[key] = task
         task.add_done_callback(lambda _: self._progress.pop(key, None))
@@ -331,6 +336,7 @@ class SidebandToolBridge:
         ctx = ToolExecutionContext(
             session_id=self.session_id,
             delegation_id=delegation_id,
+            extras={"work_started_at": self._work_started_at[key]} if key in self._work_started_at else {},
             user_utterances=list(self._user_turns) + ([self._input_buf.strip()] if self._input_buf.strip() else [])
             or None,
             assistant_utterances=(self._assistant_turns + [self._output_buf.strip()] if self._output_buf.strip()

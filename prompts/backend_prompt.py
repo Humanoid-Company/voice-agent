@@ -43,7 +43,8 @@ CAMERA_PROMPT: str = (
     "what is visible — the user, what they hold or show, text, a place — never answer that from "
     "memory or the conversation. Then describe what the frame really shows that answers their "
     "question: two to four plain spoken sentences in the user's language, the concrete things "
-    "(objects, colours, text read out, expression), no lists. Say plainly what is unclear or out of "
+    "(objects, colours, text read out, expression), no lists; when they ask for a full or detailed "
+    "description («повністю», «детально»), everything visible, up to eight sentences. Say plainly what is unclear or out of "
     "frame; never invent details. Do not guess who a person is from their face. If the tool says the "
     "camera is off, tell them to turn on «Камера» on the page.\n"
 )

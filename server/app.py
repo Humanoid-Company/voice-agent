@@ -66,8 +66,12 @@ _CAMERA_NOTE = (
     "\nCamera: the page can show the backend the user's camera. You cannot see by yourself, so anything "
     "about what is visible — «подивись на мене», «що в мене в руці», «що тут написано», «як я "
     "виглядаю», «що ти бачиш» — always goes to the backend at once (it looks and tells you), even if "
-    "you think the camera is off. Say what it saw as if you looked yourself («Бачу…»), in your own "
-    "words; never guess or describe anything it did not report."
+    "you think the camera is off. People show things without naming them: a short question that "
+    "points at something — «а це шо?», «це що таке?», «що це?», «а так?», «а тепер?», «шо тєпєрь "
+    "показує», «глянь» — means they hold it up to the camera. Send it to the backend at once; never "
+    "answer «не знаю, про що ти» or ask what they mean. Every new look is a new frame: what they show "
+    "changes. Say what it saw as if you looked yourself («Бачу…»), in your own words; never guess or "
+    "describe anything it did not report."
 )
 # A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
 MAX_FRAME_BYTES = 600_000

@@ -111,6 +111,8 @@ def test_web_session_gets_the_camera_tool_and_notes(monkeypatch):
     assert "look_at_camera" in [t["name"] for t in responses["tools"]]
     assert "CAMERA:" in responses["instructions"]
     assert "You cannot see by yourself" in session["instructions"]
+    # Prod: «А це шо?», «Це шо таке?» while holding a speaker up got «не знаю, про що ти питаєш».
+    assert "а це шо?" in session["instructions"] and "never answer «не знаю" in session["instructions"]
     web.users.get(headers["X-Client-Id"]).bridges.clear()
 
 

@@ -684,6 +684,14 @@
       case "session.closed":
         onSessionClosed();
         break;
+      case "response.event": {
+        // The backend is about to look through the camera: snap what is in front of it right now.
+        const inner = event.event || {};
+        const item = inner.item || {};
+        if ((inner.type === "response.output_item.added" || inner.type === "response.output_item.done")
+            && item.type === "function_call" && item.name === "look_at_camera") snapForLook(item.call_id || item.id);
+        break;
+      }
       case "error": {
         const message = (event.error && event.error.message) || "невідома";
         // A voice switch closes the call while the page may still be sending: not a real error.
@@ -1738,15 +1746,20 @@
     if (preview && preview.setSinkId) preview.setSinkId(id).catch(() => {});
   }
 
-  // Camera: Єва can't see it herself (GPT-Live takes no images). While she is in an active call the
-  // page sends a frame every FRAME_EVERY_MS; the backend tool look_at_camera hands the latest one to
-  // the model that runs her tools. Nothing is sent on a pause or with the camera off.
-  const FRAME_EVERY_MS = 2000;
-  const FRAME_MAX_SIDE = 768; // ~400 image tokens; enough for faces, objects and big text
+  // Camera: Єва can't see it herself (GPT-Live takes no images). The backend tool look_at_camera hands
+  // a frame to the model that runs her tools. The page snaps that frame the moment it sees the tool
+  // called (the data channel carries the session's events), so a look shows what is held up now; the
+  // tool waits for it. A frame every FRAME_EVERY_MS is only the fallback (an upload lost). Nothing is
+  // sent on a pause or with the camera off.
+  const FRAME_EVERY_MS = 3000;
+  const FRAME_MAX_SIDE = 768;  // fallback frames: ~400 image tokens
+  const LOOK_MAX_SIDE = 1024;  // the look itself: small print stays legible (~600 tokens, ≈$0.0001)
+  const FRAME_TIMEOUT_MS = 4000; // a hung upload must not stop the next ones
   let cam = null;
   let frameTimer = null;
   let frameBusy = false;
   let frameCanvas = null;
+  const snapped = new Set(); // calls already snapped for (output_item.added and .done both come)
 
   function showCamera() {
     $("cameraInfo").textContent = cam
@@ -1778,7 +1791,7 @@
     view.classList.toggle("mirror", facing === "user");
     track.onended = () => { if (cam === stream) { $("camera").checked = false; stopCamera(); addLine("system", "Камеру вимкнено."); } };
     clearInterval(frameTimer);
-    frameTimer = setInterval(sendFrame, FRAME_EVERY_MS);
+    frameTimer = setInterval(() => sendFrame(), FRAME_EVERY_MS);
     showCamera();
     listDevices();
     view.onloadeddata = () => sendFrame();
@@ -1812,25 +1825,41 @@
     if (cam) await toggleCamera();
   }
 
-  // The latest frame to the backend, only while she is in an active call.
-  async function sendFrame() {
+  function snapForLook(callId) {
+    if (!cam || (callId && snapped.has(callId))) return;
+    if (callId) snapped.add(callId);
+    if (snapped.size > 50) snapped.clear();
+    // The next fallback frame (smaller) comes a full interval later: it must not replace this one
+    // before the tool has taken it.
+    clearInterval(frameTimer);
+    frameTimer = setInterval(() => sendFrame(), FRAME_EVERY_MS);
+    sendFrame(true);
+  }
+
+  // A frame to the backend, only while she is in an active call. look: snapped for look_at_camera —
+  // sharper, and sent even while a fallback frame is still uploading.
+  async function sendFrame(look = false) {
     const view = $("cameraView");
-    if (!cam || frameBusy || eva.mode !== "active" || !view.videoWidth) return;
-    const scale = Math.min(1, FRAME_MAX_SIDE / Math.max(view.videoWidth, view.videoHeight));
-    frameCanvas = frameCanvas || document.createElement("canvas");
-    frameCanvas.width = Math.round(view.videoWidth * scale);
-    frameCanvas.height = Math.round(view.videoHeight * scale);
-    frameCanvas.getContext("2d").drawImage(view, 0, 0, frameCanvas.width, frameCanvas.height);
-    frameBusy = true;
+    if (!cam || (frameBusy && !look) || eva.mode !== "active" || !view.videoWidth) return;
+    const side = look ? LOOK_MAX_SIDE : FRAME_MAX_SIDE;
+    const scale = Math.min(1, side / Math.max(view.videoWidth, view.videoHeight));
+    const canvas = look ? document.createElement("canvas") : (frameCanvas = frameCanvas || document.createElement("canvas"));
+    canvas.width = Math.round(view.videoWidth * scale);
+    canvas.height = Math.round(view.videoHeight * scale);
+    canvas.getContext("2d").drawImage(view, 0, 0, canvas.width, canvas.height);
+    if (!look) frameBusy = true;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FRAME_TIMEOUT_MS);
     try {
-      const blob = await new Promise((resolve) => frameCanvas.toBlob(resolve, "image/jpeg", 0.75));
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", look ? 0.85 : 0.7));
       if (blob && cam) {
         await fetch(BACKEND + "/api/frame", {
-          method: "POST", headers: Object.assign(headers(), { "Content-Type": "image/jpeg" }), body: blob,
+          method: "POST", headers: Object.assign(headers(), { "Content-Type": "image/jpeg" }), body: blob, signal: ctrl.signal,
         });
       }
-    } catch { /* offline: the next frame tries again */ } finally {
-      frameBusy = false;
+    } catch { /* offline or timed out: the next frame tries again */ } finally {
+      clearTimeout(timer);
+      if (!look) frameBusy = false;
     }
   }
 

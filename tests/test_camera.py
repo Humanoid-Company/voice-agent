@@ -85,6 +85,26 @@ def test_look_waits_for_the_next_frame_after_a_pause(monkeypatch):
     assert result.ok and result.image_jpeg == JPEG
 
 
+def test_look_takes_the_frame_snapped_for_it_not_an_older_one(monkeypatch):
+    """Prod: the object was held up as they asked, and she described the frame from before."""
+    monkeypatch.setattr(web_users, "FRAME_WAIT_S", 2.0)
+    user = web.users.get("cam8-browser-0123456789a")
+    user.set_camera_frame(b"\xff\xd8\xffbefore")
+    user.camera_frame_at = time.time() - 2  # the last periodic frame: recent, but before the look
+    threading.Timer(0.4, user.set_camera_frame, args=(JPEG,)).start()  # the page snaps one for the look
+    result = _look(user)
+    assert result.ok and result.image_jpeg == JPEG
+
+
+def test_look_falls_back_to_a_recent_frame_when_none_is_snapped(monkeypatch):
+    monkeypatch.setattr(web_users, "FRAME_WAIT_S", 0.3)
+    user = web.users.get("cam9-browser-0123456789a")
+    user.set_camera_frame(JPEG)
+    user.camera_frame_at = time.time() - 3  # an old cached page sends only periodic frames
+    result = _look(user)
+    assert result.ok and result.image_jpeg == JPEG
+
+
 def test_look_gives_up_when_frames_stopped(monkeypatch):
     monkeypatch.setattr(web_users, "FRAME_WAIT_S", 0.3)
     user = web.users.get("cam6-browser-0123456789a")

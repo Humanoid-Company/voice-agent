@@ -40,12 +40,16 @@ _MAX_USERS = 500
 _IDLE_EVICT_S = 24 * 3600
 _background: set[asyncio.Task] = set()
 VOICE_SWITCH_DEDUP_S = 15.0
-# Camera (look_at_camera): the page sends a frame every 2 s during an active call. A frame this old
-# still counts as «now»…
-FRAME_FRESH_S = 5.0
-# …and with the camera on but no fresh frame yet (she was just woken: frames stop on a pause), the
-# tool waits this long for the next one.
-FRAME_WAIT_S = 3.0
+# Camera (look_at_camera). A look is what is in front of the camera now: the page snaps a frame the
+# moment its data channel shows this tool called. Taking the latest periodic frame (up to 5 s old) missed
+# what was just held up — prod: «підніс до камери, а вона нічого не побачила». A frame that arrived this
+# long before the call still counts as taken for it…
+FRAME_FOR_LOOK_S = 0.5
+# …the tool waits this long for it…
+FRAME_WAIT_S = 2.5
+# …and without it (an old cached page, a lost upload) takes the page's latest periodic frame if it is
+# no older than this.
+FRAME_FALLBACK_S = 6.0
 
 
 @dataclass
@@ -222,6 +226,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         )
 
     def look_at_camera(args: dict, ctx: ToolExecutionContext) -> ToolResult:
+        called_at = time.time()
         deadline = time.monotonic() + FRAME_WAIT_S
         while True:  # runs in a worker thread: waiting here never stalls the call
             if not user.camera_on:
@@ -230,16 +235,19 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                     status="camera_off",
                     message="Камера вимкнена. Скажи коротко, що не бачиш, і попроси увімкнути «Камера» на сторінці.",
                 )
-            frame, age = user.camera_frame, time.time() - user.camera_frame_at
-            if frame and age <= FRAME_FRESH_S:
-                break
+            frame, frame_at = user.camera_frame, user.camera_frame_at
+            if frame and frame_at >= called_at - FRAME_FOR_LOOK_S:
+                break  # snapped for this look
             if time.monotonic() >= deadline:
+                if frame and time.time() - frame_at <= FRAME_FALLBACK_S:
+                    break
                 return ToolResult(
                     ok=False,
                     status="no_frame",
                     message="Камера увімкнена, але кадр не надходить. Попроси перевірити камеру на сторінці.",
                 )
-            time.sleep(0.2)
+            time.sleep(0.1)
+        age = time.time() - frame_at
         question = str(args.get("question") or "").strip()[:300]
         logger.info("web.camera.look bytes=%s age_s=%.1f", len(frame), age)
         return ToolResult(

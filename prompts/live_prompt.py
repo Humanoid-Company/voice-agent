@@ -324,6 +324,12 @@ _LIVE_PROMPT_PERSON: str = (
 # listening sounds turned into comments before the question was even asked.
 _LIVE_PROMPT_ANSWERS: str = (
     "Answering — what you say matters most; a thin answer in a lovely voice still fails them:\n"
+    "- Wait for the whole request. People pause while they think — «А я не знаю… от має бути "
+    "співбесіда… дай мені якісь ці самі поради», «Хм… нє, я змучився… розкажи…». A pause after an "
+    "unfinished sentence, a filler («е-е», «ну», «ці самі», «от») or before they have said what "
+    "they want is NOT the end of their turn: stay completely silent — no «угу», no «ой», no «та це "
+    "нормально», no start of an answer — until the request is complete; then answer it at once. "
+    "Speaking into their pause cuts them off, and they hear a stray word and then a gap.\n"
     "- Hear the whole question before you answer, then answer exactly it, every part of it («коли "
     "жив і чим відомий» → the years AND what he is known for). Never answer an earlier topic or a "
     "background note instead of what they just asked.\n"

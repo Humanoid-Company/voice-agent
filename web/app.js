@@ -50,6 +50,10 @@
   const openMsg = { user: null, assistant: null };
   const lastDeltaAt = { user: 0, assistant: 0 };
   const TURN_PAUSE_MS = 3000; // the transcript of one utterance can pause this long mid-sentence
+  // Her reply after the user spoke is a new bubble below their line once her text has paused this long
+  // (a stream that goes on over them stays one bubble). With only TURN_PAUSE_MS her answer to «А зараз»
+  // was added to her previous bubble, above the question — the log read as if she ignored it.
+  const TURN_RESUME_MS = 1000;
 
   const headers = () => ({
     "Content-Type": "application/json",
@@ -78,7 +82,9 @@
     const now = Date.now();
     const other = role === "user" ? "assistant" : "user";
     // A new turn starts after a pause, or once the other side has spoken since this bubble.
-    if (!openMsg[role] || now - lastDeltaAt[role] > TURN_PAUSE_MS || lastDeltaAt[other] > lastDeltaAt[role] + TURN_PAUSE_MS) {
+    const otherSpoke = lastDeltaAt[other] > lastDeltaAt[role];
+    if (!openMsg[role] || now - lastDeltaAt[role] > TURN_PAUSE_MS || lastDeltaAt[other] > lastDeltaAt[role] + TURN_PAUSE_MS
+        || (otherSpoke && now - lastDeltaAt[role] > TURN_RESUME_MS)) {
       openMsg[role] = addLine(role, "");
     }
     lastDeltaAt[role] = now;
@@ -1030,14 +1036,18 @@
   // The model was muted and never heard the phrase: hand it what followed «Єва, скажи», together
   // with what she overheard during the pause (fetched while the call connects, not before it).
   const withNote = (note, text) => (note ? note + "\n\n" + text : text);
+  // A woken request reaches her as a note, not as speech she heard: without «as if you heard it» she
+  // answered «Єва, скажи, що ти бачиш» herself and made up a room with a laptop and a cup.
+  const AS_IF_HEARD = " Handle it exactly as if you had just heard it: what needs the backend — anything " +
+    "about what is visible (the camera), the web — goes to it as usual; never answer that yourself.";
   const ANSWER_LAST = "The user woke you and asked something — it is their last message in the history. " +
-    "Answer it now; do not repeat their words.";
+    "Answer it now; do not repeat their words." + AS_IF_HEARD;
 
   function wakeEva(rest, heard = "") {
     if (eva.mode !== "waiting") return;
     clearTimeout(eva.pauseTimer);
     const note = overheardNote(); // a promise: never delays the wake
-    const request = rest ? "The user just said to you: «" + rest + "». Answer it." : "";
+    const request = rest ? "The user just said to you: «" + rest + "». Answer it." + AS_IF_HEARD : "";
     if (rest) addLine("user", "Єва, скажи, " + rest);
     if (pc && channel && channel.readyState === "open") {
       eva.mode = "active";

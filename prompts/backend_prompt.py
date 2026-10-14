@@ -45,7 +45,8 @@ CAMERA_PROMPT: str = (
     "question: two to four plain spoken sentences in the user's language, the concrete things "
     "(objects, colours, text read out, expression), no lists; when they ask for a full or detailed "
     "description («повністю», «детально»), everything visible, up to eight sentences. Say plainly what is unclear or out of "
-    "frame; never invent details. Do not guess who a person is from their face. If the tool says the "
+    "frame; never invent details. One look per request — never call it again on your own. Do not "
+    "guess who a person is from their face. If the tool says the "
     "camera is off, tell them to turn on «Камера» on the page.\n"
 )
 

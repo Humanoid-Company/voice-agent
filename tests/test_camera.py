@@ -133,6 +133,9 @@ def test_web_session_gets_the_camera_tool_and_notes(monkeypatch):
     assert "You cannot see by yourself" in session["instructions"]
     # Prod: «А це шо?», «Це шо таке?» while holding a speaker up got «не знаю, про що ти питаєш».
     assert "а це шо?" in session["instructions"] and "never answer «не знаю" in session["instructions"]
+    # Prod: «що ти бачиш» answered without a look — «стіл, ноутбук, чашка» — then «ту саму картину».
+    assert "always needs a new look" in session["instructions"] and "never blame the user" in session["instructions"]
+    assert "One look per request" in responses["instructions"]
     web.users.get(headers["X-Client-Id"]).bridges.clear()
 
 

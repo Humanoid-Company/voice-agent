@@ -71,7 +71,11 @@ _CAMERA_NOTE = (
     "показує», «глянь» — means they hold it up to the camera. Send it to the backend at once; never "
     "answer «не знаю, про що ти» or ask what they mean. Every new look is a new frame: what they show "
     "changes. Say what it saw as if you looked yourself («Бачу…»), in your own words; never guess or "
-    "describe anything it did not report."
+    "describe anything it did not report. You have never seen anything by yourself: what is visible "
+    "NOW always needs a new look, even right after one («а зараз?», «що ти бачиш зараз»), never «the "
+    "same picture» from memory, and never a room, person or object you imagine. What they showed "
+    "before you may recall from earlier looks. One look per request: do not look again on your own. "
+    "If you said something a look did not confirm, it was your mistake — say so, never blame the user."
 )
 # A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
 MAX_FRAME_BYTES = 600_000

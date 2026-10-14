@@ -43,6 +43,12 @@ _PROGRESS_GIVE_UP_S = 20.0
 _PROGRESS_REPEAT_S = 30.0
 # The user's own request may still be transcribed this long after the work started.
 _PROGRESS_INPUT_GRACE_S = 1.5
+# Her transcript runs well ahead of her audio: a long answer (a full camera description) is all text
+# within a second or two and then plays for many more, so «no new text for 4 s» came mid-sentence —
+# prod: «…сидить у чорному кріслі. ДивитьсяДивлюсь.», the progress line cutting her off. The page
+# hears her audio; here its end is estimated from the text at a speaking pace (a bit slow, so the
+# guess errs on «still talking»).
+_SPEECH_CHARS_PER_S = 14.0
 
 
 def _attr(obj: Any, name: str) -> Any:
@@ -89,6 +95,7 @@ class SidebandToolBridge:
         # instructions.append lands mid-answer as an interruption (it is how a barge-in stops her),
         # so setting changes wait until she has finished speaking.
         self._last_output_at = 0.0
+        self._speech_ends_at = 0.0  # loop time her audio is expected to end (_SPEECH_CHARS_PER_S)
         self._last_input_at = 0.0
         self._pending_instruction: asyncio.Task | None = None
         # Delegated work in progress: key → the tools it has called so far, and the task that says
@@ -154,8 +161,7 @@ class SidebandToolBridge:
     async def _append_when_quiet(self, text: str, quiet_s: float, max_wait_s: float) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max_wait_s
-        # The transcript runs ahead of the audio: quiet_s of no new text ≈ she has finished.
-        while self.is_open and loop.time() - self._last_output_at < quiet_s and loop.time() < deadline:
+        while self.is_open and self._quiet_for(loop.time()) < quiet_s and loop.time() < deadline:
             await asyncio.sleep(0.2)
         if not self.is_open:
             return
@@ -176,6 +182,10 @@ class SidebandToolBridge:
             logger.info("web.voice.restart session_id=%s by=transcript", self.session_id)
             self.restart_for_voice = False
             await self.close()
+
+    def _quiet_for(self, now: float) -> float:
+        """How long she has been silent: since her last text, or since its audio is expected to end."""
+        return now - max(self._last_output_at, self._speech_ends_at)
 
     async def _expire_after(self, seconds: float) -> None:
         """Cost cap: a call nobody ended (tab left open, browser crashed) is closed server-side."""
@@ -209,7 +219,9 @@ class SidebandToolBridge:
         if etype == "session.output_transcript.delta":
             delta = _attr(event, "delta") or ""
             self._output_buf += delta
-            self._last_output_at = asyncio.get_running_loop().time()
+            now = asyncio.get_running_loop().time()
+            self._last_output_at = now
+            self._speech_ends_at = max(self._speech_ends_at, now) + len(delta) / _SPEECH_CHARS_PER_S
             if self._conversation is not None:
                 self._conversation.add("assistant", delta)
             if self._input_buf.strip():
@@ -296,7 +308,7 @@ class SidebandToolBridge:
                 or now - started > _PROGRESS_GIVE_UP_S
             ):
                 return
-            if now - started >= _PROGRESS_AFTER_S and now - self._last_output_at >= _PROGRESS_QUIET_S:
+            if now - started >= _PROGRESS_AFTER_S and self._quiet_for(now) >= _PROGRESS_QUIET_S:
                 if now - self._last_progress_at < _PROGRESS_REPEAT_S:
                     return  # she said it moments ago, for the request this one follows up
                 break

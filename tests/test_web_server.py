@@ -381,9 +381,12 @@ def test_voice_request_endpoint_and_dedup(client):
     assert other["switched"] is False
 
 
-def test_speed_change_waits_until_she_finishes_speaking():
+def test_speed_change_waits_until_she_finishes_speaking(monkeypatch):
     """An instruction appended mid-answer derails it: it is sent once she is quiet, latest only."""
+    from server import live_bridge
     from server.live_bridge import SidebandToolBridge
+
+    monkeypatch.setattr(live_bridge, "_SPEECH_CHARS_PER_S", 1e6)  # the text's quiet only (audio: test_work_progress)
 
     sent: list[str] = []
 

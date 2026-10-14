@@ -114,6 +114,40 @@ def test_no_progress_while_she_talks(monkeypatch):
     asyncio.run(run())
 
 
+def test_no_progress_while_her_long_answer_still_plays(monkeypatch):
+    """Prod: a full camera description was all text in a moment and played on for many seconds; the
+    progress line for another delegation came in «4 s of no text» and cut her off mid-word."""
+    bridge, conn = _bridge(monkeypatch, quiet=0.2)
+    monkeypatch.setattr(live_bridge, "_SPEECH_CHARS_PER_S", 100.0)
+
+    async def run():
+        description = "Бачу людину в розстібнутому білому худі й темній футболці, вона сидить у чорному кріслі. " * 2
+        await bridge._handle_event({"type": "session.output_transcript.delta", "delta": description})  # ~1.8 s of audio
+        await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r2"}}))
+        await asyncio.sleep(0.8)  # no new text for 0.8 s, but she is still speaking
+        assert _said(conn) == []
+        await asyncio.sleep(1.5)  # her audio has ended and 0.2 s of quiet passed
+        assert len(_said(conn)) == 1
+
+    asyncio.run(run())
+
+
+def test_setting_waits_for_her_audio_not_just_her_text(monkeypatch):
+    monkeypatch.setattr(live_bridge, "_SPEECH_CHARS_PER_S", 100.0)
+    bridge, conn = _bridge(monkeypatch)
+    conn.session.instructions = SimpleNamespace(append=AsyncMock())
+
+    async def run():
+        await bridge._handle_event({"type": "session.output_transcript.delta", "delta": "Жила-була дівчинка. " * 5})  # ~1 s
+        await bridge.append_instruction("speak slower", quiet_s=0.1)
+        await asyncio.sleep(0.5)
+        assert conn.session.instructions.append.await_count == 0
+        await asyncio.sleep(1.0)
+        assert conn.session.instructions.append.await_args.kwargs["content"] == "speak slower"
+
+    asyncio.run(run())
+
+
 def test_one_progress_line_for_a_question_and_its_follow_up(monkeypatch):
     """«Порадь персонажів для Дудлоку» → «Дедлок»: two delegations a few seconds apart said «я працюю»
     twice, on top of her own «Секунду» each time."""

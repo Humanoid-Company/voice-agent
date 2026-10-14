@@ -643,6 +643,12 @@
     if (meaningful.length >= 3) bargeConfirm("stop");
   }
 
+  // A stop word the user said — not one in her own recent words (the recogniser hears her too).
+  function stopWordOverHer(text) {
+    const echo = new Set(splitWords(barge.recentAssistant));
+    return splitWords(text).some((w) => STOP_WORDS.has(w) && !echo.has(w));
+  }
+
   function bargeOnAssistantText(delta) {
     barge.recentAssistant = (barge.recentAssistant + delta).slice(-300);
     if (Date.now() - barge.burstAt > 800) barge.burst = "";
@@ -1122,12 +1128,24 @@
     rec.interimResults = true; // «Дякую, Єва» cuts her off as soon as it is heard
     rec.maxAlternatives = 3;
     let retryMs = 300;
+    let stopResult = -1; // the result a stop word already cut her off for (interim results repeat)
     rec.onresult = (e) => {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const result = e.results[i];
         for (let k = 0; k < result.length; k++) {
           const text = result[k].transcript;
           if (eva.mode === "active" && isStop(text)) { pauseEva(); return; }
+          // «Стоп» / «зачекай» over her: on speakers the gate keeps a normal voice below her echo, so
+          // neither the model nor the page heard it and she talked on through long answers. This
+          // recogniser hears it anyway; GPT-Live stops on the steer (measured: ~0.8 s, also mid-way
+          // through a delegated answer). Her own words are echo, not a stop.
+          if (eva.mode === "active" && k === 0 && i !== stopResult && (barge.audible || barge.stage === "ducked")
+              && stopWordOverHer(text)) {
+            stopResult = i;
+            barge.speechEndedAt = Date.now(); // keep her muted until she has actually stopped
+            bargeConfirm("ack");
+            return;
+          }
           // Voice change: only the recogniser's best guess (k = 0), and not while Єва is talking —
           // this recogniser has no echo cancellation; GPT-Live's own transcript covers that case.
           if (eva.mode === "active" && result.isFinal && k === 0 && !barge.audible && VOICE_REQUEST_RE.test(text)) {

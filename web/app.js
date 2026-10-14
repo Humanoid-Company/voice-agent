@@ -29,6 +29,10 @@
   // A voice picked while Єва answers: switch at once (she goes on in the new voice) or once she is done.
   let voiceNow = store.get("va-voice-now") !== "0";
   if (!(volume >= 0 && volume <= 1)) volume = 1;
+  // Devices picked in «Пристрої» ("" = the system default); kept in this browser only.
+  let micId = store.get("va-mic") || "";
+  let speakerId = store.get("va-speaker") || "";
+  let cameraId = store.get("va-camera") || "";
 
   const DEBUG = params.get("debug") === "1";
   // Delivery prompt (prompts/live_prompt.py): v4 is the usual one (v3 with full, concrete answers),
@@ -40,6 +44,7 @@
   let sessionVoice = ""; // the voice the current call was opened with
   let mic = null;
   let gate = null;
+  let micSender = null; // the current call's mic sender: another mic replaces its track in place
   // One open bubble per speaker: user and assistant transcripts arrive interleaved when they
   // overlap, and a single "current" bubble shredded both into word fragments.
   const openMsg = { user: null, assistant: null };
@@ -451,6 +456,10 @@
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return null;
     const ctx = new AudioCtx();
+    // She is heard from this context, not from the <audio> element: it plays to the picked speaker too
+    // (Chrome/Edge 110+; elsewhere the system default).
+    const setSink = (id) => { if (ctx.setSinkId) ctx.setSinkId(id).catch(() => {}); };
+    if (speakerId) setSink(speakerId);
     try {
       if (!ctx.audioWorklet) throw new Error("no AudioWorklet");
       const url = URL.createObjectURL(new Blob([DEESS_WORKLET], { type: "application/javascript" }));
@@ -482,6 +491,7 @@
           this.on = false;
         },
         setVolume(v) { volumeNode.gain.setTargetAtTime(v, ctx.currentTime, 0.02); },
+        setSink,
       };
     } catch {
       ctx.close().catch(() => {});
@@ -785,11 +795,9 @@
     try {
       // A voice switch / new conversation keeps the microphone open: no new permission, faster.
       const live = mic && mic.getAudioTracks().some((t) => t.readyState === "live");
-      const stream = live ? mic : await navigator.mediaDevices.getUserMedia({
-        // Browser echo cancellation keeps the agent from hearing (and interrupting) itself.
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      const stream = live ? mic : await openMic();
       if (my !== attempt) { if (stream !== mic) stream.getTracks().forEach((t) => t.stop()); return; }
+      if (stream !== mic) listDevices(); // device names are known once the mic is allowed
       mic = stream;
       const peer = new RTCPeerConnection();
       pc = peer;
@@ -801,8 +809,9 @@
         if (my !== attempt) { if (newGate) newGate.close(); return; }
         gate = newGate;
       }
-      if (gate) { gate.track.enabled = true; peer.addTrack(gate.track, mic); }
-      else mic.getTracks().forEach((track) => { track.enabled = true; peer.addTrack(track, mic); });
+      const track = gate ? gate.track : mic.getAudioTracks()[0];
+      track.enabled = true;
+      micSender = peer.addTrack(track, mic);
       channel = peer.createDataChannel("oai-events");
       wireCall(peer, channel);
 
@@ -879,6 +888,7 @@
     eva.mode = "active";
     setRemoteVolume(1);
     startPhraseListener();
+    sendFrame(); // frames stop on a pause: the server gets a fresh one at once
     if (opts.switched) {
       // A new voice is a new session: carry on as if nothing happened — no «тепер я іншим голосом».
       // Asked by voice: nothing to say — she just listens on in the new voice.
@@ -906,6 +916,7 @@
     clearTimeout(idleTimer);
     sendEvent({ type: "session.close" });
     if (pc) { closePeer(pc); pc = null; }
+    micSender = null;
     if (gate && keepMic) gate.listenTo(null);
     else if (gate) { gate.close(); gate = null; }
     if (mic && !keepMic) { mic.getTracks().forEach((t) => t.stop()); mic = null; }
@@ -919,6 +930,7 @@
     dropStandby();
     teardown();
     stopPhraseListener();
+    if (cam) { $("camera").checked = false; stopCamera(); } // the call is over: so is the camera
     clearTimeout(eva.pauseTimer);
     eva.mode = "off";
     eva.pending = null;
@@ -1023,6 +1035,7 @@
       eva.mode = "active";
       sendEvent({ type: "session.input_audio.unmute", event_id: eventId("unmute") });
       setRemoteVolume(1);
+      sendFrame();
       if (request) note.then((n) => commentary(withNote(n, request)));
       else greetIfQuiet(heard, note);
       showState();
@@ -1119,7 +1132,12 @@
       if (eva.mode !== "off" && eva.wakeSupported) setTimeout(startPhraseListener, retryMs);
     };
     eva.recognizer = rec;
-    try { rec.start(); } catch { eva.recognizer = null; }
+    // A mic picked in «Пристрої»: browsers that take a track (newer Chrome) listen to it, older ones
+    // ignore the argument and keep the system default.
+    const track = micId && mic ? mic.getAudioTracks().find((t) => t.readyState === "live") : null;
+    try { rec.start(...(track ? [track] : [])); } catch {
+      try { if (track) rec.start(); else eva.recognizer = null; } catch { eva.recognizer = null; }
+    }
   }
 
   function stopPhraseListener() {
@@ -1351,6 +1369,7 @@
     try {
       const track = gate ? gate.track : mic.getAudioTracks()[0];
       track.enabled = true;
+      micSender = s.sender;
       await s.sender.replaceTrack(track);
     } catch { /* closed meanwhile: its close handler takes over */ }
     if (pc !== s.peer) return;
@@ -1478,6 +1497,7 @@
     if (preview) { stopPreview(); return; }
     const audio = new Audio("samples/" + encodeURIComponent($("voice").value) + ".m4a");
     audio.volume = volume;
+    if (speakerId && audio.setSinkId) audio.setSinkId(speakerId).catch(() => {});
     audio.onended = stopPreview;
     audio.onerror = () => { stopPreview(); addLine("system", "Зразок цього голосу недоступний."); };
     preview = audio;
@@ -1619,6 +1639,201 @@
     else if (eva.mode === "waiting") restartSession("switching", {});
   }
 
+  // ── devices: microphone (in), speaker (out), camera ──
+  // Browser echo cancellation keeps the agent from hearing (and interrupting) itself.
+  const micConstraints = () => Object.assign(
+    { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    micId ? { deviceId: { exact: micId } } : {},
+  );
+  const canPickSpeaker = "setSinkId" in HTMLMediaElement.prototype; // Chrome, Edge; not Safari/Firefox
+  const deviceKeys = { mic: "va-mic", speaker: "va-speaker", camera: "va-camera" };
+
+  function setDevice(kind, id) {
+    if (kind === "mic") micId = id;
+    else if (kind === "speaker") speakerId = id;
+    else cameraId = id;
+    store.set(deviceKeys[kind], id);
+  }
+
+  // The picked mic, or the default one when it is gone (unplugged headset).
+  async function openMic() {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+    } catch (err) {
+      if (!micId || !["OverconstrainedError", "NotFoundError"].includes(err && err.name)) throw err;
+      addLine("system", "Обраного мікрофона немає — беру той, що за замовчуванням.");
+      setDevice("mic", "");
+      $("micSelect").value = "";
+      return navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+    }
+  }
+
+  // Fill the three pickers. Before the mic is allowed the browser hides device names (and ids),
+  // so only «За замовчуванням» is offered until then.
+  async function listDevices() {
+    const md = navigator.mediaDevices;
+    if (!md || !md.enumerateDevices) { $("devicesInfo").textContent = "Цей браузер не дає вибрати пристрої."; return; }
+    let devices;
+    try { devices = await md.enumerateDevices(); } catch { return; }
+    const fill = (select, kind, current, noun) => {
+      // Chrome's «default» / «communications» entries are the system default again: "" covers them.
+      const list = devices.filter((d) => d.kind === kind && d.deviceId && d.deviceId !== "default" && d.deviceId !== "communications");
+      $(select).replaceChildren(new Option("За замовчуванням", ""),
+        ...list.map((d, i) => new Option(d.label || noun + " " + (i + 1), d.deviceId)));
+      $(select).value = list.some((d) => d.deviceId === current) ? current : "";
+      return list.length;
+    };
+    fill("micSelect", "audioinput", micId, "Мікрофон");
+    fill("speakerSelect", "audiooutput", speakerId, "Динамік");
+    const cameras = fill("cameraSelect", "videoinput", cameraId, "Камера");
+    $("speakerSelect").disabled = !canPickSpeaker;
+    const named = devices.some((d) => d.label);
+    $("devicesInfo").textContent = [
+      named ? "" : "Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.",
+      canPickSpeaker ? "" : "Динамік у цьому браузері не вибирається (потрібен Chrome або Edge) — звук іде в системний.",
+      named && !cameras ? "Камери не знайдено." : "",
+    ].filter(Boolean).join(" ") || "Зміна діє одразу, навіть посеред розмови.";
+  }
+
+  // Another mic mid-call: a new stream and gate, the call's track replaced in place — no reconnect.
+  async function changeMic() {
+    setDevice("mic", $("micSelect").value);
+    if (!mic) return; // the next call opens it
+    const old = mic;
+    let stream;
+    try { stream = await openMic(); } catch (err) {
+      addLine("system", "Не вдалося відкрити мікрофон: " + ((err && err.message) || err));
+      return;
+    }
+    const newGate = await createNoiseGate(stream, onGateSignal);
+    if (mic !== old) { // the call ended or restarted meanwhile: it opens its own mic
+      stream.getTracks().forEach((t) => t.stop());
+      if (newGate) newGate.close();
+      return;
+    }
+    const oldGate = gate;
+    mic = stream;
+    gate = newGate;
+    if (gate) gate.listenTo($("remote").srcObject || null);
+    const track = gate ? gate.track : mic.getAudioTracks()[0];
+    track.enabled = true;
+    try { if (micSender) await micSender.replaceTrack(track); } catch { /* call closing */ }
+    if (oldGate) oldGate.close();
+    old.getTracks().forEach((t) => t.stop());
+    if (eva.recognizer) { stopPhraseListener(); startPhraseListener(); } // it follows the mic
+    addLine("system", "Мікрофон: " + $("micSelect").selectedOptions[0].textContent + ".");
+  }
+
+  async function changeSpeaker() {
+    const id = $("speakerSelect").value;
+    try {
+      await $("remote").setSinkId(id);
+    } catch {
+      addLine("system", "Цей динамік недоступний — лишаю попередній.");
+      $("speakerSelect").value = speakerId;
+      return;
+    }
+    setDevice("speaker", id);
+    if (fx) fx.setSink(id);
+    if (preview && preview.setSinkId) preview.setSinkId(id).catch(() => {});
+  }
+
+  // Camera: Єва can't see it herself (GPT-Live takes no images). While she is in an active call the
+  // page sends a frame every FRAME_EVERY_MS; the backend tool look_at_camera hands the latest one to
+  // the model that runs her tools. Nothing is sent on a pause or with the camera off.
+  const FRAME_EVERY_MS = 2000;
+  const FRAME_MAX_SIDE = 768; // ~400 image tokens; enough for faces, objects and big text
+  let cam = null;
+  let frameTimer = null;
+  let frameBusy = false;
+  let frameCanvas = null;
+
+  function showCamera() {
+    $("cameraInfo").textContent = cam
+      ? "Увімкнено: коли попросите «Єва, подивись», вона гляне на кадр. Кадри ніде не зберігаються."
+      : "Попросіть «Єва, подивись» — вона гляне через камеру.";
+  }
+
+  async function startCamera() {
+    // Front camera by default: «подивись на мене»; the back one is picked in «Пристрої».
+    const video = Object.assign({ width: { ideal: 1280 }, height: { ideal: 720 } },
+      cameraId ? { deviceId: { exact: cameraId } } : { facingMode: "user" });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video });
+    } catch (err) {
+      if (!cameraId || !["OverconstrainedError", "NotFoundError"].includes(err && err.name)) throw err;
+      setDevice("camera", "");
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+    }
+    if (!$("camera").checked) { stream.getTracks().forEach((t) => t.stop()); return; } // turned off meanwhile
+    if (cam) cam.getTracks().forEach((t) => t.stop());
+    cam = stream;
+    const track = cam.getVideoTracks()[0];
+    const view = $("cameraView");
+    view.srcObject = cam;
+    view.hidden = false;
+    // The preview is mirrored for a front camera, like a mirror; frames go out as the camera sees.
+    const facing = (track.getSettings && track.getSettings().facingMode) || "user";
+    view.classList.toggle("mirror", facing === "user");
+    track.onended = () => { if (cam === stream) { $("camera").checked = false; stopCamera(); addLine("system", "Камеру вимкнено."); } };
+    clearInterval(frameTimer);
+    frameTimer = setInterval(sendFrame, FRAME_EVERY_MS);
+    showCamera();
+    listDevices();
+    view.onloadeddata = () => sendFrame();
+  }
+
+  function stopCamera() {
+    clearInterval(frameTimer);
+    frameTimer = null;
+    if (cam) cam.getTracks().forEach((t) => t.stop());
+    cam = null;
+    $("cameraView").srcObject = null;
+    $("cameraView").hidden = true;
+    showCamera();
+    // The server forgets the last frame: Єва says the camera is off instead of describing an old one.
+    if (BACKEND) fetch(BACKEND + "/api/frame", { method: "DELETE", headers: headers() }).catch(() => {});
+  }
+
+  async function toggleCamera() {
+    if (!$("camera").checked) { stopCamera(); return; }
+    try {
+      await startCamera();
+    } catch (err) {
+      $("camera").checked = false;
+      stopCamera();
+      addLine("system", err && err.name === "NotAllowedError" ? "Немає доступу до камери." : "Не вдалося увімкнути камеру.");
+    }
+  }
+
+  async function changeCamera() {
+    setDevice("camera", $("cameraSelect").value);
+    if (cam) await toggleCamera();
+  }
+
+  // The latest frame to the backend, only while she is in an active call.
+  async function sendFrame() {
+    const view = $("cameraView");
+    if (!cam || frameBusy || eva.mode !== "active" || !view.videoWidth) return;
+    const scale = Math.min(1, FRAME_MAX_SIDE / Math.max(view.videoWidth, view.videoHeight));
+    frameCanvas = frameCanvas || document.createElement("canvas");
+    frameCanvas.width = Math.round(view.videoWidth * scale);
+    frameCanvas.height = Math.round(view.videoHeight * scale);
+    frameCanvas.getContext("2d").drawImage(view, 0, 0, frameCanvas.width, frameCanvas.height);
+    frameBusy = true;
+    try {
+      const blob = await new Promise((resolve) => frameCanvas.toBlob(resolve, "image/jpeg", 0.75));
+      if (blob && cam) {
+        await fetch(BACKEND + "/api/frame", {
+          method: "POST", headers: Object.assign(headers(), { "Content-Type": "image/jpeg" }), body: blob,
+        });
+      }
+    } catch { /* offline: the next frame tries again */ } finally {
+      frameBusy = false;
+    }
+  }
+
   async function init() {
     $("talk").addEventListener("click", () => {
       if (eva.mode !== "off") { stop(); return; }
@@ -1653,6 +1868,19 @@
       setRemoteVolume(bargeLevel());
       if (preview) preview.volume = volume;
     });
+    $("micSelect").addEventListener("change", changeMic);
+    $("speakerSelect").addEventListener("change", changeSpeaker);
+    $("cameraSelect").addEventListener("change", changeCamera);
+    $("camera").addEventListener("change", toggleCamera);
+    if (navigator.mediaDevices) {
+      // A headset plugged in or out: the pickers follow.
+      navigator.mediaDevices.addEventListener("devicechange", listDevices);
+      listDevices();
+    } else {
+      $("camera").disabled = true;
+    }
+    // The picked speaker from the last visit (gone → the system default).
+    if (canPickSpeaker && speakerId) $("remote").setSinkId(speakerId).catch(() => { setDevice("speaker", ""); listDevices(); });
     updateButtons();
     $("saveCode").addEventListener("click", () => {
       accessCode = $("code").value.trim();

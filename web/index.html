@@ -44,6 +44,33 @@
         </span>
         <input id="bgListen" type="checkbox" class="switch" role="switch" checked>
       </label>
+      <label class="setting" for="camera">
+        <span class="setting-text">
+          <span class="setting-title">Камера</span>
+          <span id="cameraInfo" class="hint">Попросіть «Єва, подивись» — вона гляне через камеру.</span>
+        </span>
+        <input id="camera" type="checkbox" class="switch" role="switch">
+      </label>
+      <video id="cameraView" class="camera-view" autoplay muted playsinline hidden></video>
+    </section>
+
+    <section class="card">
+      <h2>Пристрої</h2>
+      <div class="devices">
+        <div>
+          <label for="micSelect">Мікрофон</label>
+          <select id="micSelect"><option value="">За замовчуванням</option></select>
+        </div>
+        <div>
+          <label for="speakerSelect">Динамік</label>
+          <select id="speakerSelect"><option value="">За замовчуванням</option></select>
+        </div>
+        <div>
+          <label for="cameraSelect">Камера</label>
+          <select id="cameraSelect"><option value="">За замовчуванням</option></select>
+        </div>
+      </div>
+      <p id="devicesInfo" class="hint">Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.</p>
     </section>
 
     <section class="card">

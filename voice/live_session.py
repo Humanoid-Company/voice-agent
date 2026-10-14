@@ -38,7 +38,7 @@ from config import (
     VOICE_BUSY_CUES_ENABLED,
     VOICE_LOCAL_BARGE_IN,
 )
-from prompts.live_prompt import work_progress_note
+from prompts.live_prompt import woken_request_note, work_progress_note
 from tools.executor import ToolExecutionContext, ToolExecutor
 from voice.barge_in_gate import BargeInAction, BargeInGate, BargeInState
 from voice.busy_cues import BusyCueController
@@ -1245,6 +1245,31 @@ class LiveVoiceSession:
         await self._connection.session.commentary.append(
             content=text, delegation_id=None, event_id=f"comment_{uuid.uuid4().hex[:8]}"
         )
+
+    def ask_backend(self, request: str, note: str = "") -> None:
+        """A request said with the wake phrase: to the backend as the user's message (see
+        woken_request_note); note — what she overheard / missed during the pause, as silent context."""
+        self._run_coro(self._ask_backend(request, note))
+
+    async def _ask_backend(self, request: str, note: str) -> None:
+        if self._connection is None:
+            return
+        self._assistant_generation += 1  # her answer is a fresh generation, as after _speak_context
+        self._play_assistant_audio = True
+        self._awaiting_output_gap = False
+        self._stale_response = False
+        logger.info("RESPONSE new_generation generation=%s reason=ask_backend", self._assistant_generation)
+        thinking = self._connection.session.thinking
+        if note.strip():
+            await thinking.append(content=note.strip(), delegation_id=None, event_id=f"note_{uuid.uuid4().hex[:8]}")
+        await thinking.append(
+            content=woken_request_note(request), delegation_id=None, event_id=f"asked_{uuid.uuid4().hex[:8]}"
+        )
+        await self._connection.response.item.create(
+            item={"type": "message", "role": "user", "content": [{"type": "input_text", "text": request}]},
+            event_id=f"ask_{uuid.uuid4().hex[:8]}",
+        )
+        await self._connection.response.create(event_id=f"go_{uuid.uuid4().hex[:8]}")
 
     async def _shutdown(self) -> None:
         self._session_closing = True

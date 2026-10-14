@@ -36,12 +36,6 @@ from voice.options import (
 logger = logging.getLogger(__name__)
 
 
-# Their request after the wake phrase is in the history (same wording in web/app.js).
-ANSWER_LAST = (
-    "The user woke you and asked something — it is their last message in the history. "
-    "Answer it now; do not repeat their words."
-)
-
 # Said right after a wake phrase so the user hears Єва is on (same wording in web/app.js).
 WAKE_GREETING = (
     "The user just called you: «{phrase}». You are back and listening — let them hear it. "
@@ -49,10 +43,6 @@ WAKE_GREETING = (
     "warmly («Привіт! Що робимо?», «О, привіт! Слухаю»), otherwise a short «Так, слухаю» or "
     "«Слухаю тебе». Vary it, then wait."
 )
-
-# Woken within a pause, the session is still open: their request can't join its history, so it is
-# handed over as context (same wording as wakeEva in web/app.js).
-ANSWER_REQUEST = "The user just said to you: «{request}». Answer it."
 
 # The connection dropped and a new session took over with the same history.
 RECONNECTED = (
@@ -140,14 +130,15 @@ class LiveDriverMixin:
                 mic_drain=mic.drain,
                 backend_instructions=build_backend_prompt(today=local_today(), language_name=language_name),
             )
-            # What she overheard during the pause goes in the same commentary as the wake reply.
+            # What she overheard during the pause goes in the same commentary as the wake reply (silent
+            # context next to a request: see LiveVoiceSession.ask_backend).
             heard = "" if silent_start else self._take_background_note() + self._unheard_note()
             if voice_restart:
                 pass  # a new voice: no announcement, she just listens on with the same memory
             elif reconnect:
                 live.speak_context(RECONNECTED)
             elif wake_request:
-                live.speak_context(heard + ANSWER_LAST)
+                live.ask_backend(wake_request, heard)
             elif self._wake_phrase:
                 live.speak_context(heard + WAKE_GREETING.format(phrase=self._wake_phrase))
             else:
@@ -253,7 +244,7 @@ class LiveDriverMixin:
             self._conversation.end_turn()
             self._conversation.add("user", f"Єва, скажи, {wake_request}")
             self._conversation.end_turn()
-            live.speak_context(heard + ANSWER_REQUEST.format(request=wake_request))
+            live.ask_backend(wake_request, heard)
         else:
             live.speak_context(heard + WAKE_GREETING.format(phrase=self._wake_phrase or "Єва, скажи"))
 

@@ -794,7 +794,7 @@
 
   const defaultStart = () => (eva.wakeSupported ? { paused: true } : { greet: true });
 
-  // opts: paused — connect and wait for «Єва, скажи»; say — tell the model this once started;
+  // opts: paused — connect and wait for «Єва, скажи»; ask — a request said with the wake phrase;
   // greet — a short «Слухаю» unless the user starts talking; switched — first words in a new voice.
   async function start(opts = {}) {
     if (!BACKEND) {
@@ -907,12 +907,8 @@
       // A new voice is a new session: carry on as if nothing happened — no «тепер я іншим голосом».
       // Asked by voice: nothing to say — she just listens on in the new voice.
       if (opts.interrupted) commentary(continueInNewVoice(opts.interrupted));
-    } else if (opts.userText) {
-      Promise.resolve(opts.note).then((n) => commentary(withNote(n, ANSWER_LAST)));
-    } else if (opts.request) {
-      Promise.resolve(opts.note).then((n) => commentary(withNote(n, opts.request)));
-    } else if (opts.say) {
-      commentary(opts.say);
+    } else if (opts.ask) {
+      askWoken(opts.ask, opts.note);
     } else if (opts.greet) {
       // A fresh call after a wake: the user finished the phrase seconds ago — greet at once.
       greetIfQuiet(opts.heard, opts.note, opts.fresh ? 0 : 700);
@@ -1036,25 +1032,45 @@
   // The model was muted and never heard the phrase: hand it what followed «Єва, скажи», together
   // with what she overheard during the pause (fetched while the call connects, not before it).
   const withNote = (note, text) => (note ? note + "\n\n" + text : text);
-  // A woken request reaches her as a note, not as speech she heard: without «as if you heard it» she
-  // answered «Єва, скажи, що ти бачиш» herself and made up a room with a laptop and a cup.
-  const AS_IF_HEARD = " Handle it exactly as if you had just heard it: what needs the backend — anything " +
-    "about what is visible (the camera), the web — goes to it as usual; never answer that yourself.";
-  const ANSWER_LAST = "The user woke you and asked something — it is their last message in the history. " +
-    "Answer it now; do not repeat their words." + AS_IF_HEARD;
+  const thinking = (content) =>
+    sendEvent({ type: "session.thinking.append", content, delegation_id: null, event_id: eventId("think") });
+
+  // What followed «Єва, скажи» was never heard by the model (it was muted), and GPT-Live never delegates
+  // a request handed over as a commentary (it made up a room with a laptop and a cup for «що ти бачиш»).
+  // So it goes to the backend as the user's message, with a silent note — woken_request_note in
+  // prompts/live_prompt.py says why; keep the wording the same (tests/test_wake_request.py checks).
+  // «Зміни голос …» is the page's own.
+  function askBackend(text) {
+    thinking("The user woke you with: «" + text + "». It has gone to the backend as their message, and the " +
+      "backend handles it the usual way, with its tools (camera, web) — nothing has been looked at or searched " +
+      "yet. You, the voice: do not delegate it again; when the backend's answer comes, tell it in your own " +
+      "words. Never voice their words or invent what they said.");
+    sendEvent({ type: "response.item.create", event_id: eventId("ask"),
+      item: { type: "message", role: "user", content: [{ type: "input_text", text }] } });
+    sendEvent({ type: "response.create", event_id: eventId("go") });
+    eva.thinking = true;
+    clearTimeout(eva.thinkTimer);
+    eva.thinkTimer = setTimeout(() => { eva.thinking = false; showState(); }, 15000);
+  }
+
+  // note: what she overheard during the pause (a promise) — silent context, never waited for.
+  function askWoken(text, note) {
+    if (VOICE_REQUEST_RE.test(text)) requestVoiceChange(text);
+    else askBackend(text);
+    Promise.resolve(note).then((n) => { if (n) thinking(n); });
+  }
 
   function wakeEva(rest, heard = "") {
     if (eva.mode !== "waiting") return;
     clearTimeout(eva.pauseTimer);
     const note = overheardNote(); // a promise: never delays the wake
-    const request = rest ? "The user just said to you: «" + rest + "». Answer it." + AS_IF_HEARD : "";
     if (rest) addLine("user", "Єва, скажи, " + rest);
     if (pc && channel && channel.readyState === "open") {
       eva.mode = "active";
       sendEvent({ type: "session.input_audio.unmute", event_id: eventId("unmute") });
       setRemoteVolume(1);
       sendFrame();
-      if (request) note.then((n) => commentary(withNote(n, request)));
+      if (rest) askWoken(rest, note);
       else greetIfQuiet(heard, note);
       showState();
       updateButtons();
@@ -1062,7 +1078,7 @@
     } else {
       // The pause closed the call: reopen it right away. What they asked goes into the new call's
       // history as their own message — quoted in a commentary, GPT-Live sometimes read it back.
-      start({ userText: rest ? "Єва, скажи, " + rest : "", greet: !rest, heard, note, fresh: true });
+      start({ userText: rest ? "Єва, скажи, " + rest : "", ask: rest, greet: !rest, heard, note, fresh: true });
     }
   }
 

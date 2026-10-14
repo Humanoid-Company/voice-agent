@@ -20,6 +20,7 @@ def _conn() -> SimpleNamespace:
         response=SimpleNamespace(item=SimpleNamespace(create=AsyncMock()), create=AsyncMock()),
         session=SimpleNamespace(
             commentary=SimpleNamespace(append=AsyncMock()),
+            thinking=SimpleNamespace(append=AsyncMock()),
             instructions=SimpleNamespace(append=AsyncMock()),
             input_audio=SimpleNamespace(mute=AsyncMock(), unmute=AsyncMock(), append=AsyncMock()),
             close=AsyncMock(),
@@ -210,6 +211,7 @@ class _FakeLive:
         self.paused_by: str | None = None
         self.resumed = False
         self.said: list[str] = []
+        self.asked: list[tuple[str, str]] = []
         self.unheard: list[str] = flags.get("unheard", [])
 
     def idle_for(self) -> float:
@@ -223,6 +225,9 @@ class _FakeLive:
 
     def speak_context(self, text: str) -> None:
         self.said.append(text)
+
+    def ask_backend(self, request: str, note: str = "") -> None:
+        self.asked.append((request, note))
 
     def take_unheard(self) -> list[str]:
         results, self.unheard = self.unheard, []
@@ -265,7 +270,8 @@ def test_wake_within_the_pause_answers_in_the_open_session(monkeypatch):
     assert bot._wait_in_pause(live)
     bot._wake_in_session(live)
     assert live.resumed and not bot._paused
-    assert "котра година" in live.said[-1] and "вокзал" in live.said[-1]  # the request + what she overheard
+    request, note = live.asked[-1]  # to the backend, with what she overheard as silent context
+    assert request == "котра година" and "вокзал" in note and not live.said
     assert [t.text for t in bot._conversation.turns() if t.role == "user"] == ["Єва, скажи, котра година"]
 
 

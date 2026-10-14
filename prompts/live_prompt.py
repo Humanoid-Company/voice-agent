@@ -213,6 +213,21 @@ _LIVE_PROMPT_TAIL: str = (
 )
 
 
+def woken_request_note(request: str) -> str:
+    """Silent note (session.thinking.append) for a request said with the wake phrase («Єва, скажи, …»):
+    the model was muted and never heard it, so it goes to the Responses backend as the user's message.
+    GPT-Live never delegates a request handed over as a commentary — it answered it itself, made-up
+    scene and dollar rate included. Without this note she voiced an invented user line before the
+    answer. The backend reads it too: «your backend is already working on it» made it skip the camera
+    («the result hasn't come yet», 4 of 6 runs); this wording looked 6 of 6. Same text in web/app.js."""
+    return (
+        f"The user woke you with: «{request}». It has gone to the backend as their message, and the "
+        "backend handles it the usual way, with its tools (camera, web) — nothing has been looked at or "
+        "searched yet. You, the voice: do not delegate it again; when the backend's answer comes, tell it "
+        "in your own words. Never voice their words or invent what they said."
+    )
+
+
 def work_progress_note() -> str:
     """Delegated work keeps her silent for seconds (server/live_bridge.py); a person doing something
     says so, and silence on a call sounds like the line dropped. No sample lines: she said them

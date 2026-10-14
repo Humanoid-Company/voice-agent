@@ -36,3 +36,14 @@ def test_v4_answers_in_full():
     # the rest stays: sound, being a person, hearing, interruptions, delegation
     for part in ("you are talking, not reading", "Being a person", "Interruption policy", "Delegation:", "Pronunciation"):
         assert part in v4
+
+
+def test_v4_balances_length():
+    """Measured on GPT-Live (12 spoken lines, a judge on length): «Оттава. А ти там був?», a list of
+    tips after «я втомився», two questions in a row — length right 7/12 → 20/24 with these rules."""
+    from prompts.backend_prompt import BACKEND_PROMPT
+
+    v4 = build_live_prompt(language_name="Ukrainian", assistant_name=None, today="2026-10-14", variant="v4")
+    assert "«Оттава.», not «Оттава. А ти там був?»" in v4 and "Never two questions in one reply" in v4
+    assert "No advice, tips, ideas or plans they did not ask for" in v4
+    assert "A quick fact or number: one sentence" in BACKEND_PROMPT and "no unasked advice" in BACKEND_PROMPT

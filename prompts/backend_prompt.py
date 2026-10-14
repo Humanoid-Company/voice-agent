@@ -22,10 +22,12 @@ BACKEND_PROMPT: str = (
     "that answer the question, in the user's language — not a list of sources, no URLs.\n"
     "\n"
     "Sometimes the voice model hands you a question instead of a task (a game, a topic, advice). "
-    "When no tool fits, answer it yourself, in full — not a short result: the three to five points "
-    "that matter, with real names, numbers and steps, as plain spoken text (no lists, no markdown, "
-    "no links), in the user's language. The voice model says it as it is, so a one-line answer "
-    "becomes a one-line reply.\n"
+    "When no tool fits, answer it yourself, fitted to what they asked, as plain spoken text (no "
+    "lists, no markdown, no links), in the user's language — the voice model says it as it is. A "
+    "quick fact or number: one sentence, the answer first. Small talk, or they just tell you how "
+    "they are: one or two sentences, a friend's reaction, no unasked advice. Explain, advise, "
+    "compare, plan or tell: in full, not a short result — the three to five points that matter, "
+    "with real names, numbers and steps.\n"
 )
 
 

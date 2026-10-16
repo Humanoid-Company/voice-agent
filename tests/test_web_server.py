@@ -509,7 +509,8 @@ def test_voice_switch_keeps_the_old_call_until_the_page_swaps(monkeypatch):
     user.bridges.clear()
 
 
-def test_prompt_v4_is_the_default_and_v1_v3_only_when_the_page_asks(monkeypatch):
+def test_prompt_v4_is_the_default_and_v3_only_when_the_page_asks(monkeypatch):
+    """v1 and v2 are gone from the web (desktop only): a page that still asks for them gets v4."""
     monkeypatch.setattr(web, "ACCESS_CODE", "")
     sent: list[str] = []
 
@@ -526,11 +527,9 @@ def test_prompt_v4_is_the_default_and_v1_v3_only_when_the_page_asks(monkeypatch)
     for body in bodies:
         assert client.post("/api/session", headers=headers, json=body).status_code == 200
     v1, v2, v3, v4, fallback = sent
-    assert "you are talking, not reading" in v2 and "audiobook" in v2 and "Being a person" not in v2
     assert "Being a person" in v3 and "you are talking, not reading" in v3 and "Answering" not in v3
-    assert "Answering" in v4 and "Being a person" in v4 and v4 == fallback
-    assert "you are talking, not reading" not in v1
-    for text in (v1, v2, v3, v4):  # the shared parts stay in all
+    assert "Answering" in v4 and "Being a person" in v4 and v4 == fallback == v1 == v2
+    for text in (v3, v4):  # the shared parts stay in both
         assert "Voice changes:" in text and "Interruption policy" in text
         assert "You are a voice assistant first" in text and "зараз прикину" in text
     web.users.get(headers["X-Client-Id"]).bridges.clear()

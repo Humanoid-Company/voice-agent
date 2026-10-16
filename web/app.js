@@ -35,10 +35,13 @@
   let cameraId = store.get("va-camera") || "";
 
   const DEBUG = params.get("debug") === "1";
-  // Delivery prompt (prompts/live_prompt.py): v4 is the usual one (v3 with full, concrete answers),
-  // v3 v2 plus behaving like a person, v2 just the delivery, v1 the older one. Picked in the voice
-  // card (or ?prompt=v3); a change reopens the call, as a voice change does.
+  // Delivery prompt (prompts/live_prompt.py): v4 is the usual one (v3 with full, concrete answers), v3
+  // behaves like a person. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
+  // voice change does. v1 and v2 are gone from the web (the desktop keeps them): a choice saved
+  // earlier becomes v4.
+  const WEB_PROMPTS = ["v3", "v4"];
   let promptVariant = params.get("prompt") || store.get("va-prompt") || "v4";
+  if (!WEB_PROMPTS.includes(promptVariant)) promptVariant = "v4";
   let pc = null;
   let channel = null;
   let sessionVoice = ""; // the voice the current call was opened with
@@ -1676,12 +1679,8 @@
   function showGate() { $("gate").hidden = false; $("code").focus(); }
 
   const PROMPT_INFO = {
-    v1: "Як гарно звучати: тепло, спокійно, плавно, з вдихами й «хм»; вимова розписана детально. " +
-      "Може тягнути в манеру диктора.",
-    v2: "Як живо говорити: наче телефонна розмова з другом — інтонація за змістом, нерівний темп, " +
-      "короткі розмовні речення, людські звуки рідше.",
-    v3: "Звучить як v2, а поводиться як людина: має свою думку, цікавиться вами, спершу реагує на " +
-      "ваші новини, повертається до сказаного раніше, без «чим ще можу допомогти?».",
+    v3: "Говорить живо, як у телефонній розмові з другом, і поводиться як людина: має свою думку, цікавиться " +
+      "вами, спершу реагує на ваші новини, повертається до сказаного раніше, без «чим ще можу допомогти?».",
     v4: "v3 з повними відповідями: довжина за питанням (коротко на дрібниці, розгорнуто на «поясни», «порадь», " +
       "«як»), конкретні назви, числа й кроки, без «хочеш, розкажу?» замість відповіді, рідше питання наприкінці, " +
       "не перебиває, поки ви не договорили.",
@@ -1929,7 +1928,7 @@
     $("voiceNow").addEventListener("change", toggleVoiceNow);
     $("cleanVoice").checked = cleanVoice;
     $("cleanVoice").addEventListener("change", toggleCleanVoice);
-    $("promptVariant").value = ["v1", "v2", "v3"].includes(promptVariant) ? promptVariant : "v4";
+    $("promptVariant").value = promptVariant;
     $("promptVariant").addEventListener("change", changePrompt);
     showPromptInfo();
     showVoiceNow();

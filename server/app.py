@@ -34,7 +34,7 @@ from config import (
     WEB_SEARCH_API_KEY,
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
-from prompts.live_prompt import PROMPT_VARIANTS, build_live_prompt
+from prompts.live_prompt import build_live_prompt
 from server.live_bridge import SidebandToolBridge
 from server.web_users import WebUser, WebUserRegistry
 from tools.live_schemas import LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
@@ -77,6 +77,8 @@ _CAMERA_NOTE = (
     "before you may recall from earlier looks. One look per request: do not look again on your own. "
     "If you said something a look did not confirm, it was your mistake — say so, never blame the user."
 )
+# Delivery prompts the page may pick; v1 and v2 are desktop-only now (an old page asking for them gets v4).
+WEB_PROMPT_VARIANTS = ("v3", "v4")
 # A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
 MAX_FRAME_BYTES = 600_000
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{16,64}$")
@@ -181,7 +183,7 @@ class SessionRequest(BaseModel):
     # A voice switch opens the new call beside the current one: the page closes the old call
     # itself once the new one has taken over (the old one goes on talking meanwhile).
     keep_old: bool = False
-    # Delivery prompt: v4 (default), v3, v2 or v1.
+    # Delivery prompt: v4 (default) or v3.
     prompt: str | None = None
 
 
@@ -234,7 +236,7 @@ async def create_session(
         user.speed = body.speed
     if body.style in STYLE_OPTIONS:
         user.style = body.style
-    user.prompt_variant = body.prompt if body.prompt in PROMPT_VARIANTS else "v4"
+    user.prompt_variant = body.prompt if body.prompt in WEB_PROMPT_VARIANTS else "v4"
     user.reconnect_pending = False
     if body.user_text and body.user_text.strip():
         user.conversation.add("user", body.user_text.strip()[:500])

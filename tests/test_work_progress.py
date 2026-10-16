@@ -24,10 +24,11 @@ def _call(call_id: str) -> dict:
     })
 
 
-def _bridge(monkeypatch, *, after=0.05, quiet=0.0) -> tuple[SidebandToolBridge, SimpleNamespace]:
-    monkeypatch.setattr(live_bridge, "_PROGRESS_AFTER_S", after)
-    monkeypatch.setattr(live_bridge, "_PROGRESS_QUIET_S", quiet)
-    monkeypatch.setattr(live_bridge, "_PROGRESS_INPUT_GRACE_S", 0.0)
+def _bridge(monkeypatch, *, after=0.05, quiet=0.0, every=0.1) -> tuple[SidebandToolBridge, SimpleNamespace]:
+    monkeypatch.setattr(live_bridge, "_MUMBLE_THINK_FIRST_S", after)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_EVERY_S", every)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_QUIET_S", quiet)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_INPUT_GRACE_S", 0.0)
     executor = ToolExecutor({"slow_lookup": lambda args, ctx: ToolResult(ok=True, status="ok", message="ok")})
     bridge = SidebandToolBridge(client=SimpleNamespace(), session_id="s1", executor=executor)
     conn = SimpleNamespace(
@@ -49,42 +50,40 @@ def test_note_without_sample_lines():
     assert "nobody is talking" not in note and "go quiet" not in note  # a choice → a literal «null»
 
 
-def test_long_work_gets_one_progress_line(monkeypatch):
+def test_she_keeps_thinking_aloud_while_the_work_runs(monkeypatch):
+    """The team: she should talk the whole time she works, not one line after 8 s of silence."""
     bridge, conn = _bridge(monkeypatch)
 
     async def run():
         await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r1"}}))
-        await bridge._handle_event(_call("c1"))
-        await asyncio.sleep(0.6)  # the tool still runs (checks every 0.25 s)
+        await asyncio.sleep(1.2)  # it checks every 0.25 s
         said = _said(conn)
-        assert len(said) == 1 and "still running" in said[0]
+        assert len(said) >= 3 and all("working out the answer" in line for line in said)
+        assert "still at it" not in said[0] and "still at it" in said[1]
 
     asyncio.run(run())
 
 
-def test_no_progress_once_the_results_are_in(monkeypatch):
+def test_nothing_for_a_quick_answer(monkeypatch):
     bridge, conn = _bridge(monkeypatch, after=0.3)
-
-    async def run():
-        await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r1"}}))
-        await bridge._handle_event(_call("c1"))
-        await bridge._handle_event(_event({"type": "response.completed", "response": {"id": "r1"}}))
-        await asyncio.gather(*bridge._tool_tasks)  # results in → continued: the answer is being written
-        await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r2"}}))
-        await asyncio.sleep(0.6)
-        assert _said(conn) == [] and "dlg-1" in bridge._answering
-
-    asyncio.run(run())
-
-
-def test_final_answer_stops_progress(monkeypatch):
-    bridge, conn = _bridge(monkeypatch, after=0.2)
 
     async def run():
         await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r1"}}))
         await bridge._handle_event(_event({"type": "response.completed", "response": {"id": "r1"}}))
         await asyncio.sleep(0.5)
-        assert _said(conn) == [] and not bridge._work and not bridge._progress
+        assert _said(conn) == [] and not bridge._work and not bridge._mumbles
+
+    asyncio.run(run())
+
+
+def test_at_most_a_few_lines_for_one_piece_of_work(monkeypatch):
+    bridge, conn = _bridge(monkeypatch, every=0.05)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_MAX", 4)
+
+    async def run():
+        await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r1"}}))
+        await asyncio.sleep(2.0)
+        assert len(_said(conn)) == 4
 
     asyncio.run(run())
 
@@ -127,7 +126,7 @@ def test_no_progress_while_her_long_answer_still_plays(monkeypatch):
         await asyncio.sleep(0.8)  # no new text for 0.8 s, but she is still speaking
         assert _said(conn) == []
         await asyncio.sleep(1.5)  # her audio has ended and 0.2 s of quiet passed
-        assert len(_said(conn)) == 1
+        assert len(_said(conn)) >= 1
 
     asyncio.run(run())
 
@@ -148,25 +147,10 @@ def test_setting_waits_for_her_audio_not_just_her_text(monkeypatch):
     asyncio.run(run())
 
 
-def test_one_progress_line_for_a_question_and_its_follow_up(monkeypatch):
-    """«Порадь персонажів для Дудлоку» → «Дедлок»: two delegations a few seconds apart said «я працюю»
-    twice, on top of her own «Секунду» each time."""
-    bridge, conn = _bridge(monkeypatch)
-
-    async def run():
-        for rid, call in (("r1", "c1"), ("r2", "c2")):
-            bridge._work.clear()
-            await bridge._handle_event(_event({"type": "response.created", "response": {"id": rid}}))
-            await bridge._handle_event(_call(call))
-            await asyncio.sleep(0.6)
-        assert len(_said(conn)) == 1
-
-    asyncio.run(run())
-
-
-def test_progress_waits_longer_than_a_quick_answer():
-    # her own «Секунду», then the backend's answer usually comes before this
-    assert live_bridge._PROGRESS_AFTER_S >= 8 and live_bridge._PROGRESS_QUIET_S >= 4
+def test_she_starts_soon_enough():
+    # a quick answer (2–3 s) comes before the first line; a search gets one soon after it starts
+    assert live_bridge._MUMBLE_THINK_FIRST_S >= 2.5 and live_bridge._MUMBLE_SEARCH_FIRST_S <= 2.0
+    assert live_bridge._MUMBLE_EVERY_S <= 5.0
 
 
 # ── a web search: she thinks aloud while it runs ─────────────────────────────
@@ -175,11 +159,11 @@ def test_progress_waits_longer_than_a_quick_answer():
 def _search_bridge(monkeypatch, *, first=0.05, every=0.1):
     import time as _time
 
-    monkeypatch.setattr(live_bridge, "_MUMBLE_FIRST_S", first)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_SEARCH_FIRST_S", first)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_THINK_FIRST_S", 10.0)  # only the search lines here
     monkeypatch.setattr(live_bridge, "_MUMBLE_EVERY_S", every)
     monkeypatch.setattr(live_bridge, "_MUMBLE_QUIET_S", 0.0)
-    monkeypatch.setattr(live_bridge, "_PROGRESS_AFTER_S", 0.05)
-    monkeypatch.setattr(live_bridge, "_PROGRESS_QUIET_S", 0.0)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_MAX", 3)
 
     def slow_search(args, ctx):
         _time.sleep(1.2)
@@ -204,8 +188,8 @@ def _search_call():
 
 
 def test_she_thinks_aloud_while_a_search_runs(monkeypatch):
-    """Feedback: a search left a long silence after her «Секунду». Lines while it runs, at most three,
-    about this search, and no generic «still working» line on top."""
+    """Feedback: a search left a long silence after her «Секунду». Lines while it runs, about this
+    search."""
     bridge, conn = _search_bridge(monkeypatch)
 
     async def run():

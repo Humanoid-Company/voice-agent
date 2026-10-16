@@ -244,6 +244,21 @@ def search_mumble_note(query: str, count: int) -> str:
     )
 
 
+def thinking_mumble_note(count: int) -> str:
+    """The backend is still working out an answer (no search): she thinks aloud, like a person mulling
+    it over — the team wants her talking the whole time she works, not a silent wait."""
+    again = (
+        " You are still at it: shorter than before and different from anything you said."
+        if count else ""
+    )
+    return (
+        "Note, not a message from the user: you are still working out the answer to their last request "
+        "and it is not ready yet. Say one very short line thinking aloud, like a person mulling it over — "
+        "about this exact request, a few words, in your own words. Not a result or a guess at one, not a "
+        "question." + again
+    )
+
+
 def work_progress_note() -> str:
     """Delegated work keeps her silent for seconds (server/live_bridge.py); a person doing something
     says so, and silence on a call sounds like the line dropped. No sample lines: she said them

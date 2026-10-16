@@ -935,7 +935,10 @@
     ch.onclose = () => { if (pc === peer && eva.mode !== "connecting" && eva.mode !== "switching") onSessionClosed(); };
   }
 
-  const continueInNewVoice = (said) => "Your voice was just changed while you were saying: «" + said.slice(-500) +
+  // Sent as silent context (session.thinking.append): as a commentary, which is speakable, she once said
+  // part of it aloud («користувач змінив ваш голос»). Measured on GPT-Live: from a silent note she carries
+  // on the interrupted sentence just as well (9/9 runs, no note read out). Kept short: notes are ≤500 tokens.
+  const continueInNewVoice = (said) => "Your voice was just changed while you were saying: «" + said.slice(-300) +
     "». Continue exactly that answer in the new voice from where it stopped (its last few words may not have been heard) — do not start it over, do not mention the voice change.";
 
   // session.started: the call is up — pause, or talk.
@@ -950,7 +953,7 @@
     if (opts.switched) {
       // A new voice is a new session: carry on as if nothing happened — no «тепер я іншим голосом».
       // Asked by voice: nothing to say — she just listens on in the new voice.
-      if (opts.interrupted) commentary(continueInNewVoice(opts.interrupted));
+      if (opts.interrupted) thinking(continueInNewVoice(opts.interrupted));
     } else if (opts.ask) {
       askWoken(opts.ask, opts.note);
     } else if (opts.greet) {
@@ -1473,9 +1476,9 @@
     // The history ended when this call opened; what came after is handed over here. The model
     // answers a context message out loud, so it is told plainly when to stay silent.
     const context = said ? "After your history ended, the conversation went on (the user heard all of it; " +
-      "these replies of yours are finished — never repeat or retell them):\n" + said.slice(-1500) + "\n\n" : "";
+      "these replies of yours are finished — never repeat or retell them):\n" + said.slice(-800) + "\n\n" : "";
     if (interrupted) {
-      commentary(context + continueInNewVoice(interrupted));
+      thinking(context + continueInNewVoice(interrupted));
     } else if (context) {
       sendEvent({ type: "session.instructions.append", delegation_id: null, event_id: eventId("ctx"),
         content: context + "Say nothing now — no acknowledgement. Wait silently for the user's next words." });

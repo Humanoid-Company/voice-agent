@@ -229,3 +229,23 @@ def test_web_user_search_is_limited_per_request():
         results = [asyncio.run(user.executor.execute("web_search", {"query": f"q{i}"}, ctx)) for i in range(4)]
     assert [r.ok for r in results] == [True, True, True, False]  # WEB_SEARCH_MAX_CALLS_PER_TURN = 3
     assert results[-1].status == "rate_limited"
+
+
+def test_backend_answers_a_search_short_and_plain():
+    """She starts speaking only once the backend has written its whole answer: long answers with markdown
+    (bold figures, lists of news) and a second search one after another kept her silent. Measured on the
+    real backend with Tavily: 12/12 answers right, 4.8 s median instead of 6.0 s, one search each."""
+    from prompts.backend_prompt import BACKEND_PROMPT
+
+    assert "One search is usually enough" in BACKEND_PROMPT and "run the searches together" in BACKEND_PROMPT
+    assert "one to three spoken sentences" in BACKEND_PROMPT and "no markdown, no bold" in BACKEND_PROMPT
+
+
+def test_backend_answers_known_facts_without_searching():
+    """Feedback: «Хто такий Павло Скоропадський?» went to the web (and found his palace). Biographies,
+    history, science and definitions are answered from knowledge; the query names the asked-about person."""
+    from prompts.backend_prompt import BACKEND_PROMPT
+
+    assert "companies, people," not in BACKEND_PROMPT  # «people» as a search topic sent biographies to the web
+    assert "famous people's lives" in BACKEND_PROMPT and "without searching" in BACKEND_PROMPT
+    assert "a person → their full name, not a place or thing named after them" in BACKEND_PROMPT

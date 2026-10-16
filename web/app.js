@@ -125,9 +125,10 @@
       constructor(options) {
         super();
         this.frame = Math.round(sampleRate * 0.02);       // judge loudness per 20 ms
-        // 150 ms look-ahead: the gate opens on voiced sound, and a soft start before it («с», «ф»,
-        // «х», «п» — «Скажи», «Привіт») was cut at 60 ms and misheard.
-        this.ring = new Float32Array(Math.round(sampleRate * 0.15));
+        // 250 ms look-ahead: the gate opens on voiced sound, and a soft start before it («с», «ф»,
+        // «х», «п» — «Скажи», «Привіт») was cut at 60 ms and misheard; at 150 ms quiet words still lost
+        // their start (measured, see the gain below).
+        this.ring = new Float32Array(Math.round(sampleRate * 0.25));
         this.pos = 0; this.sum = 0; this.outSum = 0; this.count = 0;
         this.floor = 0.003; this.open = false; this.loud = 0; this.quietFor = 1;
         this.gain = 0;
@@ -165,8 +166,8 @@
         if (level > threshold) { this.loud += 1; this.quietFor = 0; }
         else { this.quietFor += 0.02; if (level < threshold * 0.6) this.loud = 0; }
         if (!this.open && this.loud >= 2) this.open = true;
-        // 0.6 s: a quiet word ending or a short pause mid-sentence is not cut off.
-        else if (this.open && this.quietFor > 0.6) this.open = false;
+        // 1 s: a quiet word ending or a pause mid-sentence is not cut off (0.6 s cut phrase ends).
+        else if (this.open && this.quietFor > 1.0) this.open = false;
         if (this.open && !audible && level > threshold * 1.5) this.voice += (level - this.voice) * (this.voice ? 0.02 : 1);
         const near = this.voice ? Math.min(this.near, Math.max(0.01, this.voice * 0.5)) : this.near;
         const nearThreshold = Math.max(audible ? near * 1.3 : near, this.floor * 8, echoLevel * 1.3);
@@ -196,7 +197,13 @@
           const delayed = this.ring[this.pos];
           this.ring[this.pos] = x;
           this.pos = (this.pos + 1) % this.ring.length;
-          this.gain += ((this.open ? 1 : 0) - this.gain) * (this.open ? 0.004 : 0.0005);
+          // Closed while she is silent = −14 dB, not silence: a quiet user below the bar is still heard.
+          // Cutting to zero made GPT-Live mishear a quiet voice by a fan (feedback: «говорю одне, а
+          // виходить інше»): measured with this gate ported to Python on real GPT-Live, 8 phrases, a
+          // quiet voice and room noise — word errors 51% / 24% → 6%, a TV-level voice alone still 0 of
+          // 70 words heard. While she talks it still closes fully: her echo must not reach the model.
+          const closed = this.audible ? 0 : 0.2;
+          this.gain += ((this.open ? 1 : closed) - this.gain) * (this.open ? 0.004 : 0.0005);
           output[i] = delayed * this.gain;
         }
         for (let c = 1; c < outputs[0].length; c++) outputs[0][c].set(output);

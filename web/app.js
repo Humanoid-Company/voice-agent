@@ -67,6 +67,9 @@
   function setStatus(text, state) {
     $("status").textContent = text;
     $("dot").className = "dot" + (state ? " " + state : "");
+    // The orb shows the same state big: listening, thinking, speaking, paused (feedback: «незрозуміло,
+    // чи вона працює»).
+    $("orb").className = "orb" + (state ? " " + state : "");
   }
 
   function addLine(role, text) {
@@ -827,7 +830,9 @@
   const commentary = (content) =>
     sendEvent({ type: "session.commentary.append", content, delegation_id: null, event_id: eventId("say") });
 
-  const defaultStart = () => (eva.wakeSupported ? { paused: true } : { greet: true });
+  // «Почати розмову»: she greets at once and listens. Connecting paused, silent until «Єва, скажи», left
+  // testers unsure whether she was on at all (feedback: «при запуску не вітається і мовчить»).
+  const defaultStart = () => ({ greet: true, hello: true });
 
   // opts: paused — connect and wait for «Єва, скажи»; ask — a request said with the wake phrase;
   // greet — a short «Слухаю» unless the user starts talking; switched — first words in a new voice.
@@ -946,7 +951,7 @@
       askWoken(opts.ask, opts.note);
     } else if (opts.greet) {
       // A fresh call after a wake: the user finished the phrase seconds ago — greet at once.
-      greetIfQuiet(opts.heard, opts.note, opts.fresh ? 0 : 700);
+      greetIfQuiet(opts.heard, opts.note, opts.fresh ? 0 : 700, opts.hello ? START_GREETING : "");
     }
     showState();
     updateButtons();
@@ -1128,7 +1133,12 @@
   // answers that) or she is already speaking; a noise at the wrong moment just delays it a little.
   // note: what she overheard during the pause — delivered with the greeting, or alone if skipped.
   // note: a string or a promise of one (overheardNote) — never waited for before the greeting.
-  function greetIfQuiet(heard = "", note = "", delayMs = 700) {
+  const START_GREETING = "The user just pressed «Почати розмову»: the call is open. Greet them in a few " +
+    "words so they hear you are on and listening — a short hello and that they can just talk; vary it, " +
+    "no question about how you can help. Then wait.";
+
+  // text: what to say instead of the wake greeting (START_GREETING when the call was just started).
+  function greetIfQuiet(heard = "", note = "", delayMs = 700, text = "") {
     const wokeAt = Date.now();
     const phrase = heard || "Єва, скажи";
     const giveUpAt = wokeAt + 4000;
@@ -1138,7 +1148,7 @@
       if (eva.mode !== "active") return;
       if (eva.lastUserAt > wokeAt || barge.audible) { if (n) commentary(n); return; }
       if (barge.speaking && Date.now() < giveUpAt) { setTimeout(tryGreet, 300); return; }
-      commentary(withNote(n, wakeGreeting(phrase)));
+      commentary(withNote(n, text || wakeGreeting(phrase)));
     };
     setTimeout(tryGreet, delayMs);
   }

@@ -384,6 +384,7 @@
     releaseTimer: null,
     speechEndedAt: 0,   // when the near voice last stopped (transcripts lag behind it)
     recentAssistant: "", // for the echo check
+    ducks: 0, mutes: 0, // how often she was ducked / cut off (?debug=1: evaDebug())
   };
 
   function bargeClear() {
@@ -399,12 +400,28 @@
     const v = eva.mode === "waiting" ? 0 : level * volume;
     if (fx && fx.on) {
       // She is heard through the «Чистіший звук» chain; the element only keeps the stream flowing.
+      clearInterval(volRamp);
       el.muted = true;
       fx.setVolume(v);
       return;
     }
-    el.volume = v;
-    el.muted = v === 0;
+    rampVolume(el, v);
+  }
+
+  // Her volume moves over ~60 ms instead of jumping: an instant step in a playing voice is a click, and
+  // on speakers — where her own echo makes barge-in ducks (1 → 0.5 → 1) and mutes frequent — the clicks
+  // came as crackle, louder the higher the volume (feedback: «хрипи … повʼязане з самоперебиванням»).
+  let volRamp = null;
+  function rampVolume(el, target) {
+    clearInterval(volRamp);
+    if (el.muted) { el.volume = 0; el.muted = false; }
+    const from = el.volume;
+    let step = 0;
+    volRamp = setInterval(() => {
+      step += 1;
+      el.volume = Math.min(1, Math.max(0, from + (target - from) * (step / 8)));
+      if (step >= 8) { clearInterval(volRamp); volRamp = null; el.muted = target === 0; }
+    }, 8);
   }
 
   // Her voice into the speakers (straight, or through the chain) and into the gate's echo meter.
@@ -482,8 +499,11 @@
       // sound "better" in a side-by-side comparison.
       const makeup = new GainNode(ctx, { gain: 1 });
       const volumeNode = new GainNode(ctx, { gain: 1 });
-      highpass.connect(presence).connect(deEsser).connect(comp).connect(makeup).connect(volumeNode);
-      volumeNode.connect(ctx.destination);
+      // The compressor adds its own make-up gain: on loud phrases the chain went past full scale and
+      // clipped (a rasp at high volume). A brick-wall limiter last keeps it just under.
+      const limiter = new DynamicsCompressorNode(ctx, { threshold: -2, knee: 0, ratio: 20, attack: 0.002, release: 0.08 });
+      highpass.connect(presence).connect(deEsser).connect(comp).connect(makeup).connect(volumeNode).connect(limiter);
+      limiter.connect(ctx.destination);
       let source = null;
       return {
         on: false,
@@ -562,6 +582,7 @@
     if (barge.stage === "muted") return;
     bargeClear();
     barge.stage = "muted";
+    barge.mutes += 1;
     setRemoteVolume(0);
     steer(kind);
     scheduleRelease();
@@ -602,7 +623,7 @@
       if (barge.stage !== "idle" || !barge.audible || herBackchannel()) return;
       if (Date.now() - barge.speechEndedAt > 1500) barge.heard = "";
       barge.timers.push(setTimeout(() => {
-        if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; setRemoteVolume(0.5); }
+        if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; barge.ducks += 1; setRemoteVolume(0.5); }
       }, 400));
       // A quiet voice over her on speakers: the gate rightly keeps it below her echo, so its words never
       // reach the model and nothing confirms the barge-in — she went on and the user felt ignored.
@@ -1502,6 +1523,8 @@
     window.evaDebug = () => ({
       mode: eva.mode, pendingDelivery, audible: barge.audible, speaking: barge.speaking,
       thinking: eva.thinking, quietMs: Date.now() - eva.lastAudibleAt, channel: channel && channel.readyState,
+      // Many ducks while only she talks = her echo is taken for the user (crackle, self-interruption).
+      ducks: barge.ducks, mutes: barge.mutes,
     });
     // await evaAudio(): what her voice actually arrives as — codec line, kbit/s over 3 s, lost and
     // concealed audio. A low bitrate or a lot of concealment = the lisp is the transport, not the model.

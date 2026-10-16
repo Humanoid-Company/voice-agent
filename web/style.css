@@ -148,31 +148,3 @@ footer { margin-top: 20px; text-align: center; }
 }
 .camera-view[hidden] { display: none; }
 .camera-view.mirror { transform: scaleX(-1); }
-
-/* The state orb above the status line: same states as the dot, big and animated. */
-.orb {
-  --orb: var(--switch-off);
-  width: 84px; height: 84px; margin: 4px auto 14px; border-radius: 50%; position: relative;
-  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.55), transparent 55%), var(--orb);
-  box-shadow: 0 6px 22px color-mix(in srgb, var(--orb) 35%, transparent);
-  transition: background-color 0.3s ease, box-shadow 0.3s ease;
-}
-.orb::before, .orb::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%;
-  border: 2px solid var(--orb); opacity: 0; pointer-events: none;
-}
-.orb.busy { --orb: var(--warn); animation: orb-breathe 1.6s ease-in-out infinite; }
-.orb.wait { --orb: var(--accent); opacity: 0.75; animation: orb-breathe 3s ease-in-out infinite; }
-.orb.live { --orb: var(--ok); }
-.orb.live::before, .orb.live::after { animation: orb-ripple 2.2s ease-out infinite; }
-.orb.live::after { animation-delay: 1.1s; }
-.orb.think { --orb: var(--warn); animation: orb-breathe 0.9s ease-in-out infinite; }
-.orb.think::before { opacity: 0.9; border-color: transparent; border-top-color: var(--orb); inset: -7px; animation: orb-spin 1s linear infinite; }
-.orb.speak { --orb: var(--accent); animation: orb-talk 0.45s ease-in-out infinite alternate; }
-.orb.speak::before { animation: orb-ripple 1.2s ease-out infinite; }
-.orb.err { --orb: var(--err); }
-@keyframes orb-breathe { 50% { transform: scale(0.92); } }
-@keyframes orb-talk { from { transform: scale(0.96); } to { transform: scale(1.06); } }
-@keyframes orb-ripple { from { transform: scale(1); opacity: 0.6; } to { transform: scale(1.6); opacity: 0; } }
-@keyframes orb-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .orb, .orb::before, .orb::after { animation: none !important; } }

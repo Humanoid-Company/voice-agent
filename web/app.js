@@ -67,9 +67,6 @@
   function setStatus(text, state) {
     $("status").textContent = text;
     $("dot").className = "dot" + (state ? " " + state : "");
-    // The orb shows the same state big: listening, thinking, speaking, paused (feedback: «незрозуміло,
-    // чи вона працює»).
-    $("orb").className = "orb" + (state ? " " + state : "");
   }
 
   function addLine(role, text) {

@@ -228,6 +228,22 @@ def woken_request_note(request: str) -> str:
     )
 
 
+def search_mumble_note(query: str, count: int) -> str:
+    """While a web search runs she thinks aloud, like a person scrolling through results — a search
+    and its summary took 6–10 s of silence after her «Секунду» (feedback: «довга мовчанка»). count:
+    lines already said for this search. No sample lines: she said them word for word."""
+    again = (
+        " You are still at it: shorter than before and different from anything you said."
+        if count else ""
+    )
+    return (
+        f"Note, not a message from the user: you are searching the web for their request ({query!r}) "
+        "and the results are not in yet. Say one very short line thinking aloud while you look, like a "
+        "person scrolling through results — what you are checking right now, a few words, in your own "
+        "words. Not a result or a guess at one, no source names, not a question." + again
+    )
+
+
 def work_progress_note() -> str:
     """Delegated work keeps her silent for seconds (server/live_bridge.py); a person doing something
     says so, and silence on a call sounds like the line dropped. No sample lines: she said them

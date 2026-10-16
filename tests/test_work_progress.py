@@ -167,3 +167,80 @@ def test_one_progress_line_for_a_question_and_its_follow_up(monkeypatch):
 def test_progress_waits_longer_than_a_quick_answer():
     # her own «Секунду», then the backend's answer usually comes before this
     assert live_bridge._PROGRESS_AFTER_S >= 8 and live_bridge._PROGRESS_QUIET_S >= 4
+
+
+# ── a web search: she thinks aloud while it runs ─────────────────────────────
+
+
+def _search_bridge(monkeypatch, *, first=0.05, every=0.1):
+    import time as _time
+
+    monkeypatch.setattr(live_bridge, "_MUMBLE_FIRST_S", first)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_EVERY_S", every)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_QUIET_S", 0.0)
+    monkeypatch.setattr(live_bridge, "_PROGRESS_AFTER_S", 0.05)
+    monkeypatch.setattr(live_bridge, "_PROGRESS_QUIET_S", 0.0)
+
+    def slow_search(args, ctx):
+        _time.sleep(1.2)
+        return ToolResult(ok=True, status="ok", message="Знайшла.")
+
+    executor = ToolExecutor()
+    executor.register("web_search", slow_search, run_in_thread=True)
+    bridge = SidebandToolBridge(client=SimpleNamespace(), session_id="s1", executor=executor)
+    conn = SimpleNamespace(
+        response=SimpleNamespace(item=SimpleNamespace(create=AsyncMock()), create=AsyncMock()),
+        session=SimpleNamespace(commentary=SimpleNamespace(append=AsyncMock())),
+    )
+    bridge._connection = conn
+    return bridge, conn
+
+
+def _search_call():
+    return _event({
+        "type": "response.output_item.done",
+        "item": {"type": "function_call", "call_id": "c1", "name": "web_search", "arguments": '{"query": "курс біткоїна"}'},
+    })
+
+
+def test_she_thinks_aloud_while_a_search_runs(monkeypatch):
+    """Feedback: a search left a long silence after her «Секунду». Lines while it runs, at most three,
+    about this search, and no generic «still working» line on top."""
+    bridge, conn = _search_bridge(monkeypatch)
+
+    async def run():
+        await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r1"}}))
+        await bridge._handle_event(_search_call())
+        await asyncio.sleep(1.0)
+        said = _said(conn)
+        assert len(said) == 3 and all("searching the web" in s and "курс біткоїна" in s for s in said)
+        assert "still at it" not in said[0] and "still at it" in said[1]
+        await asyncio.gather(*bridge._tool_tasks)
+
+    asyncio.run(run())
+
+
+def test_no_thinking_aloud_once_the_answer_is_ready_or_the_user_speaks(monkeypatch):
+    bridge, conn = _search_bridge(monkeypatch, first=0.3)
+
+    async def run():
+        await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r1"}}))
+        await bridge._handle_event(_search_call())
+        await bridge._handle_event({"type": "session.input_transcript.delta", "delta": "а ні, не треба"})
+        await asyncio.sleep(0.6)
+        assert _said(conn) == []
+        await asyncio.gather(*bridge._tool_tasks)
+
+    asyncio.run(run())
+
+    bridge, conn = _search_bridge(monkeypatch, first=0.3)
+
+    async def answered():
+        await bridge._handle_event(_event({"type": "response.created", "response": {"id": "r1"}}))
+        await bridge._handle_event(_search_call())
+        bridge._work.pop("dlg-1", None)  # the backend's answer is ready: she speaks it now
+        await asyncio.sleep(0.6)
+        assert _said(conn) == []
+        await asyncio.gather(*bridge._tool_tasks)
+
+    asyncio.run(answered())

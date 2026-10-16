@@ -9,6 +9,7 @@ here — the browser's echo cancellation and the Live model handle that.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -17,7 +18,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from prompts.live_prompt import work_progress_note
+from prompts.live_prompt import search_mumble_note, work_progress_note
 from tools.executor import ToolExecutionContext, ToolExecutor
 from voice.conversation import ConversationLog, remember_tool_result
 from voice.delegation import RESPONSE_FINISHED_TYPES, DelegatedResponseTracker, extract_completed_function_call
@@ -44,6 +45,16 @@ _PROGRESS_GIVE_UP_S = 20.0
 _PROGRESS_REPEAT_S = 30.0
 # The user's own request may still be transcribed this long after the work started.
 _PROGRESS_INPUT_GRACE_S = 1.5
+# A web search: she thinks aloud while it runs («дивлюсь…», «так, ще шукаю…») — a search and its
+# summary left 6–10 s of silence after her «Секунду» (feedback: «довга мовчанка»). The first line this
+# long after the search call, then one every _MUMBLE_EVERY_S, at most _MUMBLE_MAX, each only once she
+# has been quiet _MUMBLE_QUIET_S (her estimated audio, not just her text); none once the answer is
+# ready (the work is over) or the user spoke. This replaces the generic progress line for that work.
+_MUMBLE_TOOLS = frozenset({"web_search"})
+_MUMBLE_FIRST_S = 2.0
+_MUMBLE_EVERY_S = 5.0
+_MUMBLE_MAX = 3
+_MUMBLE_QUIET_S = 1.2
 # Her transcript runs well ahead of her audio: a long answer (a full camera description) is all text
 # within a second or two and then plays for many more, so «no new text for 4 s» came mid-sentence —
 # prod: «…сидить у чорному кріслі. ДивитьсяДивлюсь.», the progress line cutting her off. The page
@@ -105,6 +116,7 @@ class SidebandToolBridge:
         # Wall time each piece of work started: a camera frame the page snapped since then is «now».
         self._work_started_at: dict[str, float] = {}
         self._progress: dict[str, asyncio.Task] = {}
+        self._mumbles: dict[str, asyncio.Task] = {}  # work with a web search: she thinks aloud
         # Work whose results are in: the backend is writing the answer, she is about to speak it.
         self._answering: set[str] = set()
         self._last_progress_at = -1e9  # loop time of the last «still working» line
@@ -128,7 +140,7 @@ class SidebandToolBridge:
             self._connection = None
             if expiry is not None:
                 expiry.cancel()
-            for task in [*self._tool_tasks, *self._progress.values()]:
+            for task in [*self._tool_tasks, *self._progress.values(), *self._mumbles.values()]:
                 task.cancel()
             logger.info("web.sideband.closed session_id=%s", self.session_id)
             if self._on_closed:
@@ -266,6 +278,9 @@ class SidebandToolBridge:
         if key in self._work:
             self._work[key].append(completed.name)
             self._answering.discard(key)  # one more step
+            if completed.name in _MUMBLE_TOOLS and key not in self._mumbles:
+                started = asyncio.get_running_loop().time()  # the user speaking from now on stops it
+                self._mumbles[key] = asyncio.create_task(self._mumble(key, completed.arguments, started))
         logger.info(
             "web.tool.call session_id=%s call_id=%s tool_name=%s",
             self.session_id,
@@ -313,6 +328,8 @@ class SidebandToolBridge:
                 or now - started > _PROGRESS_GIVE_UP_S
             ):
                 return
+            if key in self._mumbles:
+                return  # a search: she thinks aloud instead (_mumble)
             if now - started >= _PROGRESS_AFTER_S and self._quiet_for(now) >= _PROGRESS_QUIET_S:
                 if now - self._last_progress_at < _PROGRESS_REPEAT_S:
                     return  # she said it moments ago, for the request this one follows up
@@ -323,6 +340,31 @@ class SidebandToolBridge:
             self.session_id, loop.time() - started, self._work[key],
         )
         await self.say(work_progress_note())
+
+    async def _mumble(self, key: str, arguments: Any, started: float) -> None:
+        """A web search runs: short lines thinking aloud, until its answer is ready."""
+        query = ""
+        try:
+            parsed = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
+            query = str(parsed.get("query") or "")[:120]
+        except (ValueError, AttributeError):
+            pass
+        loop = asyncio.get_running_loop()
+        said = 0
+        try:
+            while said < _MUMBLE_MAX:
+                await asyncio.sleep(0.25)
+                now = loop.time()
+                if not self.is_open or key not in self._work or self._last_input_at > started:
+                    return
+                due = started + _MUMBLE_FIRST_S + said * _MUMBLE_EVERY_S
+                if now >= due and self._quiet_for(now) >= _MUMBLE_QUIET_S:
+                    logger.info("web.work.mumble session_id=%s n=%s after_s=%.1f", self.session_id, said + 1, now - started)
+                    await self.say(search_mumble_note(query, said))
+                    said += 1
+                    self._last_progress_at = now
+        finally:
+            self._mumbles.pop(key, None)
 
     async def _execute_and_continue(
         self,

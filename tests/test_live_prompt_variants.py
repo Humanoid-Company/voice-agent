@@ -61,3 +61,13 @@ def test_v5_is_v4_condensed():
                  "they said last", "new request — answer it", "Never assume their gender", "with this voice"):
         assert part.lower() in v5.lower(), part
     assert "(prod)" not in v5
+
+
+def test_v5_never_invents_recent_news():
+    """Prod (Safari): «що цікавого сьогодні / вчора» got made-up news with no search («вчені знову
+    обговорюють життя на Європі», «знайшли ще один фрагмент Леонардо»). Anything recent comes from a
+    search; «Привіт, що нового?» stays small talk (it sent a greeting to the web)."""
+    v5 = build_live_prompt(variant="v5", **COMMON)
+    assert "You read and browse nothing on your own" in v5 and "«вчора читала»" in v5
+    assert "what happened today, yesterday or lately in any field" in v5
+    assert "is small talk too, not a request for the news" in v5

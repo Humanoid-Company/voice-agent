@@ -347,6 +347,7 @@
     let state;
     if (m === "connecting") state = ["Підключаюсь…", "busy"];
     else if (m === "switching") state = ["Перемикаю голос…", "busy"];
+    else if (m === "waiting" && eva.ready) state = ["На зв'язку — чекаю «Привіт, Єва»", "wait"];
     else if (m === "waiting") state = eva.wakeSupported
       ? [bgListen ? "Пауза — слухаю фоном, чекаю «Єва, скажи»" : "Пауза — чекаю «Єва, скажи»", "wait"]
       : ["Пауза — натисніть «Продовжити»", "wait"];
@@ -834,9 +835,11 @@
   const commentary = (content) =>
     sendEvent({ type: "session.commentary.append", content, delegation_id: null, event_id: eventId("say") });
 
-  // «Почати розмову»: she greets at once and listens. Connecting paused, silent until «Єва, скажи», left
-  // testers unsure whether she was on at all (feedback: «при запуску не вітається і мовчить»).
-  const defaultStart = () => ({ greet: true, hello: true });
+  // «Почати розмову»: the call opens paused and she waits for «Привіт, Єва» — she spoke first on her
+  // own, and the user wants to start the talk. Testers could not tell whether she was on at all
+  // (feedback: «при запуску … мовчить»), so the status and the log say she is on and waiting. Without
+  // the phrase listener (Firefox) nothing could wake her: she greets at once.
+  const defaultStart = () => (eva.wakeSupported ? { paused: true, ready: true } : { greet: true, hello: true });
 
   // opts: paused — connect and wait for «Єва, скажи»; ask — a request said with the wake phrase;
   // greet — a short «Слухаю» unless the user starts talking; switched — first words in a new voice.
@@ -945,7 +948,7 @@
   function applyStart() {
     const opts = eva.pending || {};
     eva.pending = null;
-    if (opts.paused) { enterPause(false); return; }
+    if (opts.paused) { enterPause(false, opts.ready); return; }
     eva.mode = "active";
     setRemoteVolume(1);
     startPhraseListener();
@@ -990,6 +993,7 @@
     if (cam) { $("camera").checked = false; stopCamera(); } // the call is over: so is the camera
     clearTimeout(eva.pauseTimer);
     eva.mode = "off";
+    eva.ready = false;
     eva.pending = null;
     setStatus(text, state);
     updateButtons();
@@ -997,8 +1001,11 @@
   }
 
   // ── pause («Дякую, Єва») / wake («Єва, скажи») ──
-  function enterPause(announce) {
+  // ready: the call was just started — she is on and waits to be greeted, not paused.
+  function enterPause(announce, ready = false) {
     eva.mode = "waiting";
+    if (ready && !eva.ready) addLine("system", "Єва на зв'язку. Скажіть «Привіт, Єва» — і говоріть.");
+    eva.ready = ready; // kept across a reconnect during the wait (voice switch): no second line
     eva.recentUser = "";
     eva.thinking = false;
     clearTimeout(idleTimer);
@@ -1254,7 +1261,7 @@
     clearTimeout(eva.pauseTimer);
     teardown({ keepMic: true });
     eva.mode = mode;
-    await start(paused ? { paused: true } : opts);
+    await start(paused ? { paused: true, ready: eva.ready } : opts);
   }
 
   // The server closed the call: after change_voice (asked by voice) to restart it in the new
@@ -1274,7 +1281,7 @@
       showVoice();
       addLine("system", "Голос змінено на «" + voiceLabel(voice) + "»" + (me.voice_note ? " (" + me.voice_note + ")" : "") + ".");
       eva.mode = "switching";
-      await start(wasPaused ? { paused: true } : { switched: true });
+      await start(wasPaused ? { paused: true, ready: eva.ready } : { switched: true });
       return;
     }
     if (gate) { gate.close(); gate = null; }

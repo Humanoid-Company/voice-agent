@@ -1067,15 +1067,45 @@
     enterPause(true);
   }
 
-  function postOverheard(text) {
-    fetch(BACKEND + "/api/overheard", { method: "POST", headers: headers(), body: JSON.stringify({ text }) })
+  function sendOverheard(text) {
+    return fetch(BACKEND + "/api/overheard", { method: "POST", headers: headers(), body: JSON.stringify({ text }) })
       .catch(() => {});
   }
 
+  // Held a moment before it is kept: the recogniser splits speech into several results, so the user's
+  // own request can come apart from the «Єва, скажи» that names her — prod: «…розкажи мені про
+  // Монте-Крісто» was kept as background and she said «хтось поруч теж згадав Монте-Крісто».
+  const OVERHEARD_HOLD_MS = 4000;
+  const overheardPending = [];
+  function postOverheard(text) {
+    const entry = { text };
+    entry.timer = setTimeout(() => {
+      overheardPending.splice(overheardPending.indexOf(entry), 1);
+      sendOverheard(text);
+    }, OVERHEARD_HOLD_MS);
+    overheardPending.push(entry);
+  }
+
+  // At a wake: a held piece that shares the request's words is the user's own lead-in — dropped; the
+  // rest is kept now, before the digest is read.
+  const contentWords = (text) => evaTokens(text).filter((w) => w.length >= 4 && !EVA_NAME_FORMS.has(w));
+  function flushOverheard(request) {
+    const asked = new Set(contentWords(request));
+    const sent = overheardPending.splice(0).map((entry) => {
+      clearTimeout(entry.timer);
+      const words = contentWords(entry.text);
+      const shared = words.filter((w) => asked.has(w)).length;
+      if (shared >= 2 || (shared && shared === words.length)) return null;
+      return sendOverheard(entry.text);
+    });
+    return Promise.all(sent);
+  }
+
   // What she heard in the background during the pause, as a commentary ("" if nothing).
-  async function overheardNote() {
+  async function overheardNote(flushed) {
     if (!bgListen) return "";
     try {
+      await flushed;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 4000);
       const res = await fetch(BACKEND + "/api/overheard/digest", { method: "POST", headers: headers(), signal: ctrl.signal });
@@ -1137,7 +1167,7 @@
   function wakeEva(rest, heard = "") {
     if (eva.mode !== "waiting") return;
     clearTimeout(eva.pauseTimer);
-    const note = overheardNote(); // a promise: never delays the wake
+    const note = overheardNote(flushOverheard((heard || "") + " " + (rest || ""))); // a promise: never delays the wake
     if (rest) addLine("user", "Єва, скажи, " + rest);
     if (pc && channel && channel.readyState === "open") {
       eva.mode = "active";

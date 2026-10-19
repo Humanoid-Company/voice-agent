@@ -562,3 +562,15 @@ def test_language_change_reaches_the_running_call():
     assert result.ok and user.language == "en"
     assert bridge.notes == ["From now on speak exclusively in англійською."]
     assert "не починай заново" in result.message  # she goes on, no «Sure… Okay… Sure…»
+
+
+def test_diag_keeps_numbers_only():
+    """/api/diag: the page's call numbers (gate levels, barge-in timings, unanswered turns) — any text
+    is dropped, an oversized report refused; GET reads the latest."""
+    headers = {"X-Client-Id": "diag-0123456789abcdef"}
+    client = TestClient(web.app)
+    body = {"gate": {"echo": 0.12, "mic": "speakers"}, "said": "Привіт, Єва, ось мій секрет", "barge": {"muteMs": [800, 1500]}}
+    assert client.post("/api/diag", headers=headers, json=body).json() == {"ok": True}
+    assert client.post("/api/diag", headers=headers, content=b"x" * 5000).status_code == 413
+    last = client.get("/api/diag", params={"n": 1}).json()[-1]
+    assert last["data"] == {"gate": {"echo": 0.12, "mic": "speakers"}, "said": None, "barge": {"muteMs": [800, 1500]}}

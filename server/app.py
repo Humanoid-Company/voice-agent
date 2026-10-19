@@ -12,9 +12,12 @@ Env: OPENAI_API_KEY, PUBLIC_BACKEND_URL, FRONTEND_ORIGINS, optional ACCESS_CODE.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+import time
+from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -379,6 +382,51 @@ def overheard(
     """A phrase the page's recogniser heard while Єва was paused (not addressed to her)."""
     _user(x_client_id, x_access_code).background.add(body.text[:1000])
     return {"ok": True}
+
+
+# Numbers only from the page (mic gate levels, barge-in timings, unanswered turns — no words): how the
+# call sounds on the testers' own devices, which the live tests can't show (her echo on laptop speakers,
+# a quiet voice over her). The last few hundred, in memory; GET /api/diag reads them.
+_DIAG_MAX_BYTES = 4000
+_diag: deque[dict] = deque(maxlen=200)
+
+
+def _numbers_only(value: Any, depth: int = 0) -> Any:
+    """Keeps numbers, booleans and short keyword strings (states like «muted»); drops any other text."""
+    if depth > 3:
+        return None
+    if isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= 24 and re.fullmatch(r"[\w.:-]*", value) else None
+    if isinstance(value, list):
+        return [_numbers_only(v, depth + 1) for v in value[:30]]
+    if isinstance(value, dict):
+        return {str(k)[:24]: _numbers_only(v, depth + 1) for k, v in list(value.items())[:40]}
+    return None
+
+
+@app.post("/api/diag")
+async def diag_post(
+    request: Request,
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    user = _user(x_client_id, x_access_code)
+    raw = await request.body()
+    if len(raw) > _DIAG_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="too_big")
+    try:
+        data = _numbers_only(json.loads(raw))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="bad_json") from exc
+    _diag.append({"at": round(time.time()), "client": user.client_id[:6], "commit": os.getenv("RENDER_GIT_COMMIT", "")[:7], "data": data})
+    return {"ok": True}
+
+
+@app.get("/api/diag")
+def diag_get(n: int = 50) -> list[dict]:
+    return list(_diag)[-max(1, min(n, 200)):]
 
 
 @app.delete("/api/overheard")

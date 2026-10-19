@@ -145,6 +145,11 @@
         // Mic level per unit of assistant output level while only the assistant talks. Starts
         // as "loud speakers" and drops within a second or two when there is no echo (headset).
         this.echo = 0.5;
+        // ?sens=1 (a test): while she talks on speakers, pass a quieter voice — 1.5× her expected echo
+        // instead of 2.5×, and the user's own level instead of the fixed 0.04. A quiet voice over her gets
+        // through, but so does more of her echo (she may cut herself off): a Python port of this gate, a
+        // voice at 0.02–0.03 over echo 0.1 → passed 0–28% → 98%, her echo alone open 0% → ~60% of the time.
+        this.sensitive = Boolean((options.processorOptions || {}).sensitive);
         // ?debug=1: totals posted every second for evaGate() — how much of the user the gate cut while
         // she talked, measured on the real device (echo and voice levels differ per laptop).
         this.stats = (options.processorOptions || {}).stats
@@ -155,14 +160,15 @@
         const audible = this.outQuietFor < 0.3;
         if (audible !== this.audible) { this.audible = audible; this.port.postMessage({ audible }); }
         // 0.006 ≈ quiet speech into a headset mic; the room's noise floor raises the bar.
-        const echoLevel = audible ? outLevel * this.echo * 2.5 : 0;
+        const echoLevel = audible ? outLevel * this.echo * (this.sensitive ? 1.5 : 2.5) : 0;
         // Speakers leave bursts of echo that the browser's echo canceller misses; averaged into
         // this.echo they look small, and letting them through can make the model hear itself
         // and break off mid-sentence. So while the assistant talks keep the old 0.04 bar unless the mic plainly
         // hears no echo at all (headphones). this.echo starts high, so "speakers" is the default.
         const headset = this.echo < 0.05;
         // 3× the room's noise (was 4×): very quiet speech by a laptop fan lost whole words at 4×.
-        const threshold = Math.max(audible && !headset ? 0.04 : 0.006, this.floor * 3, echoLevel);
+        const bar = this.sensitive && this.voice ? Math.min(0.04, this.voice * 0.5) : 0.04;
+        const threshold = Math.max(audible && !headset ? bar : 0.006, this.floor * 3, echoLevel);
         // Learn the echo while the gate is shut (the user isn't talking over the assistant).
         if (audible && !this.open && outLevel > 0.01) {
           const ratio = level / outLevel;
@@ -243,7 +249,7 @@
       const node = new AudioWorkletNode(ctx, "noise-gate", {
         numberOfInputs: 2, channelCount: 1, channelCountMode: "explicit",
         // ?near=0.04 makes barge-in more sensitive (quiet voice / far mic), 0.09 less.
-        processorOptions: { near: parseFloat(params.get("near")) || 0.06, stats: DEBUG },
+        processorOptions: { near: parseFloat(params.get("near")) || 0.06, stats: true, sensitive: params.get("sens") === "1" },
       });
       node.port.onmessage = (e) => onSignal(e.data);
       const out = ctx.createMediaStreamDestination();
@@ -610,6 +616,7 @@
     bargeClear();
     barge.stage = "muted";
     barge.mutes += 1;
+    diagBargeMuted();
     setRemoteVolume(0);
     steer(kind);
     scheduleRelease();
@@ -632,7 +639,7 @@
   }
 
   function onGateSignal(signal) {
-    if ("stats" in signal) { gateStats = signal.stats; return; } // ?debug=1 only
+    if ("stats" in signal) { gateStats = signal.stats; return; } // for evaGate() and /api/diag
     bargeOnGate(signal);
     if ("audible" in signal) eva.lastAudibleAt = Date.now(); // when she started / stopped sounding
     if (barge.audible) eva.thinking = false;
@@ -649,6 +656,7 @@
     if (signal.speaking) {
       clearTimeout(barge.releaseTimer);
       if (barge.stage !== "idle" || !barge.audible || herBackchannel()) return;
+      diagBargeStart();
       if (Date.now() - barge.speechEndedAt > 1500) barge.heard = "";
       barge.timers.push(setTimeout(() => {
         if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; barge.ducks += 1; setRemoteVolume(0.5); }
@@ -663,6 +671,7 @@
       }, 1500));
     } else {
       barge.speechEndedAt = Date.now();
+      diagBargeEnded();
       if (barge.stage === "muted") { scheduleRelease(); return; }
       bargeClear();
       if (barge.stage === "ducked") {
@@ -740,6 +749,7 @@
       case "session.output_transcript.delta":
         if (eva.mode === "waiting") break; // whatever she says to «Дякую, Єва» is not played
         appendTranscript("assistant", event.delta);
+        eva.lastOutputAt = Date.now();
         bargeOnAssistantText(event.delta);
         eva.inputBuf = ""; // she answers: the user's turn is over
         eva.thinking = false;
@@ -1007,6 +1017,7 @@
   }
 
   function stop(text = "Не підключено", state = "") {
+    if (eva.mode !== "off") postDiag(true);
     dropStandby();
     teardown();
     stopPhraseListener();
@@ -1593,22 +1604,64 @@
   }
 
   // ?debug=1: evaDebug() in the console shows the page's state.
-  if (DEBUG) {
-    // evaGate(): the mic gate on this device — echo of her voice in the mic (speakers or headphones),
-    // how loud the user speaks, and how much of what they said over her was cut. Counts since the page
-    // opened; talk over her a few times first.
-    window.evaGate = () => {
-      const g = gateStats;
-      if (!g) return null;
-      const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
-      return {
-        mic: g.echo < 0.05 ? "headphones (no echo)" : "speakers (her echo in the mic)",
-        echo: +g.echo.toFixed(3), voice: +g.voice.toFixed(3), floor: +g.floor.toFixed(4),
-        herTalkS: +(g.her * 0.02).toFixed(1), openWhileHerPct: pct(g.herOpen, g.her),
-        cutWhileHerS: +(g.cut * 0.02).toFixed(1), quietS: +(g.quiet * 0.02).toFixed(1),
-        openWhileQuietPct: pct(g.quietOpen, g.quiet),
-      };
+  // The mic gate on this device — echo of her voice in the mic (speakers or headphones), how loud the
+  // user speaks, and how much of what they said over her was cut. Counts since the page opened.
+  function gateSummary() {
+    const g = gateStats;
+    if (!g) return null;
+    const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+    return {
+      mic: g.echo < 0.05 ? "headphones" : "speakers",
+      echo: +g.echo.toFixed(3), voice: +g.voice.toFixed(3), floor: +g.floor.toFixed(4),
+      herTalkS: +(g.her * 0.02).toFixed(1), openWhileHerPct: pct(g.herOpen, g.her),
+      cutWhileHerS: +(g.cut * 0.02).toFixed(1), quietS: +(g.quiet * 0.02).toFixed(1),
+      openWhileQuietPct: pct(g.quietOpen, g.quiet),
     };
+  }
+
+  // Numbers only, posted to /api/diag (server/app.py) every 20 s of a call and when it ends: how the call
+  // sounds on this device, which tests with clean audio can't show — feedback «довго перебивається»,
+  // «замовкає»: the user talked over her (how long until she was cut off, or never), or finished a turn
+  // and she said nothing for 8 s (and what state the page was in then). No words are sent.
+  const diag = { bargeAt: 0, bargeStarts: 0, bargeMuteMs: [], bargeMissed: 0, silences: [], silenceFor: 0, changed: false };
+  function diagBargeStart() { diag.bargeAt = Date.now(); diag.bargeStarts += 1; diag.changed = true; }
+  function diagBargeMuted() {
+    if (!diag.bargeAt) return;
+    diag.bargeMuteMs = diag.bargeMuteMs.concat(Date.now() - diag.bargeAt).slice(-30);
+    diag.bargeAt = 0;
+  }
+  function diagBargeEnded() {
+    // A second or more of talk over her that never cut her off (an «угу» is shorter).
+    if (diag.bargeAt && barge.stage !== "muted" && Date.now() - diag.bargeAt > 1000) diag.bargeMissed += 1;
+    diag.bargeAt = 0;
+  }
+  function diagCheckSilence() {
+    const now = Date.now();
+    if (eva.mode !== "active" || !eva.lastUserAt || eva.lastUserAt <= (eva.lastOutputAt || 0)) return;
+    if (now - eva.lastUserAt < 8000 || diag.silenceFor === eva.lastUserAt) return;
+    diag.silenceFor = eva.lastUserAt;
+    diag.silences = diag.silences.concat({
+      stage: barge.stage, audible: barge.audible, speaking: barge.speaking, thinking: eva.thinking,
+      level: remoteLevel, channel: channel ? channel.readyState : "none",
+    }).slice(-20);
+    diag.changed = true;
+  }
+  function postDiag(final = false) {
+    if (!BACKEND || (!diag.changed && !final)) return;
+    diag.changed = false;
+    const body = {
+      final, prompt: promptVariant, clean: cleanVoice, sens: params.get("sens") === "1", gate: gateSummary(),
+      barge: { starts: diag.bargeStarts, muteMs: diag.bargeMuteMs, missed: diag.bargeMissed, ducks: barge.ducks, mutes: barge.mutes },
+      silences: diag.silences,
+    };
+    fetch(BACKEND + "/api/diag", { method: "POST", headers: headers(), body: JSON.stringify(body), keepalive: true }).catch(() => {});
+  }
+  setInterval(diagCheckSilence, 1000);
+  setInterval(() => { if (eva.mode === "active") { diag.changed = true; postDiag(); } }, 20000);
+
+  if (DEBUG) {
+    // evaGate(): see gateSummary — talk over her a few times first.
+    window.evaGate = gateSummary;
     window.evaDebug = () => ({
       mode: eva.mode, pendingDelivery, audible: barge.audible, speaking: barge.speaking,
       thinking: eva.thinking, quietMs: Date.now() - eva.lastAudibleAt, channel: channel && channel.readyState,

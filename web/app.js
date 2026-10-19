@@ -23,12 +23,15 @@
   let voice = store.get("va-voice") || "";
   let speed = store.get("va-speed") || "normal";
   let style = store.get("va-style") || "normal";
+  // iPhone / iPad (any browser there is Safari's engine; an iPad may report itself as a Mac).
+  const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   let volume = parseFloat(store.get("va-volume") || "1");
   // Keep what is said nearby during a pause (voice/background.py); the user can turn it off.
   let bgListen = store.get("va-bg-listen") !== "0";
   // A voice picked while Єва answers: switch at once (she goes on in the new voice) or once she is done.
   let voiceNow = store.get("va-voice-now") !== "0";
   if (!(volume >= 0 && volume <= 1)) volume = 1;
+  if (IOS) volume = 1; // the slider is hidden there (see showVolume): a level saved earlier must not stay
   // Devices picked in «Пристрої» ("" = the system default); kept in this browser only.
   let micId = store.get("va-mic") || "";
   let speakerId = store.get("va-speaker") || "";
@@ -252,6 +255,11 @@
         processorOptions: { near: parseFloat(params.get("near")) || 0.06, stats: true, sensitive: params.get("sens") === "1" },
       });
       node.port.onmessage = (e) => onSignal(e.data);
+      ctx.onstatechange = () => {
+        if (ctx.state !== "suspended" && ctx.state !== "interrupted") return;
+        diag.ctxInterrupts += 1;
+        ctx.resume().catch(() => {}); // fails while a phone call holds the audio; retried when the page is back
+      };
       const out = ctx.createMediaStreamDestination();
       ctx.createMediaStreamSource(stream).connect(node, 0, 0).connect(out);
       let remoteSource = null;
@@ -265,8 +273,9 @@
           remoteSource = remote ? ctx.createMediaStreamSource(remote) : null;
           if (remoteSource) remoteSource.connect(node, 0, 1);
         },
-        // Still usable for the next call: not closed by the browser, and running again.
-        alive() { if (ctx.state === "suspended") ctx.resume().catch(() => {}); return ctx.state !== "closed"; },
+        // Still usable for the next call: not closed by the browser, and running again. iOS leaves it
+        // «interrupted» after a phone call, Siri or a locked screen: the gate then passes only silence.
+        alive() { if (ctx.state === "suspended" || ctx.state === "interrupted") ctx.resume().catch(() => {}); return ctx.state !== "closed"; },
         close() { ctx.close().catch(() => {}); },
       };
     } catch {
@@ -446,6 +455,8 @@
   let volRamp = null;
   function rampVolume(el, target) {
     clearInterval(volRamp);
+    // iOS: an <audio> element's volume is read-only (always 1) — a duck to 0.5 can't be done, a mute can.
+    if (IOS) { el.muted = target === 0; return; }
     if (el.muted) { el.volume = 0; el.muted = false; }
     const from = el.volume;
     let step = 0;
@@ -552,6 +563,7 @@
           this.on = false;
         },
         setVolume(v) { volumeNode.gain.setTargetAtTime(v, ctx.currentTime, 0.02); },
+        resume() { if (ctx.state !== "running" && ctx.state !== "closed") ctx.resume().catch(() => {}); },
         setSink,
       };
     } catch {
@@ -889,6 +901,7 @@
       const stream = live ? mic : await openMic();
       if (my !== attempt) { if (stream !== mic) stream.getTracks().forEach((t) => t.stop()); return; }
       if (stream !== mic) listDevices(); // device names are known once the mic is allowed
+      if (stream !== mic) watchMic(stream);
       mic = stream;
       const peer = new RTCPeerConnection();
       pc = peer;
@@ -978,10 +991,11 @@
   function applyStart() {
     const opts = eva.pending || {};
     eva.pending = null;
-    if (opts.paused) { enterPause(false, opts.ready); return; }
+    if (opts.paused) { holdScreen(true); enterPause(false, opts.ready); return; }
     eva.mode = "active";
     setRemoteVolume(1);
-    startPhraseListener();
+    if (IOS) stopPhraseListener(); else startPhraseListener();
+    holdScreen(true);
     sendFrame(); // frames stop on a pause: the server gets a fresh one at once
     if (opts.switched) {
       // A new voice is a new session: carry on as if nothing happened — no «тепер я іншим голосом».
@@ -1018,6 +1032,7 @@
 
   function stop(text = "Не підключено", state = "") {
     if (eva.mode !== "off") postDiag(true);
+    holdScreen(false);
     dropStandby();
     teardown();
     stopPhraseListener();
@@ -1182,6 +1197,7 @@
     if (rest) addLine("user", "Єва, скажи, " + rest);
     if (pc && channel && channel.readyState === "open") {
       eva.mode = "active";
+      if (IOS) { stopPhraseListener(); reviveMic(); } // the recogniser had the mic during the pause
       sendEvent({ type: "session.input_audio.unmute", event_id: eventId("unmute") });
       setRemoteVolume(1);
       sendFrame();
@@ -1235,6 +1251,10 @@
   function startPhraseListener() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR || !eva.wakeSupported || eva.recognizer) return;
+    // iOS: the recogniser takes the mic from the call (and restarts every few seconds), so it runs only
+    // during a pause — for the wake phrase. In a call GPT-Live's own transcript catches «Дякую, Єва» and
+    // voice requests, and the iPhone's echo cancelling lets her hear «стоп» over herself.
+    if (IOS && eva.mode === "active") return;
     let rec;
     try { rec = new SR(); } catch { eva.wakeSupported = false; showState(); updateButtons(); return; }
     rec.lang = "uk-UA";
@@ -1623,7 +1643,8 @@
   // sounds on this device, which tests with clean audio can't show — feedback «довго перебивається»,
   // «замовкає»: the user talked over her (how long until she was cut off, or never), or finished a turn
   // and she said nothing for 8 s (and what state the page was in then). No words are sent.
-  const diag = { bargeAt: 0, bargeStarts: 0, bargeMuteMs: [], bargeMissed: 0, silences: [], silenceFor: 0, changed: false };
+  const diag = { bargeAt: 0, bargeStarts: 0, bargeMuteMs: [], bargeMissed: 0, silences: [], silenceFor: 0, changed: false,
+    ctxInterrupts: 0, micRevives: 0, micMutes: 0 };
   function diagBargeStart() { diag.bargeAt = Date.now(); diag.bargeStarts += 1; diag.changed = true; }
   function diagBargeMuted() {
     if (!diag.bargeAt) return;
@@ -1650,7 +1671,9 @@
     if (!BACKEND || (!diag.changed && !final)) return;
     diag.changed = false;
     const body = {
-      final, prompt: promptVariant, clean: cleanVoice, sens: params.get("sens") === "1", gate: gateSummary(),
+      final, prompt: promptVariant, clean: cleanVoice, sens: params.get("sens") === "1", ios: IOS,
+      audio: { ctxInterrupts: diag.ctxInterrupts, micRevives: diag.micRevives, micMutes: diag.micMutes, wakeLock: Boolean(wakeLock) },
+      gate: gateSummary(),
       barge: { starts: diag.bargeStarts, muteMs: diag.bargeMuteMs, missed: diag.bargeMissed, ducks: barge.ducks, mutes: barge.mutes },
       silences: diag.silences,
     };
@@ -1708,6 +1731,8 @@
   }
 
   function showVolume() {
+    // iOS: the page can't set the volume of her voice (read-only there) — the phone's buttons do.
+    if (IOS) { $("volume").style.display = "none"; $("volumeValue").parentElement.style.display = "none"; }
     $("volume").value = String(Math.round(volume * 100));
     $("volumeValue").textContent = Math.round(volume * 100) + "%";
   }
@@ -1921,20 +1946,72 @@
   // Another mic mid-call: a new stream and gate, the call's track replaced in place — no reconnect.
   async function changeMic() {
     setDevice("mic", $("micSelect").value);
-    if (!mic) return; // the next call opens it
+    if (await swapMic()) addLine("system", "Мікрофон: " + $("micSelect").selectedOptions[0].textContent + ".");
+  }
+
+  // The call's mic went dead (iOS: the recogniser or a phone call took it; the track ended or is muted):
+  // open it again in place. Nothing to do while it is live.
+  async function reviveMic() {
+    const track = mic && mic.getAudioTracks()[0];
+    if (!track || (track.readyState === "live" && !track.muted)) return;
+    diag.micRevives += 1;
+    await swapMic();
+  }
+
+  // The screen stays on during a call: a phone that locks mid-sentence puts the tab to sleep (iOS 16.4+,
+  // Chrome, Edge). Taken again when the page is back — the browser drops it when hidden.
+  let wakeLock = null;
+  async function holdScreen(on) {
+    try {
+      if (on && !wakeLock && navigator.wakeLock && document.visibilityState === "visible") {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => { wakeLock = null; });
+      } else if (!on && wakeLock) {
+        const lock = wakeLock;
+        wakeLock = null;
+        await lock.release();
+      }
+    } catch { /* not allowed now (battery saver, hidden): the call goes on without it */ }
+  }
+
+  // Back to the page (unlocked, another app closed, a phone call over): audio running again, the mic alive.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || eva.mode === "off") return;
+    holdScreen(true);
+    if (gate) gate.alive();
+    if (fx) fx.resume();
+    if (eva.mode === "active") reviveMic();
+  });
+
+  // iOS mutes the call's mic when something else takes it (a phone call, Siri, another app): counted, and
+  // in a call opened again once the page is in front.
+  function watchMic(stream) {
+    const track = stream.getAudioTracks()[0];
+    if (!track) return;
+    track.addEventListener("mute", () => {
+      diag.micMutes += 1;
+      diag.changed = true;
+      if (eva.mode === "active" && document.visibilityState === "visible") setTimeout(reviveMic, 500);
+    });
+  }
+
+  // A new mic stream and gate in place of the old ones; true once swapped.
+  async function swapMic() {
+    if (!mic) return false; // the next call opens it
     const old = mic;
     let stream;
     try { stream = await openMic(); } catch (err) {
       addLine("system", "Не вдалося відкрити мікрофон: " + ((err && err.message) || err));
-      return;
+      return false;
     }
     const newGate = await createNoiseGate(stream, onGateSignal);
     if (mic !== old) { // the call ended or restarted meanwhile: it opens its own mic
       stream.getTracks().forEach((t) => t.stop());
       if (newGate) newGate.close();
-      return;
+      return false;
     }
     const oldGate = gate;
+    watchMic(stream);
     mic = stream;
     gate = newGate;
     if (gate) gate.listenTo($("remote").srcObject || null);
@@ -1944,7 +2021,7 @@
     if (oldGate) oldGate.close();
     old.getTracks().forEach((t) => t.stop());
     if (eva.recognizer) { stopPhraseListener(); startPhraseListener(); } // it follows the mic
-    addLine("system", "Мікрофон: " + $("micSelect").selectedOptions[0].textContent + ".");
+    return true;
   }
 
   async function changeSpeaker() {

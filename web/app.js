@@ -25,6 +25,30 @@
   let style = store.get("va-style") || "normal";
   // iPhone / iPad (any browser there is Safari's engine; an iPad may report itself as a Mac).
   const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  // Browsers inside other apps (Telegram, Instagram, Facebook, Viber…) may give pages no mic at all:
+  // navigator.mediaDevices is missing (prod, iPhone: «undefined is not an object (evaluating
+  // 'navigator.mediaDevices.getUserMedia')»). The page says what to do before anyone presses a button.
+  const UA = navigator.userAgent;
+  const BROWSER = /Instagram/.test(UA) ? "instagram" : /FBAN|FBAV/.test(UA) ? "facebook" : /Telegram/i.test(UA) ? "telegram"
+    : /Viber/i.test(UA) ? "viber" : /Line\//.test(UA) ? "line" : /CriOS/.test(UA) ? "chrome-ios" : /FxiOS/.test(UA) ? "firefox-ios"
+    : /EdgiOS|Edg\//.test(UA) ? "edge" : /Chrome\//.test(UA) ? "chrome" : /Safari\//.test(UA) ? "safari" : "other";
+  const HAS_MIC_API = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  // For /api/diag: the iOS version and the browser's own («17.4», «141.0»).
+  const OS_VERSION = ((UA.match(/OS (\d+[_.]\d+)/) || [])[1] || "").replace("_", ".");
+  const BROWSER_VERSION = (UA.match(/(?:CriOS|FxiOS|EdgiOS|Edg|Chrome|Version)\/(\d+(?:\.\d+)?)/) || [])[1] || "";
+  function noMicReason() {
+    if (HAS_MIC_API) return "";
+    if (!window.isSecureContext) return "Мікрофон працює лише на захищеній сторінці — відкрийте її за адресою https://…";
+    // Chrome (and Firefox, Edge) on an iPhone is WebKit inside another app, and it may give pages no mic
+    // (prod: Chrome on an iPhone); Safari does.
+    if (BROWSER === "chrome-ios" || BROWSER === "firefox-ios" || (IOS && BROWSER === "edge")) {
+      return "На iPhone цей браузер не дає сторінці мікрофон. Відкрийте її в Safari — там Єва працює. " +
+        "(Якщо потрібен саме цей браузер: оновіть iOS і браузер та перевірте «Параметри» → браузер → «Мікрофон».)";
+    }
+    return IOS
+      ? "Цей браузер не дає сайтам мікрофон — так буває у вбудованому браузері Telegram, Instagram чи Viber. Відкрийте посилання в Safari: «⋯» або «Поділитися» → «Відкрити в Safari»."
+      : "Цей браузер не дає сайтам мікрофон (часто це вбудований браузер іншого застосунку). Відкрийте сторінку в Chrome, Safari або Edge.";
+  }
   let volume = parseFloat(store.get("va-volume") || "1");
   // Keep what is said nearby during a pause (voice/background.py); the user can turn it off.
   let bgListen = store.get("va-bg-listen") !== "0";
@@ -240,15 +264,42 @@
     registerProcessor("noise-gate", NoiseGate);
   `;
 
+  // WebKit (Safari, every iPhone browser) starts an AudioContext only inside a tap: one made after
+  // awaiting the mic may stay «suspended», and awaiting its resume() never ends. So a context is started
+  // in the tap (primeAudio), the gate takes it, and no audio step is awaited for long: past the limit the
+  // call goes on without that step. The mic must be asked for first in the same tap: an AudioContext
+  // started before getUserMedia used up the tap, and WebKit refused the mic (NotAllowedError) or never
+  // answered — measured in WebKit: context first, 1 of 3 refused; mic first, 5 of 5 fine (~2.5 s).
+  let primedCtx = null;
+  function primeAudio() {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx || (primedCtx && primedCtx.state !== "closed")) return;
+    let ctx;
+    try { ctx = new AudioCtx(); ctx.resume().catch(() => {}); } catch { return; }
+    primedCtx = ctx;
+    // Unused (the call kept its gate, or the mic prompt took long): closed — iOS allows only a few.
+    setTimeout(() => { if (primedCtx === ctx) { primedCtx = null; ctx.close().catch(() => {}); } }, 30000);
+  }
+  function takeAudioContext(AudioCtx) {
+    const ctx = primedCtx && primedCtx.state !== "closed" ? primedCtx : new AudioCtx();
+    primedCtx = null;
+    return ctx;
+  }
+  const within = (promise, ms) => Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve("late"), ms))]);
+
   async function createNoiseGate(stream, onSignal) {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx || params.get("gate") === "off") return null;
-    const ctx = new AudioCtx();
+    const ctx = takeAudioContext(AudioCtx);
     try {
       if (!ctx.audioWorklet) throw new Error("no AudioWorklet");
       const url = URL.createObjectURL(new Blob([GATE_WORKLET], { type: "application/javascript" }));
-      try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
-      await ctx.resume();
+      try {
+        if (await within(ctx.audioWorklet.addModule(url), 4000) === "late") throw new Error("worklet load timed out");
+      } finally { URL.revokeObjectURL(url); }
+      await within(ctx.resume(), 1500);
+      // Not running: the gate would pass only silence — the call goes on with the mic as it is.
+      if (ctx.state !== "running") throw new Error("audio not started: " + ctx.state);
       const node = new AudioWorkletNode(ctx, "noise-gate", {
         numberOfInputs: 2, channelCount: 1, channelCountMode: "explicit",
         // ?near=0.04 makes barge-in more sensitive (quiet voice / far mic), 0.09 less.
@@ -532,8 +583,12 @@
     try {
       if (!ctx.audioWorklet) throw new Error("no AudioWorklet");
       const url = URL.createObjectURL(new Blob([DEESS_WORKLET], { type: "application/javascript" }));
-      try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
-      await ctx.resume().catch(() => {});
+      try {
+        if (await within(ctx.audioWorklet.addModule(url), 4000) === "late") throw new Error("worklet load timed out");
+      } finally { URL.revokeObjectURL(url); }
+      // Made outside a tap (her voice arrived), WebKit may keep it suspended: then she plays as usual.
+      await within(ctx.resume().catch(() => {}), 1500);
+      if (ctx.state !== "running") throw new Error("audio not started: " + ctx.state);
       const highpass = new BiquadFilterNode(ctx, { type: "highpass", frequency: 70, Q: 0.7 });
       const presence = new BiquadFilterNode(ctx, { type: "peaking", frequency: 3200, Q: 1, gain: 2.5 });
       const deEsser = new AudioWorkletNode(ctx, "de-esser", { channelCount: 1, channelCountMode: "explicit" });
@@ -1672,6 +1727,7 @@
     diag.changed = false;
     const body = {
       final, prompt: promptVariant, clean: cleanVoice, sens: params.get("sens") === "1", ios: IOS,
+      browser: BROWSER, browserV: BROWSER_VERSION, osV: OS_VERSION, micApi: HAS_MIC_API, secure: window.isSecureContext,
       audio: { ctxInterrupts: diag.ctxInterrupts, micRevives: diag.micRevives, micMutes: diag.micMutes, wakeLock: Boolean(wakeLock) },
       gate: gateSummary(),
       barge: { starts: diag.bargeStarts, muteMs: diag.bargeMuteMs, missed: diag.bargeMissed, ducks: barge.ducks, mutes: barge.mutes },
@@ -2162,11 +2218,13 @@
   async function init() {
     $("talk").addEventListener("click", () => {
       if (eva.mode !== "off") { stop(); return; }
+      if (noMicReason()) { addLine("system", noMicReason()); setStatus("Немає доступу до мікрофона", "err"); postDiag(true); return; }
       meterReset(); // a new call counts from zero
-      start(defaultStart());
+      start(defaultStart()); // asks for the mic synchronously, while the tap still counts
+      primeAudio(); // then, in the same tap, the audio the gate will use
     });
     $("pause").addEventListener("click", pauseEva);
-    $("resume").addEventListener("click", () => wakeEva(""));
+    $("resume").addEventListener("click", () => { wakeEva(""); primeAudio(); }); // a closed call reopens here
     $("bgListen").addEventListener("change", toggleBgListen);
     showBgListen();
     $("voiceNow").addEventListener("change", toggleVoiceNow);
@@ -2216,7 +2274,10 @@
     // Closing or leaving the tab ends the paid Live session instead of leaving it open.
     window.addEventListener("pagehide", () => { if (eva.mode !== "off") stop(); });
     if (!BACKEND) { addLine("system", "Не вказано адресу бекенду."); return; }
+    const micMissing = noMicReason();
+    if (micMissing) addLine("system", micMissing); // before the backend wakes: that can take a minute
     const cfg = await wakeBackend();
+    if (micMissing) setStatus("Немає доступу до мікрофона", "err");
     if (cfg) {
       if (cfg.access_code_required && !accessCode) showGate();
       await loadVoices();

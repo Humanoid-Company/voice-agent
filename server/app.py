@@ -77,8 +77,17 @@ _CAMERA_NOTE = (
     "before you may recall from earlier looks. One look per request: do not look again on your own. "
     "If you said something a look did not confirm, it was your mistake — say so, never blame the user."
 )
+# v5's camera rules, condensed the same way.
+_CAMERA_NOTE_V5 = (
+    "\nCamera: you cannot see by yourself. Anything about what is visible — «що ти бачиш», «подивись на "
+    "мене», «що в мене в руці», «що тут написано», or a short question pointing at something («а це "
+    "шо?», «а тепер?», «глянь») — goes to the backend at once, every time, even if you think the camera "
+    "is off; never ask what they mean. Each look is a new frame: never a scene from memory or "
+    "imagination. Tell what it saw as if you looked («Бачу…»), only what it reported; one look per "
+    "request. A description no look confirmed is your mistake, never the user's."
+)
 # Delivery prompts the page may pick; v1 and v2 are desktop-only now (an old page asking for them gets v4).
-WEB_PROMPT_VARIANTS = ("v3", "v4")
+WEB_PROMPT_VARIANTS = ("v3", "v4", "v5")
 # A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
 MAX_FRAME_BYTES = 600_000
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{16,64}$")
@@ -153,7 +162,7 @@ def _session_config(user: WebUser) -> dict:
             variant=user.prompt_variant,
         )
         + _WEB_NOTE
-        + _CAMERA_NOTE,
+        + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE),
         "audio": {"output": {"voice": voice}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,

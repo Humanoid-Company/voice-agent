@@ -7,7 +7,7 @@ COMMON = dict(language_name="українською", assistant_name=None, today
 
 
 def test_variants():
-    assert PROMPT_VARIANTS == ("v1", "v2", "v3", "v4")
+    assert PROMPT_VARIANTS == ("v1", "v2", "v3", "v4", "v5")
     assert "you are talking, not reading" in build_live_prompt(**COMMON)
     assert "Being a person" in build_live_prompt(**COMMON)
     assert "Answering" in build_live_prompt(**COMMON)  # v4 by default
@@ -47,3 +47,17 @@ def test_v4_balances_length():
     assert "«Оттава.», not «Оттава. А ти там був?»" in v4 and "Never two questions in one reply" in v4
     assert "No advice, tips, ideas or plans they did not ask for" in v4
     assert "A quick fact or number: one sentence" in BACKEND_PROMPT and "no unasked advice" in BACKEND_PROMPT
+
+
+def test_v5_is_v4_condensed():
+    """v5: v4's rules said once each (v4 repeated «answer at once» three times, «one question at the
+    end» twice) — under half the size, the rules that came from feedback still there."""
+    v4 = build_live_prompt(variant="v4", **COMMON)
+    v5 = build_live_prompt(variant="v5", voice="gleam", **COMMON)
+    assert len(v5) < len(v4) / 2
+    for part in ("Let them finish", "never answer a fragment", "«На Rust?»", "«Оттава.»",
+                 "never «Хочеш, розкажу…?»", "no advice they did not ask for", "Never two.",
+                 "Never dictate code", "rough figure", "always delegate it at once", "drop it and answer what "
+                 "they said last", "new request — answer it", "Never assume their gender", "with this voice"):
+        assert part.lower() in v5.lower(), part
+    assert "(prod)" not in v5

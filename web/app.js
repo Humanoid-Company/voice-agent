@@ -39,7 +39,7 @@
   // behaves like a person. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
   // voice change does. v1 and v2 are gone from the web (the desktop keeps them): a choice saved
   // earlier becomes v4.
-  const WEB_PROMPTS = ["v3", "v4"];
+  const WEB_PROMPTS = ["v3", "v4", "v5"];
   let promptVariant = params.get("prompt") || store.get("va-prompt") || "v4";
   if (!WEB_PROMPTS.includes(promptVariant)) promptVariant = "v4";
   let pc = null;
@@ -1796,6 +1796,8 @@
     v4: "v3 з повними відповідями: довжина за питанням (коротко на дрібниці, розгорнуто на «поясни», «порадь», " +
       "«як»), конкретні назви, числа й кроки, без «хочеш, розкажу?» замість відповіді, рідше питання наприкінці, " +
       "не перебиває, поки ви не договорили.",
+    v5: "Ті самі правила, що й у v4, але промпт удвічі коротший: кожне правило сказане раз, без дублів і зайвих " +
+      "прикладів — менше суперечностей, які модель мусить зважувати.",
   };
   const showPromptInfo = () => { $("promptInfo").textContent = PROMPT_INFO[$("promptVariant").value] || ""; };
 

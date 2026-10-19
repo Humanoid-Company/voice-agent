@@ -59,7 +59,8 @@ def test_she_keeps_thinking_aloud_while_the_work_runs(monkeypatch):
         await asyncio.sleep(1.2)  # it checks every 0.25 s
         said = _said(conn)
         assert len(said) >= 3 and all("working out the answer" in line for line in said)
-        assert "still at it" not in said[0] and "still at it" in said[1]
+        assert "tiny sound" not in said[0] and "tiny sound" in said[1]  # «угу…» / «хм…»
+        assert "half to yourself" in said[2]  # then a few half-said words, in turn
 
     asyncio.run(run())
 
@@ -198,7 +199,8 @@ def test_she_thinks_aloud_while_a_search_runs(monkeypatch):
         await asyncio.sleep(1.0)
         said = _said(conn)
         assert len(said) == 3 and all("searching the web" in s and "курс біткоїна" in s for s in said)
-        assert "still at it" not in said[0] and "still at it" in said[1]
+        assert "tiny sound" not in said[0] and "tiny sound" in said[1]  # «угу…» / «хм…»
+        assert "half to yourself" in said[2]  # then a few half-said words, in turn
         await asyncio.gather(*bridge._tool_tasks)
 
     asyncio.run(run())

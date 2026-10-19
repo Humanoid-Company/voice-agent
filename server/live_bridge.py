@@ -37,15 +37,16 @@ _PAGE_FIRST_S = 1.5
 # гортаю…») — the team: a silent wait after her «Секунду» sounds like the line dropped, and a search with
 # its summary was 6–10 s of silence. Any work still running _MUMBLE_THINK_FIRST_S after it started gets a
 # line (a quick answer comes before that); a web search one _MUMBLE_SEARCH_FIRST_S after the search call,
-# about what she is looking up. Then one every _MUMBLE_EVERY_S until the answer is ready (the work is
+# about what she is looking up. Then (a bare «угу…» / «хм…» and a few half-said words in turn, see
+# prompts/live_prompt.py) one every _MUMBLE_EVERY_S until the answer is ready (the work is
 # over), at most _MUMBLE_MAX; each only once she has been quiet _MUMBLE_QUIET_S (her estimated audio,
 # not just her text), and none once the user spoke again (the work is stale). It replaces the single
 # «still working» line after 8 s (fewer fillers was the old aim; now she keeps talking while she works).
 _MUMBLE_THINK_FIRST_S = 3.0
 _MUMBLE_SEARCH_FIRST_S = 1.5
-_MUMBLE_EVERY_S = 4.0
-_MUMBLE_MAX = 8
-_MUMBLE_QUIET_S = 1.2
+_MUMBLE_EVERY_S = 2.5
+_MUMBLE_MAX = 12
+_MUMBLE_QUIET_S = 1.0
 # The user's own request may still be transcribed this long after the work started.
 _MUMBLE_INPUT_GRACE_S = 1.5
 _MUMBLE_TOOLS = frozenset({"web_search"})

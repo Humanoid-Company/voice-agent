@@ -228,34 +228,56 @@ def woken_request_note(request: str) -> str:
     )
 
 
+# While she works she sounds like a person scrolling or mulling it over, not like an announcer of
+# progress: the first line says what she is checking, then a bare «угу…» / «хм…» and a few half-said
+# words take turns. Whole sentences every 4 s («Ще дивлюсь, там кілька пунктів, хочу не пропустити
+# нічого важливого.», «Поки що без готової відповіді.», «Ех, щось довго.») read as reports on the wait.
+_MUMBLE_SOUNDS = "«угу…», «ага…», «хм…», «так-так…», «ммм…», «зараз-зараз…», «ну-ну…»"
+_MUMBLE_NEVER = (
+    " Never about the wait itself («щось довго», «поки без відповіді», «ще шукаю»), never that you found "
+    "it or it is ready («знайшла», «вже є» — the answer comes on its own), not a result or a guess at "
+    "one, no source names, not a question."
+)
+
+
+def _mumble_line(count: int, first: str, doing: str) -> str:
+    """count: lines already said for this work. 0 → `first`; then a bare sound and a few half-said
+    words take turns, so it sounds like someone reading to themselves, not reporting progress."""
+    if count == 0:
+        return first
+    if count % 2:
+        return (
+            "Make one tiny sound of someone busy " + doing + ", one or two words at most, trailing off — "
+            "one of " + _MUMBLE_SOUNDS + ", not the same as your last one. Nothing else."
+        )
+    return (
+        "Say a few words half to yourself, the way a person mutters while " + doing + " — three to six "
+        "words, trailing off, may start with «угу», «ага», «так» or «хм»; different from anything you "
+        "said."
+    )
+
+
 def search_mumble_note(query: str, count: int) -> str:
     """While a web search runs she thinks aloud, like a person scrolling through results — a search
-    and its summary took 6–10 s of silence after her «Секунду» (feedback: «довга мовчанка»). count:
-    lines already said for this search. No sample lines: she said them word for word."""
-    again = (
-        " You are still at it: shorter than before and different from anything you said."
-        if count else ""
-    )
+    and its summary took 6–10 s of silence after her «Секунду» (feedback: «довга мовчанка»)."""
+    first = "Say three to six words thinking aloud about what you are checking right now, trailing off."
     return (
         f"Note, not a message from the user: you are searching the web for their request ({query!r}) "
-        "and the results are not in yet. Say one very short line thinking aloud while you look, like a "
-        "person scrolling through results — what you are checking right now, a few words, in your own "
-        "words. Not a result or a guess at one, no source names, not a question." + again
+        "and the results are not in yet. "
+        + _mumble_line(count, first, "scrolling through search results")
+        + _MUMBLE_NEVER
     )
 
 
 def thinking_mumble_note(count: int) -> str:
     """The backend is still working out an answer (no search): she thinks aloud, like a person mulling
     it over — the team wants her talking the whole time she works, not a silent wait."""
-    again = (
-        " You are still at it: shorter than before and different from anything you said."
-        if count else ""
-    )
+    first = "Say three to six words thinking aloud about this exact request, trailing off."
     return (
         "Note, not a message from the user: you are still working out the answer to their last request "
-        "and it is not ready yet. Say one very short line thinking aloud, like a person mulling it over — "
-        "about this exact request, a few words, in your own words. Not a result or a guess at one, not a "
-        "question." + again
+        "and it is not ready yet. "
+        + _mumble_line(count, first, "mulling something over")
+        + _MUMBLE_NEVER
     )
 
 

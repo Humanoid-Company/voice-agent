@@ -780,7 +780,8 @@ class LiveVoiceSession:
         else:
             content = (
                 "Stop speaking immediately. The user is talking. "
-                "Do not finish or resume your previous sentence. Listen."
+                "Do not finish or resume your previous sentence, and do not say that you stop or "
+                "listen — just go silent. Listen."
             )
         try:
             await self._connection.session.instructions.append(

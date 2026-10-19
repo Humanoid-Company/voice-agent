@@ -47,6 +47,7 @@
   let sessionVoice = ""; // the voice the current call was opened with
   let mic = null;
   let gate = null;
+  let gateStats = null; // ?debug=1: the gate's totals (evaGate())
   let micSender = null; // the current call's mic sender: another mic replaces its track in place
   // One open bubble per speaker: user and assistant transcripts arrive interleaved when they
   // overlap, and a single "current" bubble shredded both into word fragments.
@@ -144,6 +145,10 @@
         // Mic level per unit of assistant output level while only the assistant talks. Starts
         // as "loud speakers" and drops within a second or two when there is no echo (headset).
         this.echo = 0.5;
+        // ?debug=1: totals posted every second for evaGate() — how much of the user the gate cut while
+        // she talked, measured on the real device (echo and voice levels differ per laptop).
+        this.stats = (options.processorOptions || {}).stats
+          ? { her: 0, herOpen: 0, cut: 0, quiet: 0, quietOpen: 0, frames: 0 } : null;
       }
       judge(level, outLevel) {
         if (outLevel > 0.01) this.outQuietFor = 0; else this.outQuietFor += 0.02;
@@ -176,6 +181,19 @@
         // Near voice: ~120 ms of loud frames to start (a click/bang is shorter), 250 ms gap to end.
         const speaking = this.speaking ? this.nearQuietFor <= 0.25 : this.nearFrames >= 6;
         if (speaking !== this.speaking) { this.speaking = speaking; this.port.postMessage({ speaking }); }
+        if (this.stats) {
+          const st = this.stats;
+          // «cut»: while she talks the gate stays shut on a sound at the user's own level, well above her
+          // expected echo — most likely their words lost (an estimate: a loud echo burst counts too).
+          if (audible) {
+            st.her += 1;
+            if (this.open) st.herOpen += 1;
+            else if (this.voice && level > Math.max(this.voice * 0.4, this.floor * 4, outLevel * this.echo * 1.5)) st.cut += 1;
+          } else { st.quiet += 1; if (this.open) st.quietOpen += 1; }
+          if (++st.frames % 50 === 0) {
+            this.port.postMessage({ stats: { ...st, echo: this.echo, voice: this.voice, floor: this.floor, threshold } });
+          }
+        }
         // Learn the room's noise only while nobody speaks, so a long sentence can't raise it.
         if (!this.open && !audible) {
           this.floor = level < this.floor ? this.floor * 0.7 + level * 0.3 : this.floor + (level - this.floor) * 0.01;
@@ -225,7 +243,7 @@
       const node = new AudioWorkletNode(ctx, "noise-gate", {
         numberOfInputs: 2, channelCount: 1, channelCountMode: "explicit",
         // ?near=0.04 makes barge-in more sensitive (quiet voice / far mic), 0.09 less.
-        processorOptions: { near: parseFloat(params.get("near")) || 0.06 },
+        processorOptions: { near: parseFloat(params.get("near")) || 0.06, stats: DEBUG },
       });
       node.port.onmessage = (e) => onSignal(e.data);
       const out = ctx.createMediaStreamDestination();
@@ -613,6 +631,7 @@
   }
 
   function onGateSignal(signal) {
+    if ("stats" in signal) { gateStats = signal.stats; return; } // ?debug=1 only
     bargeOnGate(signal);
     if ("audible" in signal) eva.lastAudibleAt = Date.now(); // when she started / stopped sounding
     if (barge.audible) eva.thinking = false;
@@ -1544,6 +1563,21 @@
 
   // ?debug=1: evaDebug() in the console shows the page's state.
   if (DEBUG) {
+    // evaGate(): the mic gate on this device — echo of her voice in the mic (speakers or headphones),
+    // how loud the user speaks, and how much of what they said over her was cut. Counts since the page
+    // opened; talk over her a few times first.
+    window.evaGate = () => {
+      const g = gateStats;
+      if (!g) return null;
+      const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+      return {
+        mic: g.echo < 0.05 ? "headphones (no echo)" : "speakers (her echo in the mic)",
+        echo: +g.echo.toFixed(3), voice: +g.voice.toFixed(3), floor: +g.floor.toFixed(4),
+        herTalkS: +(g.her * 0.02).toFixed(1), openWhileHerPct: pct(g.herOpen, g.her),
+        cutWhileHerS: +(g.cut * 0.02).toFixed(1), quietS: +(g.quiet * 0.02).toFixed(1),
+        openWhileQuietPct: pct(g.quietOpen, g.quiet),
+      };
+    };
     window.evaDebug = () => ({
       mode: eva.mode, pendingDelivery, audible: barge.audible, speaking: barge.speaking,
       thinking: eva.thinking, quietMs: Date.now() - eva.lastAudibleAt, channel: channel && channel.readyState,

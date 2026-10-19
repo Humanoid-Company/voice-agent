@@ -108,7 +108,7 @@ uv run python main.py
 | `OPENAI_API_KEY` | ключ OpenAI (обов'язково) |
 | `OPENAI_LIVE_MODEL`, `OPENAI_LIVE_BACKEND_MODEL`, `OPENAI_LIVE_VOICE` | моделі GPT-Live і голос за замовчуванням |
 | `TIMEZONE` | часовий пояс, за замовчуванням `Europe/Kyiv` |
-| `WEB_SEARCH_API_KEY` | ключ [Tavily](https://tavily.com) для вебпошуку; без нього Єва каже, що пошук недоступний. Ще: `WEB_SEARCH_TIMEOUT_S` (9), `WEB_SEARCH_MAX_CALLS_PER_TURN` (3 пошуки на один запит) |
+| `WEB_SEARCH_API_KEY` | ключ [Tavily](https://tavily.com) для вебпошуку; без нього Єва каже, що пошук недоступний. Ще: `WEB_SEARCH_TIMEOUT_S` (9), `WEB_SEARCH_MAX_CALLS_PER_TURN` (2 пошуки на один запит) |
 | `PUBLIC_BACKEND_URL`, `FRONTEND_ORIGINS`, `ACCESS_CODE` | веб-бекенд: адреса, дозволені сторінки, пароль |
 | `BACKGROUND_LISTENING` | десктоп: слухати фоном на паузі |
 | `IDLE_PAUSE_SECONDS`, `PAUSE_CLOSE_SECONDS` | десктоп: пауза після тиші (90 с, 0 — ніколи) і скільки пауза тримає сесію відкритою (30 с) |

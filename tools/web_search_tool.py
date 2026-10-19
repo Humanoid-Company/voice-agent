@@ -39,7 +39,7 @@ def web_search_tool_result(
         return ToolResult(
             ok=False,
             status="rate_limited",
-            message="Забагато пошукових запитів підряд. Спершу озвуч те, що вже знайшов.",
+            message="Більше двох пошуків на одне питання не можна. Відповідай з того, що вже знайдено.",
             data=data,
         )
     if result.error == "web_search_timeout":

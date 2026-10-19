@@ -46,7 +46,7 @@ WEB_SEARCH_API_KEY: str = os.getenv("WEB_SEARCH_API_KEY", "").strip()
 WEB_SEARCH_TIMEOUT_S: float = float(os.getenv("WEB_SEARCH_TIMEOUT_S", "9"))
 WEB_SEARCH_MAX_RESULTS_DEFAULT: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS_DEFAULT", "5"))
 WEB_SEARCH_MAX_RESULTS_HARD: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS_HARD", "10"))
-WEB_SEARCH_MAX_CALLS_PER_TURN: int = int(os.getenv("WEB_SEARCH_MAX_CALLS_PER_TURN", "3"))
+WEB_SEARCH_MAX_CALLS_PER_TURN: int = int(os.getenv("WEB_SEARCH_MAX_CALLS_PER_TURN", "2"))
 
 # ── Live voice UX: local barge-in + busy cues ─────────────────────────────────
 # Local WebRTC VAD stops assistant playback before transcripts arrive.

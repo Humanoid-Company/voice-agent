@@ -226,8 +226,8 @@ def test_web_user_search_is_limited_per_request():
 
     ctx = ToolExecutionContext(session_id="s", delegation_id="d1")
     with patch.object(web_search_tool, "search_web", side_effect=fake):
-        results = [asyncio.run(user.executor.execute("web_search", {"query": f"q{i}"}, ctx)) for i in range(4)]
-    assert [r.ok for r in results] == [True, True, True, False]  # WEB_SEARCH_MAX_CALLS_PER_TURN = 3
+        results = [asyncio.run(user.executor.execute("web_search", {"query": f"q{i}"}, ctx)) for i in range(3)]
+    assert [r.ok for r in results] == [True, True, False]  # WEB_SEARCH_MAX_CALLS_PER_TURN = 2
     assert results[-1].status == "rate_limited"
 
 
@@ -237,7 +237,7 @@ def test_backend_answers_a_search_short_and_plain():
     real backend with Tavily: 12/12 answers right, 4.8 s median instead of 6.0 s, one search each."""
     from prompts.backend_prompt import BACKEND_PROMPT
 
-    assert "One search is usually enough" in BACKEND_PROMPT and "run the searches together" in BACKEND_PROMPT
+    assert "At most two searches per question" in BACKEND_PROMPT and "both queries at once" in BACKEND_PROMPT
     assert "one to three spoken sentences" in BACKEND_PROMPT and "no markdown, no bold" in BACKEND_PROMPT
 
 

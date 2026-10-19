@@ -17,7 +17,7 @@ DEFAULT_MAX_RESULTS = 5
 HARD_MAX_RESULTS = 10
 MAX_QUERY_LENGTH = 800
 DEFAULT_TIMEOUT_S = 9.0
-MAX_CALLS_PER_TURN = 3
+MAX_CALLS_PER_TURN = 2
 # Fallback turn window when delegation_id is absent (Realtime / missing context).
 _TURN_WINDOW_S = 45.0
 

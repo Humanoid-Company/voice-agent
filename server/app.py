@@ -12,6 +12,7 @@ Env: OPENAI_API_KEY, PUBLIC_BACKEND_URL, FRONTEND_ORIGINS, optional ACCESS_CODE.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -38,6 +39,7 @@ from config import (
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import build_live_prompt
+from server.call_log import CallLogStore
 from server.live_bridge import SidebandToolBridge
 from server.web_users import WebUser, WebUserRegistry
 from tools.live_schemas import LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
@@ -59,6 +61,8 @@ logger = logging.getLogger("server")
 PUBLIC_BACKEND_URL = os.getenv("PUBLIC_BACKEND_URL", "http://localhost:8000").rstrip("/")
 FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS", "*").split(",") if o.strip()]
 ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
+# The hidden /logs page reads whole conversations: only with this token (unset = logs can't be read).
+LOGS_TOKEN = os.getenv("LOGS_TOKEN", "").strip()
 # Hard cap on one call's length (cost guard); the page also ends a call after 5 min of silence.
 MAX_SESSION_S = float(os.getenv("MAX_SESSION_MINUTES", "30")) * 60
 
@@ -136,6 +140,7 @@ app.add_middleware(
 
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 users = WebUserRegistry()
+calls = CallLogStore()
 
 
 def _user(client_id: str | None, access_code: str | None) -> WebUser:
@@ -270,6 +275,13 @@ async def create_session(
                 await old.close()
             except Exception:
                 logger.debug("closing old session failed", exc_info=True)
+    call_log = calls.start(
+        session_id, user.client_id[:8], voice=_user_voice(user), prompt=user.prompt_variant,
+        model=OPENAI_LIVE_MODEL, backend=OPENAI_LIVE_BACKEND_MODEL, effort=OPENAI_LIVE_BACKEND_EFFORT or "default",
+        history=len(user.conversation.live_input()), speed=user.speed, style=user.style,
+    )
+    if body.user_text and body.user_text.strip():
+        call_log.add("user", text=body.user_text.strip()[:500], via="wake")
     bridge = SidebandToolBridge(
         client=openai_client,
         session_id=session_id,
@@ -278,6 +290,7 @@ async def create_session(
         max_duration_s=MAX_SESSION_S,
         conversation=user.conversation,
         on_voice_request=user.switch_voice_by_request,
+        call_log=call_log,
     )
     user.bridges.add(bridge)
     task = asyncio.create_task(bridge.run())
@@ -427,6 +440,30 @@ async def diag_post(
 @app.get("/api/diag")
 def diag_get(n: int = 50) -> list[dict]:
     return list(_diag)[-max(1, min(n, 200)):]
+
+
+def _logs_auth(token: str | None) -> None:
+    if not LOGS_TOKEN:
+        raise HTTPException(status_code=503, detail="logs_disabled: set LOGS_TOKEN on the server")
+    if not hmac.compare_digest((token or "").encode(), LOGS_TOKEN.encode()):
+        raise HTTPException(status_code=401, detail="bad_logs_token")
+
+
+@app.get("/api/logs")
+def logs_list(x_logs_token: str | None = Header(default=None), n: int = 100) -> list[dict]:
+    """The latest calls, newest first (web/logs.html). In memory: a deploy clears them."""
+    _logs_auth(x_logs_token)
+    return calls.latest(max(1, min(n, 200)))
+
+
+@app.get("/api/logs/{session_id}")
+def logs_call(session_id: str, x_logs_token: str | None = Header(default=None)) -> dict:
+    """One call: every line, note, backend step and tool call with its arguments, result and time."""
+    _logs_auth(x_logs_token)
+    log = calls.get(session_id)
+    if log is None:
+        raise HTTPException(status_code=404, detail="unknown_call")
+    return log.to_dict()
 
 
 @app.delete("/api/overheard")

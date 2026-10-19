@@ -19,6 +19,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from prompts.live_prompt import search_mumble_note, thinking_mumble_note
+from server.call_log import CallLog
 from tools.executor import ToolExecutionContext, ToolExecutor
 from voice.conversation import ConversationLog, remember_tool_result
 from voice.delegation import RESPONSE_FINISHED_TYPES, DelegatedResponseTracker, extract_completed_function_call
@@ -66,6 +67,38 @@ def _search_query(arguments: Any) -> str:
         return ""
 
 
+# Notes appended to her context: the page's (barge-in steers, greetings, wake notes) show up only as
+# these events — their text is not echoed back — the server's own are logged where they are sent.
+_APPENDED = {
+    "session.instructions.appended": "instructions",
+    "session.commentary.appended": "commentary",
+    "session.thinking.appended": "thinking",
+}
+_OWN_EVENT_PREFIXES = ("comment_", "instr_", "tool_result_", "continue_")
+
+
+def _parsed_args(arguments: Any) -> Any:
+    if isinstance(arguments, str):
+        try:
+            return json.loads(arguments)
+        except ValueError:
+            return arguments
+    return arguments
+
+
+def _brief_data(data: Any) -> Any:
+    """A tool's structured data for /logs, without bulky parts (search hits keep title, url, snippet)."""
+    if not isinstance(data, dict):
+        return None
+    out = {k: v for k, v in data.items() if k != "results" and not isinstance(v, (bytes, bytearray))}
+    hits = data.get("results")
+    if isinstance(hits, list):
+        out["results"] = [
+            {k: h.get(k) for k in ("title", "url", "snippet") if isinstance(h, dict)} for h in hits[:8]
+        ]
+    return out
+
+
 def _attr(obj: Any, name: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(name)
@@ -83,8 +116,11 @@ class SidebandToolBridge:
         max_duration_s: float | None = None,
         conversation: ConversationLog | None = None,
         on_voice_request: Callable[[str], bool] | None = None,
+        call_log: CallLog | None = None,
     ) -> None:
         self._client = client
+        # /logs: what was said and done in this call (server/call_log.py).
+        self.call_log = call_log
         self.session_id = session_id
         self._executor = executor
         self._on_closed = on_closed
@@ -145,8 +181,15 @@ class SidebandToolBridge:
             for task in [*self._tool_tasks, *self._mumbles.values()]:
                 task.cancel()
             logger.info("web.sideband.closed session_id=%s", self.session_id)
+            self._log("closed")
+            if self.call_log is not None:
+                self.call_log.end()
             if self._on_closed:
                 self._on_closed(self)
+
+    def _log(self, kind: str, **data: Any) -> None:
+        if self.call_log is not None:
+            self.call_log.add(kind, **data)
 
     @property
     def busy(self) -> bool:
@@ -161,6 +204,7 @@ class SidebandToolBridge:
         """Have the assistant tell the user something (a note she says in her own words)."""
         if not self.is_open:
             return
+        self._log("note", via="commentary", text=text)
         await self._connection.session.commentary.append(
             content=text, delegation_id=None, event_id=f"comment_{uuid.uuid4().hex[:8]}"
         )
@@ -184,6 +228,7 @@ class SidebandToolBridge:
             return
         self._pending_instruction = None
         logger.info("web.voice.delivery_applied session_id=%s", self.session_id)
+        self._log("note", via="instructions", text=text)
         await self._connection.session.instructions.append(
             content=text, delegation_id=None, event_id=f"instr_{uuid.uuid4().hex[:8]}"
         )
@@ -221,6 +266,7 @@ class SidebandToolBridge:
         etype = _attr(event, "type")
         if etype == "session.input_transcript.delta":
             delta = _attr(event, "delta") or ""
+            self._log("user", text=delta)
             self._input_buf += delta
             self._last_input_at = asyncio.get_running_loop().time()
             if self._output_buf.strip():  # the user speaks: her line is over
@@ -235,6 +281,7 @@ class SidebandToolBridge:
             return
         if etype == "session.output_transcript.delta":
             delta = _attr(event, "delta") or ""
+            self._log("eva", text=delta)
             self._output_buf += delta
             now = asyncio.get_running_loop().time()
             self._last_output_at = now
@@ -246,11 +293,20 @@ class SidebandToolBridge:
                 self._user_turns = (self._user_turns + [self._input_buf.strip()])[-20:]
                 self._input_buf = ""
             return
-        if etype == "session.instructions.appended":
-            logger.info("web.instructions.appended session_id=%s by=%s", self.session_id, _attr(event, "client_event_id"))
+        if etype in _APPENDED:
+            by = str(_attr(event, "client_event_id") or "")
+            if etype == "session.instructions.appended":
+                logger.info("web.instructions.appended session_id=%s by=%s", self.session_id, by)
+            if not by.startswith(_OWN_EVENT_PREFIXES):  # the page's: barge-in steers, greetings, wake notes
+                self._log("page_note", via=_APPENDED[etype], id=by)
+            return
+        if etype == "session.delegation.created":
+            delegation = _attr(event, "delegation")
+            self._log("delegation", target=_attr(delegation, "target"), id=_attr(delegation, "id"))
             return
         if etype == "error":
             logger.error("web.live.error session_id=%s detail=%s", self.session_id, _attr(event, "error") or event)
+            self._log("error", source="live", detail=str(_attr(event, "error") or event))
             return
         if etype != "response.event":
             return
@@ -259,11 +315,18 @@ class SidebandToolBridge:
         response = _attr(inner, "response")
         key = str(_attr(event, "delegation_id") or _attr(response, "id") or _attr(inner, "response_id") or "")
         if itype == "response.created":
+            self._log("backend_start", key=key[-8:])
             self._responses.response_started(key)
             self._work_started(key)
             return
         if itype in RESPONSE_FINISHED_TYPES:
             ok = itype == "response.completed"
+            usage = _attr(response, "usage")
+            self._log(
+                "backend_done", key=key[-8:], status=itype.split(".")[-1],
+                tokens_in=_attr(usage, "input_tokens"), tokens_out=_attr(usage, "output_tokens"),
+                error=str(_attr(response, "error") or "") or None,
+            )
             if not ok or not self._responses.had_calls(key):
                 self._work.pop(key, None)  # the final answer (or a failure): she speaks now
                 self._work_started_at.pop(key, None)
@@ -273,10 +336,17 @@ class SidebandToolBridge:
             return
         if itype != "response.output_item.done":
             return
+        item = _attr(inner, "item")
+        if _attr(item, "type") == "message":  # the backend's written answer, which she then says
+            text = "".join(str(_attr(c, "text") or "") for c in (_attr(item, "content") or []))
+            self._log("backend", key=key[-8:], text=text)
+            return
         completed = extract_completed_function_call(event)
         if completed is None:
             return
         self._responses.call_started(key, completed.call_id)
+        self._log("tool_call", key=key[-8:], name=completed.name, call_id=completed.call_id,
+                  args=_parsed_args(completed.arguments))
         if key in self._work:
             self._work[key].append(completed.name)
             self._answering.discard(key)  # one more step
@@ -359,11 +429,19 @@ class SidebandToolBridge:
             assistant_utterances=(self._assistant_turns + [self._output_buf.strip()] if self._output_buf.strip()
                                   else list(self._assistant_turns))[-3:] or None,
         )
+        started = time.monotonic()
         try:
             result = await self._executor.execute(name, arguments, ctx)
-        except Exception:
+        except Exception as exc:
             logger.exception("web.tool.failed tool_name=%s", name)
+            self._log("tool_result", name=name, call_id=call_id, ok=False, status="exception",
+                      message=repr(exc), ms=round((time.monotonic() - started) * 1000))
             return
+        self._log(
+            "tool_result", name=name, call_id=call_id, ok=result.ok, status=result.status, message=result.message,
+            ms=round((time.monotonic() - started) * 1000), image=bool(getattr(result, "image_jpeg", None)),
+            data=_brief_data(result.data),
+        )
         if not self.is_open:
             return
         if name == "end_conversation" and result.ok:

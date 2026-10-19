@@ -110,6 +110,7 @@ uv run python main.py
 | `TIMEZONE` | часовий пояс, за замовчуванням `Europe/Kyiv` |
 | `WEB_SEARCH_API_KEY` | ключ [Tavily](https://tavily.com) для вебпошуку; без нього Єва каже, що пошук недоступний. Ще: `WEB_SEARCH_TIMEOUT_S` (9), `WEB_SEARCH_MAX_CALLS_PER_TURN` (2 пошуки на один запит) |
 | `PUBLIC_BACKEND_URL`, `FRONTEND_ORIGINS`, `ACCESS_CODE` | веб-бекенд: адреса, дозволені сторінки, пароль |
+| `LOGS_TOKEN` | пароль прихованої сторінки `/logs` (історія дзвінків і викликів інструментів); порожньо — логи вимкнені |
 | `BACKGROUND_LISTENING` | десктоп: слухати фоном на паузі |
 | `IDLE_PAUSE_SECONDS`, `PAUSE_CLOSE_SECONDS` | десктоп: пауза після тиші (90 с, 0 — ніколи) і скільки пауза тримає сесію відкритою (30 с) |
 | `LIVE_PROMPT_VARIANT` | десктоп: промпт голосу `v1` / `v2` / `v3` / `v4` / `v5` (за замовчуванням `v4` — повні, конкретні відповіді; на вебі основний `v5`) |

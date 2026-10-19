@@ -159,3 +159,7 @@ footer { margin-top: 20px; text-align: center; }
 .dialog .row { margin-top: 12px; }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
 .btn[hidden] { display: none; }
+
+/* «Зараз: мікрофон — …; звук — …» (web/app.js showDevicesNow) */
+.devices-now { margin: 8px 0 0; font-size: 0.9rem; }
+.devices-now:empty { display: none; }

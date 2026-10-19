@@ -1080,10 +1080,11 @@
   function applyStart() {
     const opts = eva.pending || {};
     eva.pending = null;
-    if (opts.paused) { holdScreen(true); enterPause(false, opts.ready); return; }
+    if (opts.paused) { holdScreen(true); announceDevices(); enterPause(false, opts.ready); return; }
     eva.mode = "active";
     setRemoteVolume(1);
     if (IOS) stopPhraseListener(); else startPhraseListener();
+    announceDevices();
     holdScreen(true);
     sendFrame(); // frames stop on a pause: the server gets a fresh one at once
     if (opts.switched) {
@@ -1119,7 +1120,18 @@
     barge.recentAssistant = "";
   }
 
+  // Once per call, in the log: where her voice is heard from and played to.
+  let devicesAnnounced = false;
+  function announceDevices() {
+    showDevicesNow();
+    if (devicesAnnounced) return;
+    devicesAnnounced = true;
+    const now = devicesNow();
+    addLine("system", "Мікрофон: " + now.input + ". Звук: " + now.output + ".");
+  }
+
   function stop(text = "Не підключено", state = "") {
+    devicesAnnounced = false;
     if (eva.mode !== "off") postDiag(true);
     holdScreen(false);
     dropStandby();
@@ -1129,6 +1141,7 @@
     clearTimeout(eva.pauseTimer);
     eva.mode = "off";
     eva.ready = false;
+    setTimeout(showDevicesNow, 0); // the mic is closed now: «Буде: …»
     eva.pending = null;
     setStatus(text, state);
     updateButtons();
@@ -2015,9 +2028,12 @@
     let devices;
     try { devices = await md.enumerateDevices(); } catch { return; }
     const fill = (select, kind, current, noun) => {
-      // Chrome's «default» / «communications» entries are the system default again: "" covers them.
+      // Chrome's «default» / «communications» entries are the system default again: "" covers them —
+      // and its label names the device behind it («За замовчуванням — MacBook Pro Microphone»).
       const list = devices.filter((d) => d.kind === kind && d.deviceId && d.deviceId !== "default" && d.deviceId !== "communications");
-      $(select).replaceChildren(new Option("За замовчуванням", ""),
+      const def = devices.find((d) => d.kind === kind && d.deviceId === "default" && d.label);
+      const defName = def ? def.label.replace(/^(Default|За замовчуванням|По умолчанию)\s*[-–—:]\s*/i, "") : "";
+      $(select).replaceChildren(new Option("За замовчуванням" + (defName ? " — " + defName : ""), ""),
         ...list.map((d, i) => new Option(d.label || noun + " " + (i + 1), d.deviceId)));
       $(select).value = list.some((d) => d.deviceId === current) ? current : "";
       return list.length;
@@ -2027,6 +2043,9 @@
     const cameras = fill("cameraSelect", "videoinput", cameraId, "Камера");
     $("speakerSelect").disabled = !canPickSpeaker;
     const named = devices.some((d) => d.label);
+    // Names come only once the browser has given the mic: one tap asks for it without starting a call.
+    $("devicesAllow").hidden = named || !md.getUserMedia;
+    showDevicesNow();
     $("devicesInfo").textContent = [
       named ? "" : "Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.",
       canPickSpeaker ? "" : "Динамік у цьому браузері не вибирається (потрібен Chrome або Edge) — звук іде в системний.",
@@ -2034,10 +2053,39 @@
     ].filter(Boolean).join(" ") || "Зміна діє одразу, навіть посеред розмови.";
   }
 
+  // What the call hears from and plays to, in words — the pickers alone said «За замовчуванням».
+  // In a call the mic is the track's own device; otherwise what the next call will open.
+  function devicesNow() {
+    const picked = (id) => ($(id).selectedOptions[0] || {}).textContent || "За замовчуванням";
+    const track = mic && mic.getAudioTracks().find((t) => t.readyState === "live");
+    const input = track && track.label ? track.label : picked("micSelect");
+    const output = canPickSpeaker
+      ? picked("speakerSelect")
+      : IOS ? "динамік або навушники iPhone (обирає система)" : "системний вивід (обирає система)";
+    return { input, output, live: Boolean(track) };
+  }
+  function showDevicesNow() {
+    const now = devicesNow();
+    $("devicesNow").textContent = (now.live ? "Зараз: " : "Буде: ") + "мікрофон — " + now.input + "; звук — " + now.output + ".";
+  }
+
+  async function allowDevices() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop()); // only for the names: the call opens its own
+    } catch (err) {
+      $("devicesInfo").textContent = err && err.name === "NotAllowedError"
+        ? "Браузер не дав доступ до мікрофона — дозвольте його в налаштуваннях сайту." : "Не вдалося відкрити мікрофон.";
+      return;
+    }
+    listDevices();
+  }
+
   // Another mic mid-call: a new stream and gate, the call's track replaced in place — no reconnect.
   async function changeMic() {
     setDevice("mic", $("micSelect").value);
-    if (await swapMic()) addLine("system", "Мікрофон: " + $("micSelect").selectedOptions[0].textContent + ".");
+    if (await swapMic()) addLine("system", "Мікрофон: " + devicesNow().input + ".");
+    showDevicesNow();
   }
 
   // The call's mic went dead (iOS: the recogniser or a phone call took it; the track ended or is muted):
@@ -2125,6 +2173,8 @@
       return;
     }
     setDevice("speaker", id);
+    showDevicesNow();
+    if (eva.mode !== "off") addLine("system", "Звук: " + devicesNow().output + ".");
     if (fx) fx.setSink(id);
     if (preview && preview.setSinkId) preview.setSinkId(id).catch(() => {});
   }
@@ -2289,6 +2339,7 @@
     $("micSelect").addEventListener("change", changeMic);
     $("speakerSelect").addEventListener("change", changeSpeaker);
     $("cameraSelect").addEventListener("change", changeCamera);
+    $("devicesAllow").addEventListener("click", allowDevices);
     $("camera").addEventListener("change", toggleCamera);
     if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === "function") {
       // A headset plugged in or out: the pickers follow.

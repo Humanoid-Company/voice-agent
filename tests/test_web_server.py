@@ -509,8 +509,9 @@ def test_voice_switch_keeps_the_old_call_until_the_page_swaps(monkeypatch):
     user.bridges.clear()
 
 
-def test_prompt_v4_is_the_default_and_v3_only_when_the_page_asks(monkeypatch):
-    """v1 and v2 are gone from the web (desktop only): a page that still asks for them gets v4."""
+def test_prompt_v5_is_the_default_and_v4_v3_only_when_the_page_asks(monkeypatch):
+    """v5 (v4 condensed) is the default; v1 and v2 are gone from the web (desktop only): a page that
+    still asks for them gets v5."""
     monkeypatch.setattr(web, "ACCESS_CODE", "")
     sent: list[str] = []
 
@@ -522,13 +523,14 @@ def test_prompt_v4_is_the_default_and_v3_only_when_the_page_asks(monkeypatch):
     monkeypatch.setattr(web.SidebandToolBridge, "run", lambda self: asyncio.sleep(0))
     headers = {"X-Client-Id": "prompt-var-0123456789ab"}
     client = TestClient(web.app)
-    bodies = ({"sdp": "o", "prompt": "v1"}, {"sdp": "o", "prompt": "v2"}, {"sdp": "o", "prompt": "v3"}, {"sdp": "o"},
-              {"sdp": "o", "prompt": "nonsense"})
+    bodies = ({"sdp": "o", "prompt": "v1"}, {"sdp": "o", "prompt": "v2"}, {"sdp": "o", "prompt": "v3"},
+              {"sdp": "o", "prompt": "v4"}, {"sdp": "o"}, {"sdp": "o", "prompt": "nonsense"})
     for body in bodies:
         assert client.post("/api/session", headers=headers, json=body).status_code == 200
-    v1, v2, v3, v4, fallback = sent
+    v1, v2, v3, v4, v5, fallback = sent
     assert "Being a person" in v3 and "you are talking, not reading" in v3 and "Answering" not in v3
-    assert "Answering" in v4 and "Being a person" in v4 and v4 == fallback == v1 == v2
+    assert "Answering" in v4 and "Being a person" in v4
+    assert "How a turn goes" in v5 and "Answering" not in v5 and v5 == fallback == v1 == v2
     for text in (v3, v4):  # the shared parts stay in both
         assert "Voice changes:" in text and "Interruption policy" in text
         assert "You are a voice assistant first" in text and "зараз прикину" in text

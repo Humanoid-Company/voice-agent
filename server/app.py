@@ -86,7 +86,7 @@ _CAMERA_NOTE_V5 = (
     "imagination. Tell what it saw as if you looked («Бачу…»), only what it reported; one look per "
     "request. A description no look confirmed is your mistake, never the user's."
 )
-# Delivery prompts the page may pick; v1 and v2 are desktop-only now (an old page asking for them gets v4).
+# Delivery prompts the page may pick; v5 is the default. v1 and v2 are desktop-only (a page asking for them gets v5).
 WEB_PROMPT_VARIANTS = ("v3", "v4", "v5")
 # A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
 MAX_FRAME_BYTES = 600_000
@@ -245,7 +245,7 @@ async def create_session(
         user.speed = body.speed
     if body.style in STYLE_OPTIONS:
         user.style = body.style
-    user.prompt_variant = body.prompt if body.prompt in WEB_PROMPT_VARIANTS else "v4"
+    user.prompt_variant = body.prompt if body.prompt in WEB_PROMPT_VARIANTS else "v5"
     user.reconnect_pending = False
     if body.user_text and body.user_text.strip():
         user.conversation.add("user", body.user_text.strip()[:500])

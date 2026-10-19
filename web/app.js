@@ -35,13 +35,13 @@
   let cameraId = store.get("va-camera") || "";
 
   const DEBUG = params.get("debug") === "1";
-  // Delivery prompt (prompts/live_prompt.py): v4 is the usual one (v3 with full, concrete answers), v3
-  // behaves like a person. Picked in the voice card (or ?prompt=v3); a change reopens the call, as a
-  // voice change does. v1 and v2 are gone from the web (the desktop keeps them): a choice saved
-  // earlier becomes v4.
+  // Delivery prompt (prompts/live_prompt.py): v5 is the usual one (v4 condensed, the same rules said
+  // once), v4 the long one, v3 behaves like a person. Picked in the voice card (or ?prompt=v4); a change
+  // reopens the call, as a voice change does. v1 and v2 are gone from the web (the desktop keeps them):
+  // a choice saved earlier becomes v5.
   const WEB_PROMPTS = ["v3", "v4", "v5"];
-  let promptVariant = params.get("prompt") || store.get("va-prompt") || "v4";
-  if (!WEB_PROMPTS.includes(promptVariant)) promptVariant = "v4";
+  let promptVariant = params.get("prompt") || store.get("va-prompt") || "v5";
+  if (!WEB_PROMPTS.includes(promptVariant)) promptVariant = "v5";
   let pc = null;
   let channel = null;
   let sessionVoice = ""; // the voice the current call was opened with
@@ -1797,7 +1797,7 @@
       "«як»), конкретні назви, числа й кроки, без «хочеш, розкажу?» замість відповіді, рідше питання наприкінці, " +
       "не перебиває, поки ви не договорили.",
     v5: "Ті самі правила, що й у v4, але промпт удвічі коротший: кожне правило сказане раз, без дублів і зайвих " +
-      "прикладів — менше суперечностей, які модель мусить зважувати.",
+      "прикладів. На живих тестах не гірший за v4, а на слабких місцях кращий.",
   };
   const showPromptInfo = () => { $("promptInfo").textContent = PROMPT_INFO[$("promptVariant").value] || ""; };
 

@@ -56,7 +56,7 @@ def test_v5_is_v4_condensed():
     v5 = build_live_prompt(variant="v5", voice="gleam", **COMMON)
     assert len(v5) < len(v4) / 2
     for part in ("Let them finish", "never answer a fragment", "«На Rust?»", "«Оттава.»",
-                 "never «Хочеш, розкажу…?»", "no advice they did not ask for", "Never two.",
+                 "never «Хочеш, розкажу…?»", "no advice and no suggestions", "Never two.", "a made-up ability",
                  "Never dictate code", "rough figure", "always delegate it at once", "drop it and answer what "
                  "they said last", "new request — answer it", "Never assume their gender", "with this voice"):
         assert part.lower() in v5.lower(), part

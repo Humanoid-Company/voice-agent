@@ -164,17 +164,23 @@ def test_web_session_gets_the_camera_tool_and_notes(monkeypatch):
     monkeypatch.setattr(web.openai_client.live, "create", fake_create)
     monkeypatch.setattr(web.SidebandToolBridge, "run", lambda self: asyncio.sleep(0))
     headers = {"X-Client-Id": "cam7-browser-0123456789a"}
-    assert TestClient(web.app).post("/api/session", headers=headers, json={"sdp": "o"}).status_code == 200
-    session = sent[0]
-    responses = session["delegation"]["responses"]
+    client = TestClient(web.app)
+    for body in ({"sdp": "o"}, {"sdp": "o", "prompt": "v4"}):  # v5 (default) and v4
+        assert client.post("/api/session", headers=headers, json=body).status_code == 200
+    v5, v4 = sent
+    responses = v5["delegation"]["responses"]
     assert "look_at_camera" in [t["name"] for t in responses["tools"]]
     assert "CAMERA:" in responses["instructions"]
-    assert "You cannot see by yourself" in session["instructions"]
-    # Prod: «А це шо?», «Це шо таке?» while holding a speaker up got «не знаю, про що ти питаєш».
-    assert "а це шо?" in session["instructions"] and "never answer «не знаю" in session["instructions"]
-    # Prod: «що ти бачиш» answered without a look — «стіл, ноутбук, чашка» — then «ту саму картину».
-    assert "always needs a new look" in session["instructions"] and "never blame the user" in session["instructions"]
     assert "One look per request" in responses["instructions"]
+    assert "You cannot see by yourself" in v4["instructions"]
+    # Prod: «А це шо?», «Це шо таке?» while holding a speaker up got «не знаю, про що ти питаєш».
+    assert "а це шо?" in v4["instructions"] and "never answer «не знаю" in v4["instructions"]
+    # Prod: «що ти бачиш» answered without a look — «стіл, ноутбук, чашка» — then «ту саму картину».
+    assert "always needs a new look" in v4["instructions"] and "never blame the user" in v4["instructions"]
+    # v5 says the same, condensed.
+    v5i = v5["instructions"]
+    assert "you cannot see by yourself" in v5i and "а це шо?" in v5i and "never ask what they mean" in v5i
+    assert "Each look is a new frame" in v5i and "never the user's" in v5i and "one look per request" in v5i
     web.users.get(headers["X-Client-Id"]).bridges.clear()
 
 

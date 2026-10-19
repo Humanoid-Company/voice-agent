@@ -32,6 +32,7 @@
       <p id="meter" class="meter" hidden
         title="Час, поки відкрита сесія GPT-Live (разом з першими 30 с паузи), і орієнтовна ціна за ним. Інструменти й підсумок фонового слухання оплачуються окремо й тут не враховані."></p>
       <button id="talk" class="btn primary big">Почати розмову</button>
+
       <div class="row">
         <button id="resume" class="btn primary" hidden>Продовжити</button>
         <button id="pause" class="btn ghost" hidden>Пауза</button>
@@ -151,6 +152,18 @@
 
     <footer class="muted small">Розмова зберігається лише в пам'яті сервера на час тестування.</footer>
   </main>
+  <dialog id="noMic" class="dialog" aria-labelledby="noMicTitle">
+    <h2 id="noMicTitle">Мікрофон у цьому браузері недоступний</h2>
+    <p id="noMicText"></p>
+    <p id="noMicIos" class="hint" hidden>Apple змушує всі браузери на iPhone працювати на рушії Safari, і цей
+      браузер не передає сторінкам мікрофон — тому вікно дозволу навіть не з'являється. Якщо потрібен саме він:
+      «Параметри» → «Застосунки» → браузер → «Мікрофон» (увімкніть, якщо є), оновіть його й перезапустіть.</p>
+    <div class="row">
+      <a id="openSafari" class="btn primary" href="#">Відкрити в Safari</a>
+      <button id="copyLink" class="btn" type="button">Скопіювати посилання</button>
+      <button id="noMicClose" class="btn ghost" type="button">Зрозуміло</button>
+    </div>
+  </dialog>
   <audio id="remote" autoplay></audio>
 </body>
 </html>

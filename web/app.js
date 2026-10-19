@@ -32,10 +32,44 @@
   const BROWSER = /Instagram/.test(UA) ? "instagram" : /FBAN|FBAV/.test(UA) ? "facebook" : /Telegram/i.test(UA) ? "telegram"
     : /Viber/i.test(UA) ? "viber" : /Line\//.test(UA) ? "line" : /CriOS/.test(UA) ? "chrome-ios" : /FxiOS/.test(UA) ? "firefox-ios"
     : /EdgiOS|Edg\//.test(UA) ? "edge" : /Chrome\//.test(UA) ? "chrome" : /Safari\//.test(UA) ? "safari" : "other";
+  // Some in-app WebKit browsers keep only the old prefixed API: wrapped, the browser's own permission
+  // prompt can still come up there.
+  const LEGACY_GUM = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && LEGACY_GUM) {
+    try {
+      if (!navigator.mediaDevices) Object.defineProperty(navigator, "mediaDevices", { value: {}, configurable: true });
+      navigator.mediaDevices.getUserMedia = (c) => new Promise((ok, fail) => LEGACY_GUM.call(navigator, c, ok, fail));
+    } catch { /* read-only here: no mic */ }
+  }
   const HAS_MIC_API = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   // For /api/diag: the iOS version and the browser's own («17.4», «141.0»).
   const OS_VERSION = ((UA.match(/OS (\d+[_.]\d+)/) || [])[1] || "").replace("_", ".");
   const BROWSER_VERSION = (UA.match(/(?:CriOS|FxiOS|EdgiOS|Edg|Chrome|Version)\/(\d+(?:\.\d+)?)/) || [])[1] || "";
+  // No mic in this browser (Chrome 155 on iOS 26.5, prod /api/diag: micApi false over https): a page can't
+  // bring up the browser's permission prompt without the API, so this explains it and offers the way
+  // that works — the same page in Safari (iOS 17+ opens «x-safari-https://…» there) or its link. Shown
+  // once the page opens and again on «Почати розмову».
+  let noMicReady = false;
+  function showNoMic() {
+    const dlg = $("noMic");
+    if (!noMicReady) {
+      noMicReady = true;
+      const chromeLike = IOS && ["chrome-ios", "firefox-ios", "edge"].includes(BROWSER);
+      $("noMicTitle").textContent = chromeLike ? "Цей браузер на iPhone не дає сайтам мікрофон" : "Мікрофон у цьому браузері недоступний";
+      $("noMicText").textContent = chromeLike ? "Відкрийте цю сторінку в Safari — там Єва працює." : noMicReason();
+      $("noMicIos").hidden = !chromeLike;
+      $("openSafari").hidden = !(IOS && window.isSecureContext);
+      $("openSafari").href = "x-safari-" + location.href;
+      $("copyLink").addEventListener("click", async () => {
+        let ok = true;
+        try { await navigator.clipboard.writeText(location.href); } catch { ok = false; }
+        flashButton($("copyLink"), ok ? "Скопійовано ✓" : location.href);
+      });
+      $("noMicClose").addEventListener("click", () => dlg.close ? dlg.close() : (dlg.hidden = true));
+    }
+    if (dlg.showModal) { if (!dlg.open) dlg.showModal(); } else dlg.hidden = false;
+  }
+
   function noMicReason() {
     if (HAS_MIC_API) return "";
     if (!window.isSecureContext) return "Мікрофон працює лише на захищеній сторінці — відкрийте її за адресою https://…";
@@ -1727,7 +1761,8 @@
     diag.changed = false;
     const body = {
       final, prompt: promptVariant, clean: cleanVoice, sens: params.get("sens") === "1", ios: IOS,
-      browser: BROWSER, browserV: BROWSER_VERSION, osV: OS_VERSION, micApi: HAS_MIC_API, secure: window.isSecureContext,
+      browser: BROWSER, browserV: BROWSER_VERSION, osV: OS_VERSION, micApi: HAS_MIC_API, legacyMic: Boolean(LEGACY_GUM),
+      secure: window.isSecureContext,
       audio: { ctxInterrupts: diag.ctxInterrupts, micRevives: diag.micRevives, micMutes: diag.micMutes, wakeLock: Boolean(wakeLock) },
       gate: gateSummary(),
       barge: { starts: diag.bargeStarts, muteMs: diag.bargeMuteMs, missed: diag.bargeMissed, ducks: barge.ducks, mutes: barge.mutes },
@@ -2218,7 +2253,7 @@
   async function init() {
     $("talk").addEventListener("click", () => {
       if (eva.mode !== "off") { stop(); return; }
-      if (noMicReason()) { addLine("system", noMicReason()); setStatus("Немає доступу до мікрофона", "err"); postDiag(true); return; }
+      if (noMicReason()) { showNoMic(); setStatus("Немає доступу до мікрофона", "err"); postDiag(true); return; }
       meterReset(); // a new call counts from zero
       start(defaultStart()); // asks for the mic synchronously, while the tap still counts
       primeAudio(); // then, in the same tap, the audio the gate will use
@@ -2255,7 +2290,7 @@
     $("speakerSelect").addEventListener("change", changeSpeaker);
     $("cameraSelect").addEventListener("change", changeCamera);
     $("camera").addEventListener("change", toggleCamera);
-    if (navigator.mediaDevices) {
+    if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === "function") {
       // A headset plugged in or out: the pickers follow.
       navigator.mediaDevices.addEventListener("devicechange", listDevices);
       listDevices();
@@ -2276,6 +2311,7 @@
     if (!BACKEND) { addLine("system", "Не вказано адресу бекенду."); return; }
     const micMissing = noMicReason();
     if (micMissing) addLine("system", micMissing); // before the backend wakes: that can take a minute
+    if (micMissing) showNoMic();
     const cfg = await wakeBackend();
     if (micMissing) setStatus("Немає доступу до мікрофона", "err");
     if (cfg) {

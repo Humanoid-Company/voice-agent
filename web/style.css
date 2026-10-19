@@ -46,6 +46,7 @@ h2 { font-size: 1.05rem; margin: 0 0 8px; }
   margin-top: 16px;
 }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row[hidden] { display: none; }
 input, select {
   flex: 1 1 200px;
   min-width: 0;
@@ -148,3 +149,13 @@ footer { margin-top: 20px; text-align: center; }
 }
 .camera-view[hidden] { display: none; }
 .camera-view.mirror { transform: scaleX(-1); }
+
+/* «Мікрофон недоступний» (web/app.js showNoMic) */
+.dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text);
+  padding: 16px; width: min(440px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25); }
+.dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.dialog h2 { margin: 0 0 8px; font-size: 1.05rem; }
+.dialog p { margin: 0 0 10px; }
+.dialog .row { margin-top: 12px; }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.btn[hidden] { display: none; }

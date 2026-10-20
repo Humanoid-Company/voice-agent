@@ -17,6 +17,7 @@ from typing import Any
 
 from config import WEB_SEARCH_MAX_CALLS_PER_TURN
 from integrations.web_search import WebSearchRateLimiter
+from server import knowledge
 from tools.executor import ToolExecutionContext, ToolExecutor
 from tools.results import ToolResult
 from tools.web_search_tool import web_search_tool_result
@@ -263,6 +264,25 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             image_jpeg=frame,
         )
 
+    def knowledge_lookup(args: dict, ctx: ToolExecutionContext) -> ToolResult:
+        query = str(args.get("query") or "").strip()[:300]
+        try:
+            found = knowledge.store.lookup(query, str(args.get("set") or ""))
+        except knowledge.KnowledgeError as exc:
+            return ToolResult(ok=False, status="error", message=f"{exc} Скажи, що зараз не можеш заглянути в записи команди.")
+        logger.info("web.knowledge.lookup total=%s shown=%s", found["total"], found["shown"])
+        if not found["total"]:
+            return ToolResult(
+                ok=True, status="empty",
+                message="Команда ще не завантажила знань (сторінка «Знання»). Скажи, що про це в тебе записів немає.",
+            )
+        head = (
+            f"Записи команди ({found['shown']} з {found['total']}"
+            + (", найближчі до запиту" if found["shown"] < found["total"] else ", усі")
+            + "). Відповідай лише з них; чого тут немає — того ти не знаєш.\n"
+        )
+        return ToolResult(ok=True, status="ok", message=head + found["text"], data={"total": found["total"], "shown": found["shown"]})
+
     executor.register("set_assistant_name", set_name)
     executor.register("change_language", change_language)
     executor.register("change_voice", change_voice)
@@ -270,6 +290,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
     executor.register("end_conversation", end_conversation)
     executor.register("web_search", web_search, run_in_thread=True)  # network: off the event loop
     executor.register("look_at_camera", look_at_camera, run_in_thread=True)  # may wait for a frame
+    executor.register("knowledge_lookup", knowledge_lookup, run_in_thread=True)  # database
     return executor
 
 

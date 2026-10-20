@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any
@@ -39,10 +40,12 @@ from config import (
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import build_live_prompt
+from server import knowledge
 from server.call_log import CallLogStore
+from server.knowledge_import import KnowledgeImportError, make_openai_extract, parse_file
 from server.live_bridge import SidebandToolBridge
 from server.web_users import WebUser, WebUserRegistry
-from tools.live_schemas import LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
+from tools.live_schemas import KNOWLEDGE_LOOKUP_TOOL, LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
 from voice.background import wake_commentary
 from voice.delegation import responses_delegation
 from voice.options import (
@@ -125,6 +128,8 @@ async def _lifespan(_app: FastAPI):
         logger.info("keep-awake every %ss → %s/healthz", int(KEEP_AWAKE_S), PUBLIC_BACKEND_URL)
     if not WEB_SEARCH_API_KEY:
         logger.warning("WEB_SEARCH_API_KEY is not set: web search answers «unavailable»")
+    if not knowledge.store.persistent:
+        logger.warning("DATABASE_URL is not set: «Знання» lives in a SQLite file that the next deploy wipes")
     yield
     if task is not None:
         task.cancel()
@@ -134,7 +139,7 @@ app = FastAPI(title="Voice agent web backend", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_ORIGINS,
-    allow_methods=["GET", "POST", "DELETE"],  # DELETE: «Нова розмова», background listening off
+    allow_methods=["GET", "POST", "DELETE"],  # DELETE: «Нова розмова», background listening off, a knowledge set
     allow_headers=["*"],
 )
 
@@ -155,7 +160,17 @@ def _user_voice(user: WebUser) -> str:
     return user.voice or OPENAI_LIVE_VOICE
 
 
-def _session_config(user: WebUser) -> dict:
+def _knowledge_sets() -> list[dict]:
+    """The enabled knowledge sets for a new call's prompts; a store that is down just leaves them out."""
+    try:
+        return knowledge.store.enabled_records()[0]
+    except knowledge.KnowledgeError:
+        return []
+
+
+def _session_config(user: WebUser, knowledge_sets: list[dict] | None = None) -> dict:
+    """knowledge_sets: what the team uploaded (_knowledge_sets) — she is told about it, so questions about
+    those people go to the backend; the lookup tool is there either way."""
     language = LANGUAGE_OPTIONS.get(user.language, LANGUAGE_OPTIONS["uk"])
     today = local_today()
     voice = _user_voice(user)
@@ -170,12 +185,14 @@ def _session_config(user: WebUser) -> dict:
             variant=user.prompt_variant,
         )
         + _WEB_NOTE
-        + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE),
+        + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
+        + knowledge.live_note(knowledge_sets or []),
         "audio": {"output": {"voice": voice}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
-            instructions=build_backend_prompt(today=today, language_name=language, camera=True),
-            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL],
+            instructions=build_backend_prompt(today=today, language_name=language, camera=True)
+            + knowledge.BACKEND_NOTE,
+            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
         ),
@@ -230,6 +247,8 @@ def healthz() -> dict:
         "branch": os.getenv("RENDER_GIT_BRANCH") or None,
         # Without the Tavily key she says «пошук зараз не працює» — check it here, not by asking her.
         "web_search": bool(WEB_SEARCH_API_KEY),
+        # «Знання»: postgres (Neon) keeps it; sqlite on Render is wiped by every deploy.
+        "knowledge": knowledge.store.kind,
     }
 
 
@@ -260,7 +279,8 @@ async def create_session(
         user.conversation.end_turn()
     try:
         result = await openai_client.live.create(
-            session=_session_config(user), transport={"type": "webrtc", "sdp": body.sdp}
+            session=_session_config(user, await asyncio.to_thread(_knowledge_sets)),
+            transport={"type": "webrtc", "sdp": body.sdp},
         )
     except Exception as exc:
         logger.exception("web.session.create_failed")
@@ -530,4 +550,107 @@ def clear_conversation(
     user = _user(x_client_id, x_access_code)
     user.conversation.clear()
     user.background.clear()
+    return {"ok": True}
+
+
+# ── «Знання»: the team's knowledge sets (server/knowledge.py, web/knowledge.html) ──
+# One store for everyone with the access code. Upload is two steps: /parse reads the file and returns the
+# records (nothing saved), the page shows them, and POST /api/knowledge saves what the user kept.
+_extract = None
+
+
+def _team(access_code: str | None) -> None:
+    if ACCESS_CODE and not hmac.compare_digest((access_code or "").encode(), ACCESS_CODE.encode()):
+        raise HTTPException(status_code=401, detail="access_code_required")
+
+
+def _kb(call, *args, **kwargs):
+    try:
+        return call(*args, **kwargs)
+    except knowledge.KnowledgeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _text_extract():
+    global _extract
+    if _extract is None:
+        from openai import OpenAI
+
+        _extract = make_openai_extract(OpenAI(api_key=OPENAI_API_KEY), OPENAI_LIVE_BACKEND_MODEL)
+    return _extract
+
+
+class KnowledgeItem(BaseModel):
+    title: str = ""
+    fields: dict[str, Any] = {}
+
+
+class KnowledgeSetIn(BaseModel):
+    name: str
+    note: str = ""
+    source: str = ""
+    items: list[KnowledgeItem]
+
+
+class KnowledgeSetPatch(BaseModel):
+    enabled: bool | None = None
+    name: str | None = None
+    note: str | None = None
+
+
+@app.post("/api/knowledge/parse")
+async def knowledge_parse(request: Request, x_access_code: str | None = Header(default=None)) -> dict:
+    """The file as the raw body, its name in X-File-Name (URL-encoded) → the records it holds."""
+    _team(x_access_code)
+    filename = urllib.parse.unquote(request.headers.get("x-file-name", ""))[:200]
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > 5_000_000:
+        raise HTTPException(status_code=413, detail="Файл завеликий: до 5 МБ.")
+    data = await request.body()
+    try:
+        parsed = await asyncio.to_thread(parse_file, filename, data, lambda text: _text_extract()(text))
+    except KnowledgeImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    logger.info("knowledge.parsed ext=%s items=%s kind=%s", filename.rsplit(".", 1)[-1], len(parsed.items), parsed.kind)
+    return parsed.to_dict()
+
+
+@app.get("/api/knowledge")
+def knowledge_sets(x_access_code: str | None = Header(default=None)) -> dict:
+    _team(x_access_code)
+    return {"storage": knowledge.store.kind, "persistent": knowledge.store.persistent,
+            "sets": _kb(knowledge.store.list_sets)}
+
+
+@app.post("/api/knowledge")
+def knowledge_create(body: KnowledgeSetIn, x_access_code: str | None = Header(default=None)) -> dict:
+    _team(x_access_code)
+    items = [item.model_dump() for item in body.items]
+    return _kb(knowledge.store.create_set, body.name, items, note=body.note, source=body.source)
+
+
+@app.get("/api/knowledge/{set_id}")
+def knowledge_get(set_id: int, x_access_code: str | None = Header(default=None)) -> dict:
+    _team(x_access_code)
+    found = _kb(knowledge.store.get_set, set_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Такого набору немає.")
+    return found
+
+
+@app.post("/api/knowledge/{set_id}")
+def knowledge_update(set_id: int, body: KnowledgeSetPatch, x_access_code: str | None = Header(default=None)) -> dict:
+    """Turn a set on or off for Єва («Єва знає»), rename it, change its note."""
+    _team(x_access_code)
+    found = _kb(knowledge.store.update_set, set_id, enabled=body.enabled, name=body.name, note=body.note)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Такого набору немає.")
+    return found
+
+
+@app.delete("/api/knowledge/{set_id}")
+def knowledge_delete(set_id: int, x_access_code: str | None = Header(default=None)) -> dict:
+    _team(x_access_code)
+    if not _kb(knowledge.store.delete_set, set_id):
+        raise HTTPException(status_code=404, detail="Такого набору немає.")
     return {"ok": True}

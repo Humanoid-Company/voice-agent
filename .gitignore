@@ -19,3 +19,6 @@ private_logs/
 *.rar
 *.zip
 logs/
+
+# Local knowledge store (server/knowledge.py without DATABASE_URL)
+data/knowledge.db

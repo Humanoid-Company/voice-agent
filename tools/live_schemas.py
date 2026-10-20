@@ -88,3 +88,17 @@ LOOK_AT_CAMERA_TOOL: dict = _fn(
     {"question": {"type": "string", "description": "What the user wants to know about the view"}},
     required=["question"],
 )
+
+# Web only: the team's uploaded knowledge (server/knowledge.py, the page «Знання»).
+KNOWLEDGE_LOOKUP_TOOL: dict = _fn(
+    "knowledge_lookup",
+    "Look up the team's uploaded knowledge: records about people (age, hobbies, favourite films, role…) "
+    "and events. Use for any question about a person or event from it — «що любить Олег», «скільки років "
+    "Марині», «хто з них фанат Тарантіно», «що подарувати Ірині». Returns the matching records (all of "
+    "them while they fit); answer only from them.",
+    {
+        "query": {"type": "string", "description": "The name(s) or words as heard, e.g. «Олег хобі» or «Тарантіно»"},
+        "set": {"type": "string", "description": "A set's name if the user named one («корпоратив»), else omit"},
+    },
+    required=["query"],
+)

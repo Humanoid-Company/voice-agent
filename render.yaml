@@ -25,3 +25,5 @@ services:
         value: Europe/Kyiv
       - key: WEB_SEARCH_API_KEY # Tavily, for the web_search tool; empty = she says search is unavailable
         sync: false
+      - key: DATABASE_URL # Neon Postgres for «Знання» (postgresql://…?sslmode=require); empty = a SQLite file every deploy wipes
+        sync: false

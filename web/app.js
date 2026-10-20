@@ -25,6 +25,7 @@
   let style = store.get("va-style") || "normal";
   // iPhone / iPad (any browser there is Safari's engine; an iPad may report itself as a Mac).
   const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const ANDROID = /Android/.test(navigator.userAgent);
   // Browsers inside other apps (Telegram, Instagram, Facebook, Viber…) may give pages no mic at all:
   // navigator.mediaDevices is missing (prod, iPhone: «undefined is not an object (evaluating
   // 'navigator.mediaDevices.getUserMedia')»). The page says what to do before anyone presses a button.
@@ -554,6 +555,7 @@
 
   // Her voice into the speakers (straight, or through the chain) and into the gate's echo meter.
   function playRemote(stream) {
+    stopPreview(); // a sample left playing would talk over her
     $("remote").srcObject = stream;
     if (gate) gate.listenTo(stream);
     if (cleanVoice) {
@@ -1843,7 +1845,13 @@
 
   let preview = null;
   function stopPreview() {
-    if (preview) preview.pause();
+    if (preview) {
+      // Unloaded, not only paused: a paused sample came back on a speaker change (WebKit, setSinkId).
+      preview.onended = preview.onerror = null;
+      preview.pause();
+      preview.removeAttribute("src");
+      preview.load();
+    }
     preview = null;
     $("voicePreview").textContent = "▶ Прослухати";
   }
@@ -1997,9 +2005,12 @@
     { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     micId ? { deviceId: { exact: micId } } : {},
   );
-  // Chrome, Edge, Firefox 116+, Safari 18.4+ (iOS too). Whether there is anything to pick shows only in
-  // the list: Android Chrome and older iPhones list no outputs.
-  const canPickSpeaker = "setSinkId" in HTMLMediaElement.prototype;
+  // Chrome, Edge, Firefox 116+, Safari 18.4+ on a computer. Not on a phone: there the system routes a
+  // call's sound with its mic (headphones in → headphones), and a pick did nothing (feedback, in headphones:
+  // «вивід не міняється на динамік телефону»); WebKit also takes setSinkId only in a tap and replayed
+  // the voice sample on every pick. Whether there is anything to pick shows only in the list.
+  const canPickSpeaker = !IOS && !ANDROID && "setSinkId" in HTMLMediaElement.prototype;
+  if (!canPickSpeaker && speakerId) { speakerId = ""; store.set("va-speaker", ""); } // picked before this
   // False once the names are known and the browser lists no output to pick: the system chooses, and
   // the page says where the sound goes instead of a dropdown that opens on one «За замовчуванням».
   let speakerPickable = canPickSpeaker;
@@ -2060,9 +2071,11 @@
     $("devicesInfo").textContent = [
       named ? "" : "Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.",
       speakerPickable ? "" : IOS
-        ? "Звук на iPhone спрямовує система: динамік або підключені навушники. Змінити — у Пункті керування: значок AirPlay на картці «Відтворюється»."
-        : /Android/.test(navigator.userAgent)
-          ? "Браузер на Android не дає сторінкам вибрати вихід звуку: він іде туди, куди спрямовує телефон (динамік або навушники)."
+        ? "На iPhone звук розмови спрямовує система, сторінка його не перемикає: з навушниками він іде в навушники. " +
+          "Щоб на динамік телефону — вийміть навушники або вимкніть Bluetooth (чи оберіть iPhone у Пункті керування, значок AirPlay)."
+        : ANDROID
+          ? "На Android звук розмови спрямовує система, сторінка його не перемикає: з навушниками він іде в навушники. " +
+            "Щоб на динамік телефону — вийміть навушники або вимкніть Bluetooth."
           : "Динамік у цьому браузері не вибирається (потрібен Chrome, Edge або Safari 18.4+) — звук іде в системний.",
       named && !cameras ? "Камери не знайдено." : "",
     ].filter(Boolean).join(" ") || "Зміна діє одразу, навіть посеред розмови.";
@@ -2073,7 +2086,7 @@
   // Where the sound goes when the page can't pick it. On an iPhone a headset's mic (AirPods) means its
   // speakers too: iOS routes both ends of a call to it.
   function systemOutput(input) {
-    if (!IOS) return /Android/.test(navigator.userAgent) ? "Динамік телефону або навушники" : "Системний вихід";
+    if (!IOS) return ANDROID ? "Динамік телефону або навушники" : "Системний вихід";
     if (input && !/iPhone|iPad|вбудован|built-in|^За замовчуванням$/i.test(input)) return input + " (через iPhone)";
     return "Динамік iPhone або навушники";
   }
@@ -2224,7 +2237,7 @@
     // «Чистіший звук» plays from an AudioContext: where it can't pick an output (Safari), she stays
     // in the old one — say so rather than leave the pick looking broken.
     if (fx && !fx.setSink(id) && fx.on) addLine("system", "З «Чистішим звуком» цей браузер грає лише в системний вихід — вимкніть його, щоб звук пішов на обраний динамік.");
-    if (preview && preview.setSinkId) preview.setSinkId(id).catch(() => {});
+    stopPreview(); // the next «Прослухати» plays to the new one
   }
 
   // Camera: Єва can't see it herself (GPT-Live takes no images). The backend tool look_at_camera hands
@@ -2401,7 +2414,12 @@
       $("camera").disabled = true;
     }
     // The picked speaker from the last visit (gone → the system default).
-    if (canPickSpeaker && speakerId) $("remote").setSinkId(speakerId).catch(() => { setDevice("speaker", ""); listDevices(); });
+    if (canPickSpeaker && speakerId) {
+      $("remote").setSinkId(speakerId).catch((err) => {
+        if (err && err.name === "NotAllowedError") return; // Safari: only in a tap — the choice stays
+        setDevice("speaker", ""); listDevices(); // gone
+      });
+    }
     updateButtons();
     $("saveCode").addEventListener("click", () => {
       accessCode = $("code").value.trim();

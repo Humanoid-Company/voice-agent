@@ -68,17 +68,24 @@ def answer_problem(full_name: str, answer: str, said: list[str]) -> str:
     return ""
 
 
+# Who is in, kept between checks for this long: every guest asks for it (find_guest, the lookup marks), and
+# each trip to Neon was time the guest stood in silence. This server writes every check-in itself.
+CACHE_S = 30.0
+
+
 class CheckinStore(SqlStore):
     SCHEMA = _SCHEMA
     UNAVAILABLE = "Відмітки гостей недоступні"
     FAILED = "Помилка відміток гостей"
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cache: list[dict[str, Any]] | None = None
+        self._cache_at = 0.0
+
     def find(self, full_name: str) -> dict[str, Any] | None:
-        with self._conn() as conn:
-            row = conn.execute(
-                self._q("SELECT full_name, checked_at FROM guest_checkins WHERE name_key = %s"), (name_key(full_name),)
-            ).fetchone()
-        return {"full_name": row[0], "checked_at": float(row[1]), "time": local_time(float(row[1]))} if row else None
+        key = name_key(full_name)
+        return next((c for c in self.all() if name_key(c["full_name"]) == key), None)
 
     def add(self, full_name: str, client: str = "") -> None:
         with self._conn() as conn:
@@ -87,15 +94,22 @@ class CheckinStore(SqlStore):
                         "ON CONFLICT (name_key) DO NOTHING"),
                 (name_key(full_name), full_name, time.time(), client),
             )
+        self._cache = None
 
     def all(self) -> list[dict[str, Any]]:
+        if self._cache is not None and time.monotonic() - self._cache_at < CACHE_S:
+            return list(self._cache)
         with self._conn() as conn:
             rows = conn.execute("SELECT full_name, checked_at FROM guest_checkins ORDER BY checked_at").fetchall()
-        return [{"full_name": r[0], "checked_at": float(r[1]), "time": local_time(float(r[1]))} for r in rows]
+        self._cache = [{"full_name": r[0], "checked_at": float(r[1]), "time": local_time(float(r[1]))} for r in rows]
+        self._cache_at = time.monotonic()
+        return list(self._cache)
 
     def reset(self) -> int:
         with self._conn() as conn:
-            return int(conn.execute("DELETE FROM guest_checkins").rowcount or 0)
+            removed = int(conn.execute("DELETE FROM guest_checkins").rowcount or 0)
+        self._cache = None
+        return removed
 
 
 # Tests swap it for a temporary one (monkeypatch server.checkins.store).

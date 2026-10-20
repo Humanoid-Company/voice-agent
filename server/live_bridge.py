@@ -47,6 +47,11 @@ _MUMBLE_THINK_FIRST_S = 3.0
 _MUMBLE_SEARCH_FIRST_S = 1.5
 _MUMBLE_EVERY_S = 2.5
 _MUMBLE_MAX = 12
+# «Консьєрж» while a check runs: one neutral line, nothing about who or what.
+_NEUTRAL_WAIT_NOTE = (
+    "Note, not a message from the user: the check is still running. Say only «Ще секундочку…» or «Хвилинку, "
+    "перевіряю…» — no name, nothing about the person or the list, not a question. Nothing else."
+)
 _MUMBLE_QUIET_S = 1.0
 # The user's own request may still be transcribed this long after the work started.
 _MUMBLE_INPUT_GRACE_S = 1.5
@@ -117,12 +122,13 @@ class SidebandToolBridge:
         conversation: ConversationLog | None = None,
         on_voice_request: Callable[[str], bool] | None = None,
         call_log: CallLog | None = None,
-        think_aloud: bool = True,
+        think_aloud: str = "full",
     ) -> None:
         self._client = client
         self.expired = False  # closed by the cost cap (max_duration_s), not by the page
-        # Short lines while the backend works. Off for «Консьєрж»: «Так, Тарас у нас є, зараз звірю…» told a
-        # stranger the name is on the list before any check, and a host just says «Секунду».
+        # Short lines while the backend works: "full" (thinking aloud about the request), "neutral" — one bare
+        # «Ще секундочку…» («Консьєрж»: «Так, Тарас у нас є, зараз звірю…» told a stranger the name was on the
+        # list before any check, yet with nothing at all a slow check sounded like she had hung), or "off".
         self._think_aloud = think_aloud
         # /logs: what was said and done in this call (server/call_log.py).
         self.call_log = call_log
@@ -383,7 +389,7 @@ class SidebandToolBridge:
             return
         self._work[key] = []
         self._work_started_at[key] = time.time()
-        if self._think_aloud:
+        if self._think_aloud != "off":
             self._mumbles[key] = asyncio.create_task(self._mumble(key))
 
     async def _mumble(self, key: str) -> None:
@@ -406,7 +412,12 @@ class SidebandToolBridge:
                 if said == 0 and search is not None:
                     next_at = min(next_at, search[0] + _MUMBLE_SEARCH_FIRST_S)
                 if now >= next_at and self._quiet_for(now) >= _MUMBLE_QUIET_S:
-                    note = search_mumble_note(search[1], said) if search is not None else thinking_mumble_note(said)
+                    if self._think_aloud == "neutral":
+                        if said:
+                            return  # one line is enough
+                        note = _NEUTRAL_WAIT_NOTE
+                    else:
+                        note = search_mumble_note(search[1], said) if search is not None else thinking_mumble_note(said)
                     logger.info(
                         "web.work.mumble session_id=%s n=%s after_s=%.1f search=%s",
                         self.session_id, said + 1, now - started, search is not None,

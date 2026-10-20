@@ -122,14 +122,14 @@ def test_the_check_question_is_about_a_random_fact_stable_within_a_visit():
     assert picks == {"Посада", "Тварини"}
 
 
-def test_no_thinking_aloud_for_the_concierge():
+def test_thinking_aloud_can_be_off():
     """«Так, Тарас у нас є, зараз звірю…» told a stranger the name is on the list before any check."""
     from server.live_bridge import SidebandToolBridge
 
     async def run():
         user = web.users.get("conc-j-0123456789abcdef")
         voice = SidebandToolBridge(client=None, session_id="v", executor=user.executor)
-        host = SidebandToolBridge(client=None, session_id="c", executor=user.executor, think_aloud=False)
+        host = SidebandToolBridge(client=None, session_id="c", executor=user.executor, think_aloud="off")
         voice._work_started("k")
         host._work_started("k")
         assert "k" in voice._mumbles and "k" not in host._mumbles
@@ -171,3 +171,43 @@ def test_nobody_off_the_list_can_be_confirmed():
     res = confirm(web.users.get("conc-n-0123456789abcdef"), ["Петро Іваненко", "я бухгалтер"], "бухгалтер",
                   name="Петро Іваненко")
     assert res.status == "not_on_list" and checkins.store.all() == []
+
+
+def test_the_concierge_says_one_neutral_line_while_a_check_runs(monkeypatch):
+    """With no line at all a slow check sounded like she had hung («Секунду.» … silence … «Ну шо там?»)."""
+    from server import live_bridge
+    from server.live_bridge import SidebandToolBridge
+
+    monkeypatch.setattr(live_bridge, "_MUMBLE_THINK_FIRST_S", 0.1)
+    monkeypatch.setattr(live_bridge, "_MUMBLE_EVERY_S", 0.1)
+    said = []
+
+    async def run():
+        host = SidebandToolBridge(client=None, session_id="c", executor=web.users.get("conc-o-0123456789abcdef").executor,
+                                  think_aloud="neutral")
+        host._connection = object()  # «open»
+
+        async def say(text):
+            said.append(text)
+        host.say = say
+        host._quiet_for = lambda now: 99.0
+        host._work_started("k")
+        await asyncio.sleep(1.0)
+        host._work.pop("k", None)
+
+    asyncio.run(run())
+    assert len(said) == 1 and "Ще секундочку" in said[0] and "this exact request" not in said[0]
+
+
+def test_found_guest_is_not_announced_before_the_check():
+    """Prod: «О, бачу Марину Коваль» — before any check question."""
+    res = find(web.users.get("conc-p-0123456789abcdef"), "Олег", "Петренко")
+    assert "Не кажи, що людину знайдено" in res.message
+    assert "О, бачу Марину Коваль" in web._session_config(web.users.get("conc-p-0123456789abcdef"), concierge=True)["instructions"]
+
+
+def test_checkins_are_cached_and_a_new_one_shows_at_once():
+    assert checkins.store.all() == []
+    checkins.store.add("Олег Петренко")  # written by this server: seen at once
+    assert checkins.store.find("Петренко Олег")["full_name"] == "Олег Петренко"
+    assert checkins.store.reset() == 1 and checkins.store.find("Олег Петренко") is None

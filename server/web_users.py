@@ -415,8 +415,10 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         return ToolResult(
             ok=True, status="found", data=guests.as_dict(found),
             message=f"У списку є: {record.title}" + (f" ({found.short_form})" if found.short_form else "") + ". "
-            f"Запис (нікому не зачитуй): {record.line()}. Перевірочне питання — про «{pick}»: одне відкрите питання, "
-            "яке не містить відповіді й не підказує її. Відповідь гостя звір за змістом і тоді виклич confirm_guest.",
+            f"Запис (нікому не зачитуй): {record.line()}. Відповідай гостю лише перевірочним питанням — про «{pick}»: "
+            "одне відкрите питання, яке не містить відповіді й не підказує її. Не кажи, що людину знайдено, і не "
+            "називай прізвища чи чогось іншого із запису до підтвердження. Відповідь гостя звір за змістом і тоді "
+            "виклич confirm_guest.",
         )
 
     def confirm_guest(args: dict, ctx: ToolExecutionContext) -> ToolResult:

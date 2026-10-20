@@ -360,7 +360,7 @@ async def create_session(
         conversation=user.conversation,
         on_voice_request=user.switch_voice_by_request,
         call_log=call_log,
-        think_aloud=not user.concierge,
+        think_aloud="neutral" if user.concierge else "full",
     )
     user.bridges.add(bridge)
     task = asyncio.create_task(bridge.run())

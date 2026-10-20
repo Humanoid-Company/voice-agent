@@ -89,6 +89,9 @@ class WebUser:
     last_seen: float = field(default_factory=time.time)
     bridges: set[Any] = field(default_factory=set)  # open calls (SidebandToolBridge)
     # The latest camera frame (JPEG), in memory only; camera_on is false once the page turns it off.
+    # When the server last closed one of its calls at the session cap (MAX_SESSION_MINUTES): the page
+    # opens a new one with the whole conversation if the user was still talking.
+    session_expired_at: float = 0.0
     # «Консьєрж»: who the guest was confirmed as (confirm_guest); cleared by «Наступний гість».
     guest: dict | None = None
     camera_on: bool = False
@@ -119,7 +122,7 @@ class WebUser:
         return True
 
     def must_keep_session(self) -> bool:
-        """A pause closes the Live session after 30 s — but not while a tool still runs in it."""
+        """A pause closes the Live session after 15 s (web/config.js) — but not while a tool still runs in it."""
         return any(getattr(bridge, "busy", False) for bridge in self.bridges)
 
     async def append_instruction(self, text: str) -> None:

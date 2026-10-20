@@ -205,16 +205,42 @@
       }))));
   }
 
-  // ── wiring ──
-  function showTab(diag) {
-    $("tabCalls").setAttribute("aria-selected", String(!diag));
-    $("tabDiag").setAttribute("aria-selected", String(diag));
-    $("callsView").hidden = diag;
-    $("diagView").hidden = !diag;
-    if (diag) loadDiag(); else loadCalls();
+  // ── what the calls cost (server/usage.py): kept in the database, so a deploy doesn't clear it ──
+  const usd = (v) => "$" + Number(v).toFixed(2);
+  const KIND = { voice: "голос", chat: "чат", concierge: "консьєрж" };
+  const kinds = (k) => Object.entries(k || {}).map(([name, n]) => (KIND[name] || name) + " " + n).join(", ");
+  async function loadUsage() {
+    if (!token) { $("usage").textContent = "Введіть токен (LOGS_TOKEN на Render)."; return; }
+    let data;
+    try { data = await api("/api/usage?days=30"); } catch (err) { $("usage").textContent = "Помилка: " + err.message; return; }
+    if (!data.days.length) { $("usage").textContent = "Дзвінків за 30 днів ще не записано (облік іде з цього оновлення)."; return; }
+    const p = data.prices;
+    const table = (head, rows) => el("table", {},
+      el("thead", {}, el("tr", {}, ...head.map((h) => el("th", {}, h)))),
+      el("tbody", {}, ...rows.map((r) => el("tr", {}, ...r.map((v) => el("td", {}, String(v)))))));
+    $("usage").replaceChildren(
+      el("p", {}, el("strong", {}, "За 30 днів: " + usd(data.total.usd)), " · " + data.total.calls + " дзвінків · " + data.total.minutes + " хв"),
+      el("p", { class: "small muted" }, "Оцінка, не рахунок: GPT-Live " + usd(p.live_per_minute) + "/хв відкритої сесії, бекенд $" +
+        p.backend_in_per_m + " / $" + p.backend_out_per_m + " за 1 млн токенів (вхід / вихід). Лише цей застосунок; точне — на сторінці Usage в OpenAI."),
+      el("h3", {}, "По днях"),
+      table(["день", "дзвінків", "хвилин", "GPT-Live", "токени (вхід / вихід)", "бекенд", "разом", "які"],
+        data.days.map((d) => [d.day, d.calls, d.minutes, usd(d.live_usd), d.tokens_in + " / " + d.tokens_out, "$" + d.backend_usd.toFixed(3), usd(d.usd), kinds(d.kinds)])),
+      el("h3", {}, "По браузерах"),
+      table(["клієнт", "дзвінків", "хвилин", "разом", "які"],
+        data.clients.map((c) => [c.client === myClient ? c.client + " (цей)" : c.client, c.calls, c.minutes, usd(c.usd), kinds(c.kinds)])));
   }
-  $("tabCalls").addEventListener("click", () => showTab(false));
-  $("tabDiag").addEventListener("click", () => showTab(true));
+
+  // ── wiring ──
+  function showTab(tab) {
+    for (const [name, button, view] of [["calls", "tabCalls", "callsView"], ["diag", "tabDiag", "diagView"], ["usage", "tabUsage", "usageView"]]) {
+      $(button).setAttribute("aria-selected", String(tab === name));
+      $(view).hidden = tab !== name;
+    }
+    if (tab === "diag") loadDiag(); else if (tab === "usage") loadUsage(); else loadCalls();
+  }
+  $("tabCalls").addEventListener("click", () => showTab("calls"));
+  $("tabDiag").addEventListener("click", () => showTab("diag"));
+  $("tabUsage").addEventListener("click", () => showTab("usage"));
   $("tokenForm").addEventListener("submit", (e) => {
     e.preventDefault();
     token = $("token").value.trim();
@@ -223,6 +249,7 @@
   });
   $("refresh").addEventListener("click", () => {
     if (!$("diagView").hidden) { loadDiag(); return; }
+    if (!$("usageView").hidden) { loadUsage(); return; }
     loadCalls();
     if (current) openCall(current.session_id, true);
   });

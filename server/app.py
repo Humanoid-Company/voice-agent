@@ -40,7 +40,7 @@ from config import (
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import build_live_prompt
-from server import conversations, knowledge
+from server import conversations, knowledge, usage
 from server.call_log import CallLogStore
 from server.db import StoreError
 from server.knowledge_import import KnowledgeImportError, make_openai_extract, parse_file
@@ -67,8 +67,11 @@ FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS",
 ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
 # The hidden /logs page reads whole conversations: only with this token (unset = logs can't be read).
 LOGS_TOKEN = os.getenv("LOGS_TOKEN", "").strip()
-# Hard cap on one call's length (cost guard); the page also ends a call after 5 min of silence.
-MAX_SESSION_S = float(os.getenv("MAX_SESSION_MINUTES", "30")) * 60
+# Cap on one Live session (cost guard: a tab left open in a noisy room kept a call going). 10 min, not 30: a
+# real talk goes on — the page opens a new session with the whole conversation (/api/me «expired»).
+MAX_SESSION_S = float(os.getenv("MAX_SESSION_MINUTES", "10")) * 60
+# The page asks within this long after the cap closed a call whether to carry on.
+EXPIRED_FRESH_S = 60.0
 
 _WEB_NOTE = "\nWeb demo: you run in a browser tab for the team to try."
 # GPT-Live takes no images: the backend looks through the camera (look_at_camera) and tells her. This
@@ -330,7 +333,7 @@ async def create_session(
         client=openai_client,
         session_id=session_id,
         executor=user.executor,
-        on_closed=user.bridges.discard,
+        on_closed=lambda b: _call_closed(user, b),
         max_duration_s=MAX_SESSION_S,
         conversation=user.conversation,
         on_voice_request=user.switch_voice_by_request,
@@ -350,6 +353,25 @@ async def create_session(
     return {"sdp": result.transport.sdp, "session_id": session_id}
 
 
+def _call_closed(user: WebUser, bridge: SidebandToolBridge) -> None:
+    """A call ended: off the user's open calls; a cap close noted for the page; its minutes and tokens saved."""
+    user.bridges.discard(bridge)
+    if bridge.expired:
+        user.session_expired_at = time.time()
+    if bridge.call_log is not None:
+        row = usage.call_row(bridge.call_log)
+        task = asyncio.get_running_loop().run_in_executor(None, _record_usage, row)
+        _background_tasks.add(task)  # type: ignore[arg-type]
+        task.add_done_callback(_background_tasks.discard)  # type: ignore[arg-type]
+
+
+def _record_usage(row: dict) -> None:
+    try:
+        usage.store.record(row)
+    except StoreError:
+        logger.warning("usage.record_failed session=%s", row["session_id"][-8:])
+
+
 @app.get("/api/me")
 def me(
     x_client_id: str | None = Header(default=None),
@@ -366,6 +388,8 @@ def me(
         "keep_session": user.must_keep_session(),  # paused: don't close the call yet
         "history_turns": len(user.conversation),
         "guest": user.guest,  # «Консьєрж»: who the guest was confirmed as
+        # The server's cap closed the call a moment ago and no other is open: carry on in a new session.
+        "expired": not user.bridges and time.time() - user.session_expired_at < EXPIRED_FRESH_S,
     }
 
 
@@ -500,6 +524,16 @@ def logs_list(x_logs_token: str | None = Header(default=None), n: int = 100) -> 
     """The latest calls, newest first (web/logs.html). In memory: a deploy clears them."""
     _logs_auth(x_logs_token)
     return calls.latest(max(1, min(n, 200)))
+
+
+@app.get("/api/usage")
+def usage_summary(x_logs_token: str | None = Header(default=None), days: int = 14) -> dict:
+    """/logs → «Витрати»: minutes, tokens and the estimated $ per day and per browser (server/usage.py)."""
+    _logs_auth(x_logs_token)
+    try:
+        return usage.store.summary(max(1, min(days, 90)))
+    except StoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/logs/{session_id}")

@@ -123,6 +123,7 @@ class SidebandToolBridge:
         # Short lines while the backend works. Off on /chat: there the user sees «Думає…», and asked to
         # think aloud «about this exact request» she read their typed question back.
         self._think_aloud = think_aloud
+        self.expired = False  # closed by the cost cap (max_duration_s), not by the page
         # /logs: what was said and done in this call (server/call_log.py).
         self.call_log = call_log
         self.session_id = session_id
@@ -262,6 +263,7 @@ class SidebandToolBridge:
         """Cost cap: a call nobody ended (tab left open, browser crashed) is closed server-side."""
         await asyncio.sleep(seconds)
         logger.info("web.session.expired session_id=%s after_s=%s", self.session_id, int(seconds))
+        self.expired = True  # the page carries on in a new session if the user is still talking (/api/me)
         await self.close()
 
     async def close(self) -> None:

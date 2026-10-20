@@ -448,6 +448,7 @@
   // mode: off → connecting → waiting («Єва, скажи»; the model is muted) ⇄ active (listening /
   // thinking / speaking); switching = reconnecting with a new voice.
   const eva = {
+    lastActiveAt: 0, // the user's near voice or her answer last (touchActivity)
     mode: "off",
     pending: null,
     recentUser: "",   // rolling user transcript, for «Дякую, Єва»
@@ -826,6 +827,7 @@
       return;
     }
     barge.speaking = signal.speaking;
+    if (signal.speaking && eva.mode === "active") touchActivity(); // the user talks: not idle
     if (signal.speaking) {
       clearTimeout(barge.releaseTimer);
       if (barge.stage !== "idle" || !barge.audible || herBackchannel()) return;
@@ -916,7 +918,9 @@
         clearTimeout(eva.thinkTimer);
         eva.thinkTimer = setTimeout(() => { eva.thinking = false; showState(); }, 15000);
         bargeOnWords(event.delta);
-        touchActivity();
+        // Only words of the person at the mic keep the call on: colleagues or a TV in the room, also
+        // transcribed, kept a forgotten tab's call open up to the server's cap (billed per minute).
+        if (nearVoiceLately()) touchActivity();
         showState();
         break;
       case "session.output_transcript.delta":
@@ -970,7 +974,7 @@
   const IDLE_LIMIT_MS = (CFG.IDLE_PAUSE_SECONDS ?? 90) * 1000;
   // …and a pause this long closes the Live session; «Єва, скажи» reopens it with the history.
   // (config.js: PAUSE_CLOSE_SECONDS)
-  const PAUSE_CLOSE_MS = (CFG.PAUSE_CLOSE_SECONDS ?? 30) * 1000;
+  const PAUSE_CLOSE_MS = (CFG.PAUSE_CLOSE_SECONDS ?? 15) * 1000;
   // A pause never keeps a call open longer than this, even while the server asks to.
   const PAUSE_HOLD_MAX_MS = 5 * 60 * 1000;
 
@@ -1020,7 +1024,13 @@
       : "Дзвінок: " + used + " · на паузі не рахується";
   }
 
+  // The person at the mic spoke just now (the gate's near voice; transcripts come 1–2 s after it). Without
+  // the gate (an old browser) any words count, as before.
+  const NEAR_VOICE_RECENT_MS = 3000;
+  const nearVoiceLately = () => !gate || barge.speaking || Date.now() - barge.speechEndedAt < NEAR_VOICE_RECENT_MS;
+
   function touchActivity() {
+    eva.lastActiveAt = Date.now();
     clearTimeout(idleTimer);
     if (!pc || eva.mode !== "active") return;
     idleTimer = setTimeout(() => {
@@ -1552,6 +1562,14 @@
     showState();
     const me = await fetchMe();
     if (eva.mode !== "connecting") return; // the user did something meanwhile
+    // The server's cap (10 min a session) closed it: a talk still going on carries on in a new session with
+    // the whole conversation, silently; a call nobody talks in ends here.
+    if (me && me.expired && !wasPaused && Date.now() - eva.lastActiveAt < IDLE_LIMIT_MS) {
+      addLine("system", "Нова сесія (обмеження — 10 хв на сесію). Єва все пам'ятає, говоріть далі.");
+      eva.mode = "switching";
+      await start({ switched: true });
+      return;
+    }
     if (me && me.reconnect && voices.some((x) => x.id === me.voice)) {
       voice = me.voice;
       store.set("va-voice", voice);

@@ -1997,7 +1997,12 @@
     { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     micId ? { deviceId: { exact: micId } } : {},
   );
-  const canPickSpeaker = "setSinkId" in HTMLMediaElement.prototype; // Chrome, Edge; not Safari/Firefox
+  // Chrome, Edge; not Firefox. iOS routes the sound itself (speaker, headphones, AirPods) and lists no
+  // outputs, even where WebKit has setSinkId.
+  const canPickSpeaker = !IOS && "setSinkId" in HTMLMediaElement.prototype;
+  // False once the names are known and the browser lists no output to pick (Android Chrome): the
+  // system chooses, and the picker says so instead of a bare «За замовчуванням».
+  let speakerPickable = canPickSpeaker;
   const deviceKeys = { mic: "va-mic", speaker: "va-speaker", camera: "va-camera" };
 
   function setDevice(kind, id) {
@@ -2029,28 +2034,45 @@
     try { devices = await md.enumerateDevices(); } catch { return; }
     const fill = (select, kind, current, noun) => {
       // Chrome's «default» / «communications» entries are the system default again: "" covers them —
-      // and its label names the device behind it («За замовчуванням — MacBook Pro Microphone»).
+      // and its label names the device behind it («MacBook Pro Microphone (за замовчуванням)»).
       const list = devices.filter((d) => d.kind === kind && d.deviceId && d.deviceId !== "default" && d.deviceId !== "communications");
       const def = devices.find((d) => d.kind === kind && d.deviceId === "default" && d.label);
       const defName = def ? def.label.replace(/^(Default|За замовчуванням|По умолчанию)\s*[-–—:]\s*/i, "") : "";
-      $(select).replaceChildren(new Option("За замовчуванням" + (defName ? " — " + defName : ""), ""),
+      // The name first: a phone-width picker cuts the end off.
+      $(select).replaceChildren(new Option(defName ? defName + " (за замовчуванням)" : "За замовчуванням", ""),
         ...list.map((d, i) => new Option(d.label || noun + " " + (i + 1), d.deviceId)));
       $(select).value = list.some((d) => d.deviceId === current) ? current : "";
       return list.length;
     };
     fill("micSelect", "audioinput", micId, "Мікрофон");
-    fill("speakerSelect", "audiooutput", speakerId, "Динамік");
+    const outputs = fill("speakerSelect", "audiooutput", speakerId, "Динамік");
     const cameras = fill("cameraSelect", "videoinput", cameraId, "Камера");
-    $("speakerSelect").disabled = !canPickSpeaker;
     const named = devices.some((d) => d.label);
+    speakerPickable = canPickSpeaker && (outputs > 0 || !named);
+    if (!speakerPickable) $("speakerSelect").replaceChildren(new Option(systemOutput(), ""));
+    $("speakerSelect").disabled = !speakerPickable;
     // Names come only once the browser has given the mic: one tap asks for it without starting a call.
     $("devicesAllow").hidden = named || !md.getUserMedia;
     showDevicesNow();
     $("devicesInfo").textContent = [
       named ? "" : "Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.",
-      canPickSpeaker ? "" : "Динамік у цьому браузері не вибирається (потрібен Chrome або Edge) — звук іде в системний.",
+      speakerPickable ? "" : IOS
+        ? "Звук на iPhone спрямовує система: динамік або підключені навушники. Змінити — у Пункті керування: значок AirPlay на картці «Відтворюється»."
+        : canPickSpeaker
+          ? "Браузер не показує виходи звуку — звук іде туди, куди спрямовує телефон (динамік або навушники)."
+          : "Динамік у цьому браузері не вибирається (потрібен Chrome або Edge) — звук іде в системний.",
       named && !cameras ? "Камери не знайдено." : "",
     ].filter(Boolean).join(" ") || "Зміна діє одразу, навіть посеред розмови.";
+  }
+
+  // A device's name without the picker's « (за замовчуванням)».
+  const deviceName = (text) => text.replace(/ \(за замовчуванням\)$/, "");
+  // Where the sound goes when the page can't pick it. On an iPhone a headset's mic (AirPods) means its
+  // speakers too: iOS routes both ends of a call to it.
+  function systemOutput(input) {
+    if (!IOS) return /Android/.test(navigator.userAgent) ? "Динамік телефону або навушники" : "Системний вихід";
+    if (input && !/iPhone|iPad|вбудован|built-in|^За замовчуванням$/i.test(input)) return input + " (через iPhone)";
+    return "Динамік iPhone або навушники";
   }
 
   // What the call hears from and plays to, in words — the pickers alone said «За замовчуванням».
@@ -2058,27 +2080,29 @@
   function devicesNow() {
     const picked = (id) => ($(id).selectedOptions[0] || {}).textContent || "За замовчуванням";
     const track = mic && mic.getAudioTracks().find((t) => t.readyState === "live");
-    const input = track && track.label ? track.label : picked("micSelect");
-    const output = canPickSpeaker
-      ? picked("speakerSelect")
-      : IOS ? "динамік або навушники iPhone (обирає система)" : "системний вивід (обирає система)";
+    const input = deviceName(track && track.label ? track.label : picked("micSelect"));
+    const output = speakerPickable ? deviceName(picked("speakerSelect")) : systemOutput(input);
     return { input, output, live: Boolean(track) };
   }
   function showDevicesNow() {
     const now = devicesNow();
     $("devicesNow").textContent = (now.live ? "Зараз: " : "Буде: ") + "мікрофон — " + now.input + "; звук — " + now.output + ".";
+    // The same in the call card: on a phone «Пристрої» is a long scroll away.
+    $("callDevicesText").textContent = "Мікрофон: " + now.input + " · Звук: " + now.output;
+    if (!speakerPickable && $("speakerSelect").options.length === 1) $("speakerSelect").options[0].textContent = now.output;
   }
 
   async function allowDevices() {
+    let stream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop()); // only for the names: the call opens its own
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
       $("devicesInfo").textContent = err && err.name === "NotAllowedError"
         ? "Браузер не дав доступ до мікрофона — дозвольте його в налаштуваннях сайту." : "Не вдалося відкрити мікрофон.";
       return;
     }
-    listDevices();
+    // Listed while the mic is open: Safari may hide the names again once nothing captures.
+    try { await listDevices(); } finally { stream.getTracks().forEach((t) => t.stop()); } // the call opens its own
   }
 
   // Another mic mid-call: a new stream and gate, the call's track replaced in place — no reconnect.

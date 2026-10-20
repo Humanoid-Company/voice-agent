@@ -141,7 +141,8 @@ footer { margin-top: 20px; text-align: center; }
 
 
 /* Devices: microphone, speaker, camera */
-.devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+/* One column on a phone: two side by side cut the names to «За замовчуванн…». */
+.devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .devices select { width: 100%; }
 .camera-view {
   display: block; width: 100%; max-height: 240px; margin-top: 12px;
@@ -163,3 +164,9 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; justif
 /* «Зараз: мікрофон — …; звук — …» (web/app.js showDevicesNow) */
 .devices-now { margin: 8px 0 0; font-size: 0.9rem; }
 .devices-now:empty { display: none; }
+
+/* In the call card: what she hears from and plays to, without scrolling down to «Пристрої». */
+.call-devices { margin: 8px 0 0; font-size: 0.85rem; color: var(--muted); overflow-wrap: anywhere; }
+.call-devices:has(#callDevicesText:empty) { display: none; }
+.call-devices-link { color: var(--accent); white-space: nowrap; margin-left: 4px; }
+#devices { scroll-margin-top: 12px; }

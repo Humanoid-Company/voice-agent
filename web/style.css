@@ -144,6 +144,9 @@ footer { margin-top: 20px; text-align: center; }
 /* One column on a phone: two side by side cut the names to «За замовчуванн…». */
 .devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .devices select { width: 100%; }
+.devices select[hidden] { display: none; }
+/* The output where the page can't pick it (iPhone, Android): a plain line, not a dropdown. */
+.device-fixed { margin: 0; padding: 10px 0; overflow-wrap: anywhere; }
 .camera-view {
   display: block; width: 100%; max-height: 240px; margin-top: 12px;
   border-radius: 10px; background: #000; object-fit: contain;

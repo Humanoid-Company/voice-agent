@@ -612,7 +612,7 @@
     const ctx = new AudioCtx();
     // She is heard from this context, not from the <audio> element: it plays to the picked speaker too
     // (Chrome/Edge 110+; elsewhere the system default).
-    const setSink = (id) => { if (ctx.setSinkId) ctx.setSinkId(id).catch(() => {}); };
+    const setSink = (id) => { if (!ctx.setSinkId) return false; ctx.setSinkId(id).catch(() => {}); return true; };
     if (speakerId) setSink(speakerId);
     try {
       if (!ctx.audioWorklet) throw new Error("no AudioWorklet");
@@ -1997,12 +1997,13 @@
     { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     micId ? { deviceId: { exact: micId } } : {},
   );
-  // Chrome, Edge; not Firefox. iOS routes the sound itself (speaker, headphones, AirPods) and lists no
-  // outputs, even where WebKit has setSinkId.
-  const canPickSpeaker = !IOS && "setSinkId" in HTMLMediaElement.prototype;
-  // False once the names are known and the browser lists no output to pick (Android Chrome): the
-  // system chooses, and the picker says so instead of a bare «За замовчуванням».
+  // Chrome, Edge, Firefox 116+, Safari 18.4+ (iOS too). Whether there is anything to pick shows only in
+  // the list: Android Chrome and older iPhones list no outputs.
+  const canPickSpeaker = "setSinkId" in HTMLMediaElement.prototype;
+  // False once the names are known and the browser lists no output to pick: the system chooses, and
+  // the page says where the sound goes instead of a dropdown that opens on one «За замовчуванням».
   let speakerPickable = canPickSpeaker;
+  let devicesNamed = false; // the browser gave the names (the mic was allowed)
   const deviceKeys = { mic: "va-mic", speaker: "va-speaker", camera: "va-camera" };
 
   function setDevice(kind, id) {
@@ -2048,9 +2049,11 @@
     const outputs = fill("speakerSelect", "audiooutput", speakerId, "Динамік");
     const cameras = fill("cameraSelect", "videoinput", cameraId, "Камера");
     const named = devices.some((d) => d.label);
+    devicesNamed = named;
     speakerPickable = canPickSpeaker && (outputs > 0 || !named);
-    if (!speakerPickable) $("speakerSelect").replaceChildren(new Option(systemOutput(), ""));
-    $("speakerSelect").disabled = !speakerPickable;
+    // Nothing to pick: words, not a dead dropdown (feedback: «кнопка вибору динаміка не працює»).
+    $("speakerSelect").hidden = !speakerPickable;
+    $("speakerFixed").hidden = speakerPickable;
     // Names come only once the browser has given the mic: one tap asks for it without starting a call.
     $("devicesAllow").hidden = named || !md.getUserMedia;
     showDevicesNow();
@@ -2058,9 +2061,9 @@
       named ? "" : "Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.",
       speakerPickable ? "" : IOS
         ? "Звук на iPhone спрямовує система: динамік або підключені навушники. Змінити — у Пункті керування: значок AirPlay на картці «Відтворюється»."
-        : canPickSpeaker
-          ? "Браузер не показує виходи звуку — звук іде туди, куди спрямовує телефон (динамік або навушники)."
-          : "Динамік у цьому браузері не вибирається (потрібен Chrome або Edge) — звук іде в системний.",
+        : /Android/.test(navigator.userAgent)
+          ? "Браузер на Android не дає сторінкам вибрати вихід звуку: він іде туди, куди спрямовує телефон (динамік або навушники)."
+          : "Динамік у цьому браузері не вибирається (потрібен Chrome, Edge або Safari 18.4+) — звук іде в системний.",
       named && !cameras ? "Камери не знайдено." : "",
     ].filter(Boolean).join(" ") || "Зміна діє одразу, навіть посеред розмови.";
   }
@@ -2089,10 +2092,29 @@
     $("devicesNow").textContent = (now.live ? "Зараз: " : "Буде: ") + "мікрофон — " + now.input + "; звук — " + now.output + ".";
     // The same in the call card: on a phone «Пристрої» is a long scroll away.
     $("callDevicesText").textContent = "Мікрофон: " + now.input + " · Звук: " + now.output;
-    if (!speakerPickable && $("speakerSelect").options.length === 1) $("speakerSelect").options[0].textContent = now.output;
+    $("speakerFixed").textContent = now.output;
   }
 
-  async function allowDevices() {
+  // A picker touched before the names are known offers only «За замовчуванням»: the touch asks for the
+  // mic instead (the names come with it), then the list opens where the browser can open it.
+  function namesFirst(e) {
+    if (devicesNamed || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    e.preventDefault();
+    const select = e.currentTarget;
+    allowDevices().then(() => {
+      if (!devicesNamed || select.hidden) return;
+      if (document.activeElement === select && e.type === "focus") return; // already open (iPhone)
+      try { select.showPicker(); } catch { /* not here or not now: one more tap */ }
+    });
+  }
+
+  // One ask at a time: a tap on a picker brings both mousedown and focus.
+  let allowing = null;
+  function allowDevices() {
+    if (!allowing) allowing = askForNames().finally(() => { allowing = null; });
+    return allowing;
+  }
+  async function askForNames() {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -2191,15 +2213,17 @@
     const id = $("speakerSelect").value;
     try {
       await $("remote").setSinkId(id);
-    } catch {
-      addLine("system", "Цей динамік недоступний — лишаю попередній.");
+    } catch (err) {
+      addLine("system", "Браузер не переключив звук на цей динамік (" + ((err && err.name) || err) + ") — лишаю попередній.");
       $("speakerSelect").value = speakerId;
       return;
     }
     setDevice("speaker", id);
     showDevicesNow();
     if (eva.mode !== "off") addLine("system", "Звук: " + devicesNow().output + ".");
-    if (fx) fx.setSink(id);
+    // «Чистіший звук» plays from an AudioContext: where it can't pick an output (Safari), she stays
+    // in the old one — say so rather than leave the pick looking broken.
+    if (fx && !fx.setSink(id) && fx.on) addLine("system", "З «Чистішим звуком» цей браузер грає лише в системний вихід — вимкніть його, щоб звук пішов на обраний динамік.");
     if (preview && preview.setSinkId) preview.setSinkId(id).catch(() => {});
   }
 
@@ -2364,6 +2388,10 @@
     $("speakerSelect").addEventListener("change", changeSpeaker);
     $("cameraSelect").addEventListener("change", changeCamera);
     $("devicesAllow").addEventListener("click", allowDevices);
+    for (const id of ["micSelect", "speakerSelect", "cameraSelect"]) {
+      $(id).addEventListener("mousedown", namesFirst); // the empty list doesn't open
+      $(id).addEventListener("focus", namesFirst); // iPhone: its own picker opens anyway; asked at once
+    }
     $("camera").addEventListener("change", toggleCamera);
     if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === "function") {
       // A headset plugged in or out: the pickers follow.

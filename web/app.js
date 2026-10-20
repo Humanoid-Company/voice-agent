@@ -504,18 +504,45 @@
     updateButtons();
   }
 
-  // full: {full_name, verified} from confirm_guest (or the server's {name, verified}); null — nobody yet.
+  // g: the server's {name, verified, duplicate?, time?} (/api/me); null — nobody yet.
+  let shownGuest = "";
   function showGuest(g, announce = false) {
-    const name = g && (g.full_name || g.name);
+    const name = g && g.name;
     $("guestName").textContent = name || "ще не назвався";
     $("guestBadge").hidden = !name;
-    $("guestBadge").textContent = g && g.verified ? "✓ підтверджено" : "не підтверджено";
+    $("guestBadge").textContent = !g ? "" : g.duplicate ? "вже відмічений о " + g.time : g.verified ? "✓ підтверджено" : "не підтверджено";
     $("guestBadge").className = "guest-badge " + (g && g.verified ? "ok" : "err");
-    if (announce && name) addLine("system", (g.verified ? "Гостя підтверджено: " : "Не вдалося підтвердити: ") + name + ".");
+    const key = name ? name + (g.verified ? "+" : g.duplicate ? "=" : "-") : "";
+    if (announce && name && key !== shownGuest) {
+      addLine("system", g.duplicate ? name + " уже проходив(-ла) о " + g.time + " — повторно не пускаємо."
+        : (g.verified ? "Гостя підтверджено й відмічено: " : "Не вдалося підтвердити: ") + name + ".");
+      if (g.verified || g.duplicate) checkGuestList();
+    }
+    shownGuest = key;
+  }
+
+  async function refreshGuest() {
+    const me = await fetchMe();
+    if (me && me.guest) showGuest(me.guest, true);
+  }
+
+  // A new event: everyone may come in again.
+  async function resetCheckins() {
+    if (!confirm("Скинути всі відмітки гостей? Кожен зможе пройти знову (нова подія).")) return;
+    try {
+      const res = await fetch(BACKEND + "/api/concierge/checkins", { method: "DELETE", headers: headers() });
+      if (!res.ok) throw new Error(res.status);
+      addLine("system", "Відмітки гостей скинуто.");
+    } catch { addLine("system", "Не вдалося скинути відмітки."); }
+    checkGuestList();
   }
 
   // The guest list is what «Знання» holds: without an enabled set there is nobody to check against.
   async function checkGuestList() {
+    fetch(BACKEND + "/api/concierge/checkins", { headers: headers() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) $("checkinCount").textContent = "Відмічено гостей: " + d.checkins.length; })
+      .catch(() => {});
     try {
       const res = await fetch(BACKEND + "/api/knowledge", { headers: headers() });
       if (!res.ok) return;
@@ -947,8 +974,9 @@
         if ((inner.type === "response.output_item.added" || inner.type === "response.output_item.done")
             && item.type === "function_call" && item.name === "look_at_camera") snapForLook(item.call_id || item.id);
         // «Консьєрж»: the backend says who the guest is once the check question is answered.
+        // What the server decided (confirmed, refused without an answer, already let in) is in /api/me.
         if (inner.type === "response.output_item.done" && item.type === "function_call" && item.name === "confirm_guest") {
-          try { showGuest(JSON.parse(item.arguments || "{}"), true); } catch { /* not json */ }
+          setTimeout(refreshGuest, 600);
         }
         break;
       }
@@ -2017,6 +2045,7 @@
     await fetch(BACKEND + "/api/conversation", { method: "DELETE", headers: headers() }).catch(() => {});
     clearLog();
     showGuest(null);
+    shownGuest = "";
     addLine("system", mode === "concierge"
       ? "Наступний гість — Єва привітається і спитає ім'я. Попередня розмова в «Історії»."
       : "Нова розмова — Єва почне з чистого аркуша. Попередня збережена в «Історії».");
@@ -2518,6 +2547,7 @@
     showVoiceNow();
     $("newChat").addEventListener("click", newConversation);
     $("nextGuest").addEventListener("click", newConversation);
+    $("checkinReset").addEventListener("click", resetCheckins);
     $("modeAssistant").addEventListener("click", () => setMode("assistant"));
     $("modeConcierge").addEventListener("click", () => setMode("concierge"));
     showMode();

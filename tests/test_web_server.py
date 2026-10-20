@@ -585,8 +585,9 @@ def test_concierge_mode_and_confirm_guest(client):
     names = lambda c: [t["name"] for t in c["delegation"]["responses"]["tools"]]  # noqa: E731
     assert "confirm_guest" in names(conc) and "confirm_guest" not in names(plain)
     assert "CONCIERGE" in conc["delegation"]["responses"]["instructions"]
-    ok = asyncio.run(user.executor.execute("confirm_guest", {"full_name": "Олег Петренко", "verified": True},
-                                           ToolExecutionContext(session_id="s")))
+    ok = asyncio.run(user.executor.execute(
+        "confirm_guest", {"full_name": "Олег Петренко", "verified": True, "guest_answer": "бекенд-розробник"},
+        ToolExecutionContext(session_id="s", user_utterances=["Олег", "Петренко", "Я бекенд-розробник"])))
     assert ok.ok and "Олег Петренко" in ok.message
     me = client.get("/api/me", headers={"X-Client-Id": "conc-browser-0123456789ab"}).json()
     assert me["guest"]["name"] == "Олег Петренко" and me["guest"]["verified"] is True

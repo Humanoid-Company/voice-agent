@@ -40,7 +40,7 @@ from config import (
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import build_live_prompt
-from server import conversations, knowledge, usage
+from server import checkins, conversations, knowledge, usage
 from server.call_log import CallLogStore
 from server.db import StoreError
 from server.knowledge_import import KnowledgeImportError, make_openai_extract, parse_file
@@ -286,6 +286,7 @@ async def create_session(
     if body.style in STYLE_OPTIONS:
         user.style = body.style
     user.prompt_variant = body.prompt if body.prompt in WEB_PROMPT_VARIANTS else "v5"
+    user.concierge = body.mode == "concierge"
     user.reconnect_pending = False
     if body.user_text and body.user_text.strip():
         user.conversation.add("user", body.user_text.strip()[:500])
@@ -617,6 +618,26 @@ def current_conversation(
     user = _user(x_client_id, x_access_code)
     return {"id": user.conversation_id, "started_at": user.conversation_started_at,
             "turns": conversations.visible(user.conversation.to_list())}
+
+
+# ── «Консьєрж»: who has been let in (server/checkins.py) — a second visit under the same name is caught ──
+@app.get("/api/concierge/checkins")
+def concierge_checkins(x_access_code: str | None = Header(default=None)) -> dict:
+    _team(x_access_code)
+    try:
+        return {"checkins": checkins.store.all()}
+    except StoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.delete("/api/concierge/checkins")
+def concierge_reset(x_access_code: str | None = Header(default=None)) -> dict:
+    """A new event: everyone may come in again."""
+    _team(x_access_code)
+    try:
+        return {"ok": True, "removed": checkins.store.reset()}
+    except StoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/conversations")

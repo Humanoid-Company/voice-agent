@@ -106,11 +106,13 @@ KNOWLEDGE_LOOKUP_TOOL: dict = _fn(
 # Web «Консьєрж» mode: the backend marks who the guest is once the check question confirmed it.
 CONFIRM_GUEST_TOOL: dict = _fn(
     "confirm_guest",
-    "Concierge: record the outcome of checking a guest against the team's list — after their answer to the "
-    "check question. verified=true only when the answer matches their record; false after a second miss.",
+    "Concierge: record the outcome of checking a guest against the team's list — only after they answered the "
+    "check question. verified=true only when that answer matches their record; false after a second miss. The "
+    "server refuses verified=true without their own answer (not their name), and says if they were already let in.",
     {
         "full_name": {"type": "string", "description": "The person's full name as in the records"},
         "verified": {"type": "boolean"},
+        "guest_answer": {"type": "string", "description": "The guest's own words in answer to the check question"},
     },
-    required=["full_name", "verified"],
+    required=["full_name", "verified", "guest_answer"],
 )

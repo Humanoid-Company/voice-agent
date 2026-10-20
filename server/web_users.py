@@ -19,7 +19,7 @@ from typing import Any
 
 from config import WEB_SEARCH_MAX_CALLS_PER_TURN
 from integrations.web_search import WebSearchRateLimiter
-from server import conversations, knowledge
+from server import checkins, conversations, knowledge
 from server.db import StoreError
 from tools.executor import ToolExecutionContext, ToolExecutor
 from tools.results import ToolResult
@@ -94,6 +94,7 @@ class WebUser:
     session_expired_at: float = 0.0
     # «Консьєрж»: who the guest was confirmed as (confirm_guest); cleared by «Наступний гість».
     guest: dict | None = None
+    concierge: bool = False  # the current call was opened in «Консьєрж» mode
     camera_on: bool = False
     camera_frame: bytes | None = None
     camera_frame_at: float = 0.0
@@ -194,6 +195,22 @@ class WebUser:
 
 
 _summarizer = None
+
+
+def _mark_checked_in(text: str) -> str:
+    """«Консьєрж»: a record of someone already let in says so, so the backend stops before the check question."""
+    try:
+        done = {checkins.name_key(c["full_name"]): c["time"] for c in checkins.store.all()}
+    except StoreError:
+        return text
+    if not done:
+        return text
+    lines = []
+    for line in text.split("\n"):
+        title = line.split("] ", 1)[-1].split(" — ", 1)[0]
+        when = done.get(checkins.name_key(title))
+        lines.append(f"{line} [ВЖЕ ВІДМІЧЕНО о {when}]" if when else line)
+    return "\n".join(lines)
 
 
 def _summarize_background(text: str) -> str:
@@ -338,24 +355,53 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                 ok=True, status="empty",
                 message="Команда ще не завантажила знань (сторінка «Знання»). Скажи, що про це в тебе записів немає.",
             )
+        text = found["text"]
+        if user.concierge:
+            text = _mark_checked_in(text)
         head = (
             f"Записи команди ({found['shown']} з {found['total']}"
             + (", найближчі до запиту" if found["shown"] < found["total"] else ", усі")
             + "). Відповідай лише з них; чого тут немає — того ти не знаєш.\n"
         )
-        return ToolResult(ok=True, status="ok", message=head + found["text"], data={"total": found["total"], "shown": found["shown"]})
+        return ToolResult(ok=True, status="ok", message=head + text, data={"total": found["total"], "shown": found["shown"]})
 
     def confirm_guest(args: dict, ctx: ToolExecutionContext) -> ToolResult:
         name = " ".join(str(args.get("full_name") or "").split())[:200]
         verified = bool(args.get("verified"))
-        user.guest = {"name": name, "verified": verified, "at": time.time()}
-        logger.info("web.concierge.guest verified=%s", verified)
-        if verified:
-            return ToolResult(ok=True, status="ok", message=f"Гостя підтверджено: {name}. Привітай на ім'я і спитай, як минає день.")
-        return ToolResult(
-            ok=True, status="not_verified",
-            message="Не підтверджено. Ввічливо скажи, що не вдалося підтвердити, і запропонуй покликати когось із команди.",
-        )
+        if not verified:
+            user.guest = {"name": name, "verified": False, "at": time.time()}
+            logger.info("web.concierge.guest verified=False")
+            return ToolResult(
+                ok=True, status="not_verified",
+                message="Не підтверджено. Ввічливо скажи, що не вдалося підтвердити, і запропонуй покликати когось із команди.",
+            )
+        # Only with the guest's own answer to the check question, heard in this call — not their name.
+        problem = checkins.answer_problem(name, str(args.get("guest_answer") or ""), ctx.user_utterances or [])
+        if problem:
+            logger.info("web.concierge.confirm_refused why=%s", problem)
+            return ToolResult(
+                ok=False, status="needs_check_question",
+                message="Ще рано підтверджувати: спершу постав одне перевірочне питання про факт із запису цієї "
+                "людини і дочекайся її відповіді; guest_answer — її власні слова у відповідь (не ім'я).",
+            )
+        try:
+            before = checkins.store.find(name)
+            if before is None:
+                checkins.store.add(name, user.client_id[:8])
+        except StoreError:
+            before = None  # the mark can't be read: let them in rather than stop everyone
+        if before is not None:
+            user.guest = {"name": name, "verified": False, "duplicate": True, "time": before["time"], "at": time.time()}
+            logger.info("web.concierge.guest duplicate")
+            return ToolResult(
+                ok=True, status="already_checked_in",
+                message=f"{name} вже відмічений сьогодні о {before['time']} — другий раз пройти не можна. Ввічливо "
+                "скажи, що цю людину вже зареєстровано, і попроси зачекати: зараз підійде хтось із команди. "
+                "Не вітай як гостя.",
+            )
+        user.guest = {"name": name, "verified": True, "at": time.time()}
+        logger.info("web.concierge.guest verified=True")
+        return ToolResult(ok=True, status="ok", message=f"Гостя підтверджено й відмічено: {name}. Привітай на ім'я і спитай, як минає день.")
 
     executor.register("set_assistant_name", set_name)
     executor.register("change_language", change_language)

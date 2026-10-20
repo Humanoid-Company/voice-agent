@@ -2400,6 +2400,7 @@
     $("micSelect").addEventListener("change", changeMic);
     $("speakerSelect").addEventListener("change", changeSpeaker);
     $("cameraSelect").addEventListener("change", changeCamera);
+    $("knowledgeLink").href = "knowledge.html" + location.search; // keep ?backend=… for a test backend
     $("devicesAllow").addEventListener("click", allowDevices);
     for (const id of ["micSelect", "speakerSelect", "cameraSelect"]) {
       $(id).addEventListener("mousedown", namesFirst); // the empty list doesn't open

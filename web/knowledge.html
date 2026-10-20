@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Єва — знання</title>
+  <meta name="description" content="Що Єва знає про людей і події команди: завантаження таблиць і документів.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="knowledge.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="page-head">
+      <div>
+        <h1>Знання</h1>
+        <p class="sub">Що Єва знає про людей і події. Завантажте список — і питайте: «Що любить Олег?»,
+          «Хто з них фанат Тарантіно?», «Що подарувати Марині?»</p>
+      </div>
+      <a id="backLink" class="btn small-btn header-link" href="index.html">← До Єви</a>
+    </header>
+
+    <p id="storageNote" class="banner" hidden></p>
+
+    <section id="gate" class="card" hidden>
+      <label for="code">Код доступу</label>
+      <div class="row">
+        <input id="code" type="password" autocomplete="off" placeholder="Отримайте в команди">
+        <button id="saveCode" class="btn">Зберегти</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Новий набір</h2>
+      <label for="setName">Назва</label>
+      <input id="setName" class="field" type="text" maxlength="120" placeholder="Напр.: Корпоратив 20.10">
+      <label for="setNote" class="gap">Опис <span class="muted small">— необов'язково</span></label>
+      <input id="setNote" class="field" type="text" maxlength="1000" placeholder="Хто ці люди, що за подія">
+
+      <label id="drop" class="drop" for="file">
+        <input id="file" type="file" accept=".csv,.tsv,.xlsx,.json,.docx,.txt,.md">
+        <span class="drop-title">Перетягніть файл сюди або натисніть, щоб вибрати</span>
+        <span class="muted small">CSV, Excel (.xlsx), JSON, DOCX, TXT · до 5 МБ</span>
+      </label>
+      <p class="hint">Таблиця: перший рядок — назви колонок (Ім'я, Вік, Хобі, Улюблені фільми…), далі по рядку
+        на людину. Документ чи текст розбере модель. <a id="exampleLink" href="examples/korporatyv.csv" download>Приклад CSV</a></p>
+      <p id="parseStatus" class="status-msg" role="status" hidden></p>
+
+      <div id="preview" class="preview" hidden>
+        <div class="card-head">
+          <h3 id="previewTitle"></h3>
+          <span id="previewFile" class="muted small"></span>
+        </div>
+        <ul id="previewWarnings" class="warnings"></ul>
+        <p class="hint">Перевірте записи: зайве приберіть хрестиком. Нічого не збережено, доки не натиснете «Зберегти».</p>
+        <div id="previewItems" class="records"></div>
+        <p id="previewMore" class="hint" hidden></p>
+        <div class="row actions">
+          <button id="saveSet" class="btn primary" type="button">Зберегти набір</button>
+          <button id="cancelSet" class="btn ghost" type="button">Скасувати</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Набори</h2>
+        <span id="setsCount" class="muted small"></span>
+      </div>
+      <div id="sets" class="sets"><p class="muted empty">Завантаження…</p></div>
+      <p class="hint">Увімкнені набори Єва знає з наступної розмови. Вимкнений набір лишається тут, але Єва
+        про нього не знає. Дані бачать усі, хто має код доступу.</p>
+    </section>
+  </main>
+</body>
+</html>

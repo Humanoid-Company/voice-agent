@@ -40,12 +40,13 @@ from config import (
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import build_live_prompt
-from server import knowledge
+from server import conversations, knowledge
 from server.call_log import CallLogStore
+from server.db import StoreError
 from server.knowledge_import import KnowledgeImportError, make_openai_extract, parse_file
 from server.live_bridge import SidebandToolBridge
 from server.web_users import WebUser, WebUserRegistry
-from tools.live_schemas import KNOWLEDGE_LOOKUP_TOOL, LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
+from tools.live_schemas import CONFIRM_GUEST_TOOL, KNOWLEDGE_LOOKUP_TOOL, LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
 from voice.background import wake_commentary
 from voice.delegation import responses_delegation
 from voice.options import (
@@ -96,6 +97,14 @@ _CAMERA_NOTE_V5 = (
     "imagination. Tell what it saw as if you looked («Бачу…»), only what it reported; one look per "
     "request. A description no look confirmed is your mistake, never the user's."
 )
+# /chat: the user types and hears her. Their messages go to the backend (the page sends them as the user's
+# message, like a request said with the wake phrase), and she says its answers.
+_CHAT_NOTE = (
+    "\nText chat: right now the user can't talk — they type to you in a chat and hear you. Each message "
+    "goes to the backend and its answer comes to you: say it in your own words, as speech, briefly (a long "
+    "list or a link — the gist). You hear nothing from them; never ask them to say something aloud or "
+    "wonder why they are quiet — they read and type."
+)
 # Delivery prompts the page may pick; v5 is the default. v1 and v2 are desktop-only (a page asking for them gets v5).
 WEB_PROMPT_VARIANTS = ("v3", "v4", "v5")
 # A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
@@ -133,6 +142,7 @@ async def _lifespan(_app: FastAPI):
     yield
     if task is not None:
         task.cancel()
+    users.save_all()  # a deploy stops the server: conversations not yet written are written now
 
 
 app = FastAPI(title="Voice agent web backend", lifespan=_lifespan)
@@ -168,7 +178,9 @@ def _knowledge_sets() -> list[dict]:
         return []
 
 
-def _session_config(user: WebUser, knowledge_sets: list[dict] | None = None) -> dict:
+def _session_config(
+    user: WebUser, knowledge_sets: list[dict] | None = None, *, chat: bool = False, concierge: bool = False
+) -> dict:
     """knowledge_sets: what the team uploaded (_knowledge_sets) — she is told about it, so questions about
     those people go to the backend; the lookup tool is there either way."""
     language = LANGUAGE_OPTIONS.get(user.language, LANGUAGE_OPTIONS["uk"])
@@ -186,13 +198,17 @@ def _session_config(user: WebUser, knowledge_sets: list[dict] | None = None) -> 
         )
         + _WEB_NOTE
         + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
-        + knowledge.live_note(knowledge_sets or []),
+        + knowledge.live_note(knowledge_sets or [])
+        + (_CHAT_NOTE if chat else "")
+        + (knowledge.CONCIERGE_NOTE if concierge else ""),
         "audio": {"output": {"voice": voice}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
-            + knowledge.BACKEND_NOTE,
-            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL],
+            + knowledge.BACKEND_NOTE
+            + (knowledge.CONCIERGE_BACKEND_NOTE if concierge else ""),
+            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL,
+                   *([CONFIRM_GUEST_TOOL] if concierge else [])],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
         ),
@@ -219,6 +235,10 @@ class SessionRequest(BaseModel):
     keep_old: bool = False
     # Delivery prompt: v4 (default) or v3.
     prompt: str | None = None
+    # Opened by /chat: the user types, she answers aloud (_CHAT_NOTE).
+    chat: bool = False
+    # The page's top switch: "concierge" — she welcomes people and checks them against «Знання».
+    mode: str | None = None
 
 
 # A kept old call still open this long after its successor opened is closed anyway (page gone).
@@ -247,8 +267,9 @@ def healthz() -> dict:
         "branch": os.getenv("RENDER_GIT_BRANCH") or None,
         # Without the Tavily key she says «пошук зараз не працює» — check it here, not by asking her.
         "web_search": bool(WEB_SEARCH_API_KEY),
-        # «Знання»: postgres (Neon) keeps it; sqlite on Render is wiped by every deploy.
+        # «Знання» and the conversations: postgres (Neon) keeps them; sqlite on Render is wiped by every deploy.
         "knowledge": knowledge.store.kind,
+        "conversations": conversations.store.kind,
     }
 
 
@@ -265,7 +286,7 @@ async def create_session(
     x_access_code: str | None = Header(default=None),
 ) -> dict:
     """Browser SDP offer in → SDP answer out; tools run here over a sideband."""
-    user = _user(x_client_id, x_access_code)
+    user = await asyncio.to_thread(_user, x_client_id, x_access_code)  # may restore the conversation from the database
     if body.voice and body.voice.strip().lower() in VOICE_PERSONAS:
         user.voice = body.voice.strip().lower()
     if body.speed in SPEED_OPTIONS:
@@ -279,7 +300,8 @@ async def create_session(
         user.conversation.end_turn()
     try:
         result = await openai_client.live.create(
-            session=_session_config(user, await asyncio.to_thread(_knowledge_sets)),
+            session=_session_config(user, await asyncio.to_thread(_knowledge_sets), chat=body.chat,
+                                    concierge=body.mode == "concierge"),
             transport={"type": "webrtc", "sdp": body.sdp},
         )
     except Exception as exc:
@@ -299,6 +321,8 @@ async def create_session(
         session_id, user.client_id[:8], voice=_user_voice(user), prompt=user.prompt_variant,
         model=OPENAI_LIVE_MODEL, backend=OPENAI_LIVE_BACKEND_MODEL, effort=OPENAI_LIVE_BACKEND_EFFORT or "default",
         history=len(user.conversation.live_input()), speed=user.speed, style=user.style,
+        **({"via": "chat"} if body.chat else {}),
+        **({"mode": "concierge"} if body.mode == "concierge" else {}),
     )
     if body.user_text and body.user_text.strip():
         call_log.add("user", text=body.user_text.strip()[:500], via="wake")
@@ -311,6 +335,7 @@ async def create_session(
         conversation=user.conversation,
         on_voice_request=user.switch_voice_by_request,
         call_log=call_log,
+        think_aloud=not body.chat,
     )
     user.bridges.add(bridge)
     task = asyncio.create_task(bridge.run())
@@ -340,6 +365,7 @@ def me(
         "voice_note": user.voice_switch_note,  # why it changed (diagnostics on the page)
         "keep_session": user.must_keep_session(),  # paused: don't close the call yet
         "history_turns": len(user.conversation),
+        "guest": user.guest,  # «Консьєрж»: who the guest was confirmed as
     }
 
 
@@ -518,7 +544,7 @@ async def camera_frame(
     x_access_code: str | None = Header(default=None),
 ) -> dict:
     """The page's latest camera frame (raw JPEG body), kept in memory for look_at_camera."""
-    user = _user(x_client_id, x_access_code)
+    user = await asyncio.to_thread(_user, x_client_id, x_access_code)
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_FRAME_BYTES:
         raise HTTPException(status_code=413, detail="frame_too_large")  # before reading it in
@@ -546,10 +572,112 @@ def clear_conversation(
     x_client_id: str | None = Header(default=None),
     x_access_code: str | None = Header(default=None),
 ) -> dict:
-    """«Нова розмова»: forget the dialogue history."""
+    """«Нова розмова»: Єва starts from a clean page; the old conversation stays saved («Історія»)."""
     user = _user(x_client_id, x_access_code)
-    user.conversation.clear()
+    user.new_conversation()
     user.background.clear()
+    return {"ok": True}
+
+
+# ── the conversations: the current one (shown again after a refresh) and «Історія» (server/conversations.py) ──
+def _history(call, *args):
+    try:
+        return call(*args)
+    except StoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/conversation")
+def current_conversation(
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    """What the page shows on load: the conversation Єва remembers, as it was said."""
+    user = _user(x_client_id, x_access_code)
+    return {"id": user.conversation_id, "started_at": user.conversation_started_at,
+            "turns": conversations.visible(user.conversation.to_list())}
+
+
+class TypedLine(BaseModel):
+    text: str
+
+
+@app.post("/api/conversation/text")
+def typed_line(
+    body: TypedLine,
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    """A message typed on /chat: into the conversation (history, «Історія», her memory) and the call's log.
+    The page itself hands it to the backend through the call."""
+    user = _user(x_client_id, x_access_code)
+    text = " ".join(body.text.split())[:2000]
+    if not text:
+        raise HTTPException(status_code=422, detail="empty_text")
+    user.conversation.end_turn()
+    user.conversation.add("user", text)
+    user.conversation.end_turn()
+    for bridge in list(user.bridges):
+        bridge.user_typed(text)
+    return {"ok": True}
+
+
+@app.get("/api/conversations")
+def conversation_list(
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    """This browser's saved conversations, newest first (the current one is marked)."""
+    user = _user(x_client_id, x_access_code)
+    user.save_conversation()  # the current one as it is now
+    return {"current": user.conversation_id, "persistent": conversations.store.persistent,
+            "conversations": _history(conversations.store.list, user.client_id)}
+
+
+@app.get("/api/conversations/{conv_id}")
+def conversation_get(
+    conv_id: str,
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    user = _user(x_client_id, x_access_code)
+    if conv_id == user.conversation_id:
+        user.save_conversation()
+    found = _history(conversations.store.get, user.client_id, conv_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Такої розмови немає.")
+    found["turns"] = conversations.visible(found["turns"])
+    return found
+
+
+@app.post("/api/conversations/{conv_id}/resume")
+def conversation_resume(
+    conv_id: str,
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    """«Продовжити»: a saved conversation becomes the current one — Єва remembers it from the next call."""
+    user = _user(x_client_id, x_access_code)
+    found = _history(conversations.store.get, user.client_id, conv_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Такої розмови немає.")
+    user.resume_conversation(found)
+    user.background.clear()
+    return {"ok": True, "id": conv_id}
+
+
+@app.delete("/api/conversations/{conv_id}")
+def conversation_delete(
+    conv_id: str,
+    x_client_id: str | None = Header(default=None),
+    x_access_code: str | None = Header(default=None),
+) -> dict:
+    """Delete a saved conversation; the current one is also forgotten by Єва (a new one starts)."""
+    user = _user(x_client_id, x_access_code)
+    if conv_id == user.conversation_id:
+        user.new_conversation()
+    if not _history(conversations.store.delete, user.client_id, conv_id):
+        raise HTTPException(status_code=404, detail="Такої розмови немає.")
     return {"ok": True}
 
 

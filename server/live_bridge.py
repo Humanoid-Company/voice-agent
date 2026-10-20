@@ -117,8 +117,12 @@ class SidebandToolBridge:
         conversation: ConversationLog | None = None,
         on_voice_request: Callable[[str], bool] | None = None,
         call_log: CallLog | None = None,
+        think_aloud: bool = True,
     ) -> None:
         self._client = client
+        # Short lines while the backend works. Off on /chat: there the user sees «Думає…», and asked to
+        # think aloud «about this exact request» she read their typed question back.
+        self._think_aloud = think_aloud
         # /logs: what was said and done in this call (server/call_log.py).
         self.call_log = call_log
         self.session_id = session_id
@@ -186,6 +190,11 @@ class SidebandToolBridge:
                 self.call_log.end()
             if self._on_closed:
                 self._on_closed(self)
+
+    def user_typed(self, text: str) -> None:
+        """A line typed on /chat: the tools see it as said (change_voice needs the user to have asked)."""
+        self._user_turns = (self._user_turns + [text])[-20:]
+        self._log("user", text=text, via="chat")
 
     def _log(self, kind: str, **data: Any) -> None:
         if self.call_log is not None:
@@ -377,7 +386,8 @@ class SidebandToolBridge:
             return
         self._work[key] = []
         self._work_started_at[key] = time.time()
-        self._mumbles[key] = asyncio.create_task(self._mumble(key))
+        if self._think_aloud:
+            self._mumbles[key] = asyncio.create_task(self._mumble(key))
 
     async def _mumble(self, key: str) -> None:
         """Delegated work runs: short lines thinking aloud until its answer is ready."""

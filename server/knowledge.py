@@ -4,8 +4,9 @@ uploaded on the page «Знання» (web/knowledge.html) and looked up by Єв
 One store for the whole team (everyone with the access code), not per browser: «Корпоратив 20.10» is
 uploaded once and every call knows it.
 
-Postgres (Neon) when DATABASE_URL is set. Without it, a SQLite file (KNOWLEDGE_SQLITE, data/knowledge.db):
-fine locally, but on Render every deploy wipes it — /api/knowledge says so and the page shows it.
+Postgres (Neon) when DATABASE_URL is set (server/db.py). Without it, a SQLite file (KNOWLEDGE_SQLITE,
+data/knowledge.db): fine locally, but on Render every deploy wipes it — /api/knowledge says so and the page
+shows it.
 """
 from __future__ import annotations
 
@@ -14,13 +15,11 @@ import json
 import logging
 import os
 import re
-import sqlite3
-import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
+
+from server.db import SqlStore, StoreError
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +60,8 @@ _SCHEMA = {
 }
 
 
-class KnowledgeError(Exception):
-    """The store can't be reached or refused the request; the message is for the page."""
+# Kept under its old name: the tool and the endpoints catch it.
+KnowledgeError = StoreError
 
 
 @dataclass
@@ -92,61 +91,16 @@ def clean_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-class KnowledgeStore:
+class KnowledgeStore(SqlStore):
+    SCHEMA = _SCHEMA
+    UNAVAILABLE = "База знань недоступна"
+    FAILED = "Помилка бази знань"
+
     def __init__(self, database_url: str = "", sqlite_path: str = "data/knowledge.db") -> None:
-        self.database_url = database_url.strip()
-        self.kind = "postgres" if self.database_url else "sqlite"
-        self.sqlite_path = sqlite_path
-        self._ready = False
-        self._lock = threading.Lock()
+        super().__init__(database_url, sqlite_path)
         self._snapshot: list[Record] | None = None
         self._sets_summary: list[dict[str, Any]] = []
         self._snapshot_at = 0.0
-
-    # ── connection ──
-    @contextmanager
-    def _conn(self) -> Iterator[Any]:
-        try:
-            if self.kind == "postgres":
-                import psycopg
-
-                conn: Any = psycopg.connect(self.database_url, connect_timeout=10)
-            else:
-                if os.path.dirname(self.sqlite_path):
-                    os.makedirs(os.path.dirname(self.sqlite_path), exist_ok=True)
-                conn = sqlite3.connect(self.sqlite_path, timeout=10)
-                conn.execute("PRAGMA foreign_keys = ON")
-        except Exception as exc:
-            logger.exception("knowledge.connect_failed kind=%s", self.kind)
-            raise KnowledgeError(f"База знань недоступна ({type(exc).__name__}).") from exc
-        try:
-            if not self._ready:
-                with self._lock:
-                    if not self._ready:
-                        for statement in _SCHEMA[self.kind]:
-                            conn.execute(statement)
-                        conn.commit()
-                        self._ready = True
-            yield conn
-            conn.commit()
-        except KnowledgeError:
-            conn.rollback()
-            raise
-        except Exception as exc:
-            conn.rollback()
-            self._ready = False  # the tables may be gone (a reset database): made again on the next call
-            logger.exception("knowledge.query_failed kind=%s", self.kind)
-            raise KnowledgeError(f"Помилка бази знань ({type(exc).__name__}).") from exc
-        finally:
-            conn.close()
-
-    def _q(self, sql: str) -> str:
-        return sql if self.kind == "postgres" else sql.replace("%s", "?")
-
-    @property
-    def persistent(self) -> bool:
-        """False for SQLite on Render: a deploy wipes the disk."""
-        return self.kind == "postgres" or not os.getenv("RENDER")
 
     def _changed(self) -> None:
         self._snapshot = None
@@ -327,9 +281,13 @@ def live_note(sets: list[dict[str, Any]]) -> str:
     return (
         "\nTeam knowledge: the team gave you records about people and events — " + "; ".join(parts) + ". "
         "Anything about these people or events — who someone is, their age, hobbies, favourite films, who "
-        "likes what, who to seat together, a gift or a toast for them, what is planned — goes to the backend "
-        "at once (it looks them up); never answer about them from memory, never guess or invent a fact about "
-        "them. A name you hear may be declined or misheard («Олегові», «про Марину», «Алєг»): still delegate. "
+        "likes what, who to seat together, a gift, food or a toast for them, what is planned — goes to the "
+        "backend at once (it looks them up); never answer about them from memory, never guess or invent a fact "
+        "about them. That holds whenever such a name comes up, also later in the talk: they asked for advice "
+        "for a colleague or a friend and then say who it is («його звати Олег», «це Тарас з нашої команди», "
+        "«для Марини») — delegate at once and redo the advice for that person; never keep general advice once "
+        "you know who it is for. A name you hear may be declined or misheard («Олегові», «про Марину», «Алєг»): "
+        "still delegate. "
         "Asked what you know or remember about the team, name these sets. Tell what it found in your own "
         "words, warmly, like someone who knows these people.")
 
@@ -349,3 +307,35 @@ BACKEND_NOTE = (
 
 # The team's store. Tests swap it for a temporary one (monkeypatch server.knowledge.store).
 store = KnowledgeStore(os.getenv("DATABASE_URL", ""), os.getenv("KNOWLEDGE_SQLITE", "data/knowledge.db"))
+
+
+# «Консьєрж» (web, the page's top switch): she welcomes people and checks them against the same records.
+CONCIERGE_NOTE = (
+    "\nConcierge mode — this overrides how you start and lead the talk. You are a concierge welcoming people "
+    "at the entrance (an office or an event), with the team's list of people (the records above). Speak "
+    "politely, on «ви», warmly and briefly. With each person, in this order: 1) greet them and ask their name; "
+    "2) when they say a name (with or without a surname), delegate at once to check it against the list — "
+    "never decide yourself whether someone is on it, and never guess; 3) say what the backend gives you, in "
+    "your own words: the surname question when several people share the name, its one check question to make "
+    "sure it is really that person, or that you can't find the name (ask them to repeat or spell it) — never "
+    "hint at an answer and never mention anything from their record before they are confirmed; 4) their "
+    "answer to the check question goes to the backend at once too; 5) once it confirms them, welcome them by "
+    "name, ask how their day is going and talk with them like a friendly host — something pleasant from their "
+    "record is welcome now; not confirmed: stay polite, say you could not confirm and offer to call someone "
+    "from the team. A new person (the page says so) starts again from 1."
+)
+
+CONCIERGE_BACKEND_NOTE = (
+    "\nCONCIERGE: you check people against the team's records for a voice concierge; she says your reply. "
+    "A name: knowledge_lookup with the name as heard. Nobody with that name (allow declension and misheard "
+    "spelling): reply that you can't find this name and ask them to repeat it or add the surname. Several "
+    "people share it and the surname is not given or does not decide it: reply asking for the surname — do "
+    "not list anyone. Exactly one person: reply with ONE check question only this person would answer right, "
+    "about a fact in their record (their role, a hobby, a pet's name, the month of their birthday, a favourite "
+    "film) — an open question that never contains or hints at the answer («Нагадайте, ким ви у нас "
+    "працюєте?», «Як звати вашого улюбленця?»). Their answer to a check question: look them up again and "
+    "compare by meaning (other words for the same thing, a part of a list is enough). It matches → call "
+    "confirm_guest(full_name, verified=true) and reply with a short warm welcome by their first name. It does "
+    "not → ask one more check question about another fact; a second miss → confirm_guest(verified=false) and "
+    "reply that you could not confirm it, politely. Never reveal anything from a record before confirmation.\n"
+)

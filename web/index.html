@@ -20,6 +20,11 @@
         title="Що Єва знає про людей і події: завантажити список чи документ">Знання</a>
     </header>
 
+    <nav class="mode-tabs" role="tablist" aria-label="Режим Єви">
+      <button id="modeAssistant" role="tab" type="button" aria-selected="true">Помічниця</button>
+      <button id="modeConcierge" role="tab" type="button" aria-selected="false">Консьєрж</button>
+    </nav>
+
     <section id="gate" class="card" hidden>
       <label for="code">Код доступу</label>
       <div class="row">
@@ -37,11 +42,21 @@
         title="Час, поки відкрита сесія GPT-Live (разом з першими 30 с паузи), і орієнтовна ціна за ним. Інструменти й підсумок фонового слухання оплачуються окремо й тут не враховані."></p>
       <p id="callDevices" class="call-devices"><span id="callDevicesText"></span>
         <a href="#devices" class="call-devices-link">Змінити</a></p>
+      <div id="concierge" class="concierge" hidden>
+        <div class="guest-line">
+          <span class="muted small">Гість</span>
+          <strong id="guestName">ще не назвався</strong>
+          <span id="guestBadge" class="guest-badge" hidden></span>
+        </div>
+        <p id="conciergeInfo" class="hint">Єва вітає людину, питає ім'я, звіряє його зі списком у «Знаннях» (двоє з
+          однаковим ім'ям — питає прізвище) і ставить одне перевірочне питання. Потім — «Наступний гість».</p>
+      </div>
       <button id="talk" class="btn primary big">Почати розмову</button>
 
       <div class="row">
         <button id="resume" class="btn primary" hidden>Продовжити</button>
         <button id="pause" class="btn ghost" hidden>Пауза</button>
+        <button id="nextGuest" class="btn" hidden>Наступний гість</button>
       </div>
       <p id="wakeHint" class="hint">Покличте Єву — «Єва, скажи», «Привіт, Єва», «Гей, Єва». «Дякую, Єва» — пауза.</p>
       <label class="setting" for="bgListen">
@@ -150,6 +165,7 @@
       <div class="card-head">
         <h2>Розмова</h2>
         <div class="head-actions">
+          <a id="historyLink" class="btn ghost small-btn" href="history.html" title="Усі збережені розмови">Історія</a>
           <button id="copyChat" class="btn ghost small-btn">Скопіювати</button>
           <button id="newChat" class="btn ghost small-btn">Нова розмова</button>
         </div>
@@ -159,7 +175,7 @@
       </div>
     </section>
 
-    <footer class="muted small">Розмова зберігається лише в пам'яті сервера на час тестування.</footer>
+    <footer class="muted small">Розмови зберігаються на сервері й лишаються після оновлення сторінки — усі вони в «Історії».</footer>
   </main>
   <dialog id="noMic" class="dialog" aria-labelledby="noMicTitle">
     <h2 id="noMicTitle">Мікрофон у цьому браузері недоступний</h2>

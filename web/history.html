@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Єва — історія розмов</title>
+  <meta name="description" content="Збережені розмови з Євою в цьому браузері: перегляд, продовження, видалення.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="history.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="page-head">
+      <div>
+        <h1>Історія</h1>
+        <p class="sub">Ваші розмови з Євою в цьому браузері. Будь-яку можна перечитати або продовжити — Єва
+          згадає, про що говорили.</p>
+      </div>
+      <a id="backLink" class="btn small-btn header-link" href="index.html">← До Єви</a>
+    </header>
+
+    <p id="storageNote" class="banner" hidden></p>
+
+    <section id="gate" class="card" hidden>
+      <label for="code">Код доступу</label>
+      <div class="row">
+        <input id="code" type="password" autocomplete="off" placeholder="Отримайте в команди">
+        <button id="saveCode" class="btn">Зберегти</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Розмови</h2>
+        <span id="count" class="muted small"></span>
+      </div>
+      <p id="msg" class="status-msg" role="status" hidden></p>
+      <div id="list" class="sets"><p class="muted empty">Завантаження…</p></div>
+    </section>
+  </main>
+</body>
+</html>

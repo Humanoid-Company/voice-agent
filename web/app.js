@@ -103,6 +103,9 @@
   // a choice saved earlier becomes v5.
   const WEB_PROMPTS = ["v3", "v4", "v5"];
   let promptVariant = params.get("prompt") || store.get("va-prompt") || "v5";
+  // The top switch: «Помічниця» (the usual talk) or «Консьєрж» — she welcomes people, asks their name and
+  // checks it against «Знання» with one check question (server/knowledge.py CONCIERGE_NOTE).
+  let mode = store.get("va-mode") === "concierge" ? "concierge" : "assistant";
   if (!WEB_PROMPTS.includes(promptVariant)) promptVariant = "v5";
   let pc = null;
   let channel = null;
@@ -477,8 +480,58 @@
     setStatus(state[0], state[1]);
   }
 
+  // ── «Помічниця» / «Консьєрж» ──
+  function showMode() {
+    $("modeAssistant").setAttribute("aria-selected", String(mode !== "concierge"));
+    $("modeConcierge").setAttribute("aria-selected", String(mode === "concierge"));
+    $("concierge").hidden = mode !== "concierge";
+    $("wakeHint").hidden = mode === "concierge";
+    if (mode === "concierge") checkGuestList();
+  }
+
+  function setMode(next) {
+    if (next === mode) return;
+    mode = next;
+    store.set("va-mode", mode);
+    // A call keeps the instructions it opened with: the other mode needs a new one.
+    if (eva.mode !== "off") {
+      stop();
+      addLine("system", "Режим змінено — натисніть «Почати розмову».");
+    }
+    showGuest(null);
+    showMode();
+    updateButtons();
+  }
+
+  // full: {full_name, verified} from confirm_guest (or the server's {name, verified}); null — nobody yet.
+  function showGuest(g, announce = false) {
+    const name = g && (g.full_name || g.name);
+    $("guestName").textContent = name || "ще не назвався";
+    $("guestBadge").hidden = !name;
+    $("guestBadge").textContent = g && g.verified ? "✓ підтверджено" : "не підтверджено";
+    $("guestBadge").className = "guest-badge " + (g && g.verified ? "ok" : "err");
+    if (announce && name) addLine("system", (g.verified ? "Гостя підтверджено: " : "Не вдалося підтвердити: ") + name + ".");
+  }
+
+  // The guest list is what «Знання» holds: without an enabled set there is nobody to check against.
+  async function checkGuestList() {
+    try {
+      const res = await fetch(BACKEND + "/api/knowledge", { headers: headers() });
+      if (!res.ok) return;
+      const data = await res.json();
+      const on = data.sets.filter((s) => s.enabled);
+      const people = on.reduce((n, s) => n + s.count, 0);
+      $("conciergeInfo").classList.toggle("warn-text", !on.length);
+      $("conciergeInfo").textContent = on.length
+        ? "Список: " + on.map((s) => "«" + s.name + "»").join(", ") + " — " + people + " записів. Єва вітає людину, питає ім'я, " +
+          "звіряє його зі списком (однакові імена — питає прізвище) і ставить одне перевірочне питання."
+        : "Список людей порожній — завантажте його у «Знання» (кнопка вгорі), інакше Єві нема з ким звіряти.";
+    } catch { /* asleep: the hint stays */ }
+  }
+
   function updateButtons() {
     const on = eva.mode !== "off";
+    $("nextGuest").hidden = !(on && mode === "concierge");
     $("talk").textContent = on ? "Завершити" : "Почати розмову";
     $("talk").classList.toggle("primary", !on);
     $("talk").classList.toggle("danger", on);
@@ -502,6 +555,7 @@
     "так-так", "угу-угу", "хм", "о", "ой", "ох", "слухаю", "нічого", "собі", "та", "ха", "ха-ха", "хаха", "ахах", "вау"]);
   const barge = {
     audible: false,     // assistant audio is playing right now
+    audibleEndedAt: 0,  // when her audio last went quiet
     speaking: false,    // user voice right now
     stage: "idle",      // idle → ducked → muted
     heard: "",          // user words since this barge-in candidate started
@@ -681,6 +735,7 @@
     if (stream) playRemote(stream);
   }
 
+  const HER_PAUSE_MS = 700; // a pause between her sentences: she goes on after it
   const bargeLevel = () => (barge.stage === "muted" ? 0 : barge.stage === "ducked" ? 0.5 : 1);
 
   function bargeReset() {
@@ -714,8 +769,22 @@
     } catch { /* channel closing */ }
   }
 
+  // She is still talking: audible now, or quiet for less than a breath between sentences.
+  const herStillTalking = () => barge.audible || Date.now() - barge.audibleEndedAt < HER_PAUSE_MS;
+
   function bargeConfirm(kind) {
     if (barge.stage === "muted") return;
+    // The user's words come 1–2 s after their sound: by then she has often finished. A «stop, the user is
+    // talking» then reached a model that was already listening — it went silent for good or said «Ага, чую.
+    // Говори.» and waited, and what they said was lost (measured on GPT-Live, a name said over the end of
+    // her answer: 3 of 5). She is quiet: nothing to stop, she answers them as usual.
+    if (kind === "stop" && !herStillTalking()) {
+      bargeClear();
+      barge.stage = "idle";
+      barge.heard = "";
+      setRemoteVolume(1);
+      return;
+    }
     bargeClear();
     barge.stage = "muted";
     barge.mutes += 1;
@@ -751,6 +820,7 @@
 
   function bargeOnGate(signal) {
     if ("audible" in signal) {
+      if (barge.audible && !signal.audible) barge.audibleEndedAt = Date.now();
       barge.audible = signal.audible;
       if (barge.stage === "muted") scheduleRelease();
       return;
@@ -872,6 +942,10 @@
         const item = inner.item || {};
         if ((inner.type === "response.output_item.added" || inner.type === "response.output_item.done")
             && item.type === "function_call" && item.name === "look_at_camera") snapForLook(item.call_id || item.id);
+        // «Консьєрж»: the backend says who the guest is once the check question is answered.
+        if (inner.type === "response.output_item.done" && item.type === "function_call" && item.name === "confirm_guest") {
+          try { showGuest(JSON.parse(item.arguments || "{}"), true); } catch { /* not json */ }
+        }
         break;
       }
       case "error": {
@@ -972,7 +1046,8 @@
   // own, and the user wants to start the talk. Testers could not tell whether she was on at all
   // (feedback: «при запуску … мовчить»), so the status and the log say she is on and waiting. Without
   // the phrase listener (Firefox) nothing could wake her: she greets at once.
-  const defaultStart = () => (eva.wakeSupported ? { paused: true, ready: true } : { greet: true, hello: true });
+  // A concierge greets whoever comes up at once: guests don't know to say «Привіт, Єва».
+  const defaultStart = () => (eva.wakeSupported && mode !== "concierge" ? { paused: true, ready: true } : { greet: true, hello: true });
 
   // opts: paused — connect and wait for «Єва, скажи»; ask — a request said with the wake phrase;
   // greet — a short «Слухаю» unless the user starts talking; switched — first words in a new voice.
@@ -1039,6 +1114,7 @@
   // What a new call is opened with: voice and delivery.
   const sessionBody = (extra) => Object.assign({
     voice: voice || undefined, speed, style, prompt: promptVariant,
+    mode: mode === "concierge" ? "concierge" : undefined,
   }, extra);
 
   // The offer's Opus line says how we want to receive her voice. Browser defaults leave the bitrate
@@ -1130,6 +1206,18 @@
     devicesAnnounced = true;
     const now = devicesNow();
     addLine("system", "Мікрофон: " + now.input + ". Звук: " + now.output + ".");
+    if (btMicTip(now.input)) addLine("system", btMicTip(now.input));
+  }
+
+  // A Bluetooth headset's mic on a computer: the headset drops to its call mode (narrow, telephone-like
+  // sound) and GPT-Live hears words worse (feedback in headphones: «вона ужасно слухає мене»). The
+  // built-in mic keeps the headphones in full quality for her voice.
+  const BT_MIC = /airpods|buds|bluetooth|hands-?free|headset|гарнітур|jabra|bose|beats|wh-1000|wf-1000/i;
+  let otherMics = 0; // mics besides the one in use (listDevices)
+  function btMicTip(input) {
+    if (IOS || ANDROID || !BT_MIC.test(input || "") || !otherMics) return "";
+    return "Мікрофон Bluetooth-навушників передає звук гірше, і Єва може погано вас чути. Оберіть у «Пристроях» " +
+      "вбудований мікрофон — її голос лишиться в навушниках.";
   }
 
   function stop(text = "Не підключено", state = "") {
@@ -1332,6 +1420,10 @@
     "words so they hear you are on and listening — a short hello and that they can just talk; vary it, " +
     "no question about how you can help. Then wait.";
 
+  // «Консьєрж»: every start and «Наступний гість» — a polite hello and their name.
+  const CONCIERGE_GREETING = "A person has just come up to you (concierge). Greet them politely in one short " +
+    "sentence and ask their name — «Добрий день! Ласкаво просимо. Як вас звати?»; vary it. Then wait.";
+
   // text: what to say instead of the wake greeting (START_GREETING when the call was just started).
   function greetIfQuiet(heard = "", note = "", delayMs = 700, text = "") {
     const wokeAt = Date.now();
@@ -1343,7 +1435,7 @@
       if (eva.mode !== "active") return;
       if (eva.lastUserAt > wokeAt || barge.audible) { if (n) commentary(n); return; }
       if (barge.speaking && Date.now() < giveUpAt) { setTimeout(tryGreet, 300); return; }
-      commentary(withNote(n, text || wakeGreeting(phrase)));
+      commentary(withNote(n, mode === "concierge" ? CONCIERGE_GREETING : text || wakeGreeting(phrase)));
     };
     setTimeout(tryGreet, delayMs);
   }
@@ -1906,8 +1998,31 @@
   async function newConversation() {
     await fetch(BACKEND + "/api/conversation", { method: "DELETE", headers: headers() }).catch(() => {});
     clearLog();
-    addLine("system", "Нова розмова — Єва почне з чистого аркуша.");
+    showGuest(null);
+    addLine("system", mode === "concierge"
+      ? "Наступний гість — Єва привітається і спитає ім'я. Попередня розмова в «Історії»."
+      : "Нова розмова — Єва почне з чистого аркуша. Попередня збережена в «Історії».");
     restartSession("connecting", { greet: true });
+  }
+
+  // After a refresh (or a deploy) the conversation Єва remembers is shown again: the server keeps it
+  // (server/conversations.py). Not over lines a call already wrote.
+  async function loadConversation() {
+    let data;
+    try {
+      const res = await fetch(BACKEND + "/api/conversation", { headers: headers() });
+      if (!res.ok) return;
+      data = await res.json();
+    } catch { return; }
+    if (!data.turns.length || $("log").querySelector(".msg.user, .msg.assistant")) return;
+    const notes = [...$("log").querySelectorAll(".msg.system")];
+    clearLog();
+    $("log").querySelector(".empty").remove();
+    data.turns.forEach((t) => addLine(t.role, t.text));
+    const when = new Date(data.started_at * 1000).toLocaleString("uk-UA", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+    addLine("system", "Розмова від " + when + " — Єва її пам'ятає. «Нова розмова» почне з чистого аркуша.");
+    notes.forEach((n) => $("log").appendChild(n));
+    $("log").scrollTop = $("log").scrollHeight;
   }
 
   // «Скопіювати»: the dialogue as plain text, without the page's own notes.
@@ -1965,6 +2080,7 @@
       const me = await fetchMe();
       if (!me) return;
       assistantName = me.assistant_name || ""; // renamed by voice: the copied conversation uses it
+      if (mode === "concierge" && me.guest) showGuest(me.guest);
       const { voice: serverVoice, speed: serverSpeed, style: serverStyle } = me;
       // Set on the server only when chosen there (e.g. asked by voice) — adopt it then.
       if (serverVoice && serverVoice !== voice && voices.some((x) => x.id === serverVoice)) {
@@ -2056,7 +2172,7 @@
       $(select).value = list.some((d) => d.deviceId === current) ? current : "";
       return list.length;
     };
-    fill("micSelect", "audioinput", micId, "Мікрофон");
+    otherMics = Math.max(0, fill("micSelect", "audioinput", micId, "Мікрофон") - 1);
     const outputs = fill("speakerSelect", "audiooutput", speakerId, "Динамік");
     const cameras = fill("cameraSelect", "videoinput", cameraId, "Камера");
     const named = devices.some((d) => d.label);
@@ -2078,6 +2194,7 @@
             "Щоб на динамік телефону — вийміть навушники або вимкніть Bluetooth."
           : "Динамік у цьому браузері не вибирається (потрібен Chrome, Edge або Safari 18.4+) — звук іде в системний.",
       named && !cameras ? "Камери не знайдено." : "",
+      btMicTip(devicesNow().input),
     ].filter(Boolean).join(" ") || "Зміна діє одразу, навіть посеред розмови.";
   }
 
@@ -2143,6 +2260,7 @@
   // Another mic mid-call: a new stream and gate, the call's track replaced in place — no reconnect.
   async function changeMic() {
     setDevice("mic", $("micSelect").value);
+    listDevices(); // the hints follow the pick (a Bluetooth headset's mic)
     if (await swapMic()) addLine("system", "Мікрофон: " + devicesNow().input + ".");
     showDevicesNow();
   }
@@ -2381,6 +2499,10 @@
     showPromptInfo();
     showVoiceNow();
     $("newChat").addEventListener("click", newConversation);
+    $("nextGuest").addEventListener("click", newConversation);
+    $("modeAssistant").addEventListener("click", () => setMode("assistant"));
+    $("modeConcierge").addEventListener("click", () => setMode("concierge"));
+    showMode();
     $("copyChat").addEventListener("click", copyConversation);
     $("voice").addEventListener("change", () => { stopPreview(); showVoice(true); });
     $("voicePreview").addEventListener("click", togglePreview);
@@ -2401,6 +2523,7 @@
     $("speakerSelect").addEventListener("change", changeSpeaker);
     $("cameraSelect").addEventListener("change", changeCamera);
     $("knowledgeLink").href = "knowledge.html" + location.search; // keep ?backend=… for a test backend
+    $("historyLink").href = "history.html" + location.search;
     $("devicesAllow").addEventListener("click", allowDevices);
     for (const id of ["micSelect", "speakerSelect", "cameraSelect"]) {
       $(id).addEventListener("mousedown", namesFirst); // the empty list doesn't open
@@ -2440,6 +2563,8 @@
       if (cfg.access_code_required && !accessCode) showGate();
       await loadVoices();
       refreshMe();
+      loadConversation();
+      if (mode === "concierge") checkGuestList(); // the backend is awake now
     }
     // Free Render sleeps after ~15 min without requests and forgets every conversation;
     // while the page is open and visible, keep it awake.

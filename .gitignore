@@ -20,5 +20,5 @@ private_logs/
 *.zip
 logs/
 
-# Local knowledge store (server/knowledge.py without DATABASE_URL)
-data/knowledge.db
+# Local SQLite stores without DATABASE_URL (server/knowledge.py, server/conversations.py)
+data/

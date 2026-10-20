@@ -102,3 +102,15 @@ KNOWLEDGE_LOOKUP_TOOL: dict = _fn(
     },
     required=["query"],
 )
+
+# Web «Консьєрж» mode: the backend marks who the guest is once the check question confirmed it.
+CONFIRM_GUEST_TOOL: dict = _fn(
+    "confirm_guest",
+    "Concierge: record the outcome of checking a guest against the team's list — after their answer to the "
+    "check question. verified=true only when the answer matches their record; false after a second miss.",
+    {
+        "full_name": {"type": "string", "description": "The person's full name as in the records"},
+        "verified": {"type": "boolean"},
+    },
+    required=["full_name", "verified"],
+)

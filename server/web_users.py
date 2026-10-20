@@ -3,8 +3,9 @@
 Each browser gets a random client id (kept in its localStorage): its own voice settings,
 conversation history and tool executor, so two people testing at once never share a conversation.
 
-State lives in memory only: a server restart (Render redeploy / free-tier sleep) forgets it.
-Fine for team testing; use a database for anything longer.
+State lives in memory, except the conversation: it is saved to the database (server/conversations.py) a
+couple of seconds after each change and restored when the browser comes back after a restart, so Єва
+remembers it and the page shows it again. Voice settings come from the page with every call.
 """
 from __future__ import annotations
 
@@ -12,12 +13,14 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 from config import WEB_SEARCH_MAX_CALLS_PER_TURN
 from integrations.web_search import WebSearchRateLimiter
-from server import knowledge
+from server import conversations, knowledge
+from server.db import StoreError
 from tools.executor import ToolExecutionContext, ToolExecutor
 from tools.results import ToolResult
 from tools.web_search_tool import web_search_tool_result
@@ -41,6 +44,8 @@ _MAX_USERS = 500
 _IDLE_EVICT_S = 24 * 3600
 _background: set[asyncio.Task] = set()
 VOICE_SWITCH_DEDUP_S = 15.0
+# A conversation is saved this long after it changed: transcript deltas come many a second, one write covers them.
+SAVE_DELAY_S = 2.0
 # Camera (look_at_camera). A look is what is in front of the camera now: the page snaps a frame as soon
 # as the request goes to the backend (and again when this tool is called). Taking the latest periodic
 # frame (up to 5 s old) missed what was just held up — prod: «підніс до камери, а вона нічого не
@@ -72,13 +77,20 @@ class WebUser:
     # within this window after a switch the others are the same request, not a new one.
     voice_switched_at: float = 0.0
     voice_switch_note: str = ""  # who switched it — shown on the page next to «Голос змінено»
-    # Dialogue history independent of the Live session (and so of the voice).
-    conversation: ConversationLog = field(default_factory=ConversationLog)
+    # Dialogue history independent of the Live session (and so of the voice), saved to the database.
+    conversation: ConversationLog = field(default_factory=lambda: ConversationLog(merge_interleaved=True))
+    conversation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    conversation_started_at: float = field(default_factory=time.time)
+    _save_timer: threading.Timer | None = field(default=None, repr=False)
+    _save_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _write_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     # What people nearby said while Єва was paused — handed to her on the next wake.
     background: BackgroundLog = field(default_factory=lambda: BackgroundLog(_summarize_background))
     last_seen: float = field(default_factory=time.time)
     bridges: set[Any] = field(default_factory=set)  # open calls (SidebandToolBridge)
     # The latest camera frame (JPEG), in memory only; camera_on is false once the page turns it off.
+    # «Консьєрж»: who the guest was confirmed as (confirm_guest); cleared by «Наступний гість».
+    guest: dict | None = None
     camera_on: bool = False
     camera_frame: bytes | None = None
     camera_frame_at: float = 0.0
@@ -129,6 +141,53 @@ class WebUser:
 
     def __post_init__(self) -> None:
         self.executor = _build_executor(self)
+        self.conversation.on_change = self._save_soon
+
+    # ── the conversation in the database (server/conversations.py) ──
+    def _save_soon(self) -> None:
+        with self._save_lock:
+            if self._save_timer is None:
+                self._save_timer = threading.Timer(SAVE_DELAY_S, self.save_conversation)
+                self._save_timer.daemon = True
+                self._save_timer.start()
+
+    def save_conversation(self) -> None:
+        """Write it now (a pending save is folded in). A store that is down only loses this write."""
+        with self._save_lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+                self._save_timer = None
+        with self._write_lock:  # one write at a time: an older snapshot never lands after a newer one
+            try:
+                conversations.store.save(
+                    self.conversation_id, self.client_id, self.conversation_started_at, self.conversation.to_list()
+                )
+            except StoreError:
+                logger.warning("web.conversation.save_failed client=%s", self.client_id[:8])
+
+    def restore_conversation(self) -> None:
+        """After a restart: the browser's latest conversation becomes the current one again."""
+        try:
+            saved = conversations.store.latest(self.client_id)
+        except StoreError:
+            return
+        if saved and not len(self.conversation):
+            self.conversation_id, self.conversation_started_at = saved["id"], saved["started_at"]
+            self.conversation.load(saved["turns"])
+            logger.info("web.conversation.restored client=%s turns=%s", self.client_id[:8], len(saved["turns"]))
+
+    def new_conversation(self) -> None:
+        """«Нова розмова»: the current one stays saved (in «Історія»), a new one starts empty."""
+        self.save_conversation()
+        self.conversation_id, self.conversation_started_at = uuid.uuid4().hex, time.time()
+        self.conversation.clear()
+        self.guest = None
+
+    def resume_conversation(self, saved: dict) -> None:
+        """«Продовжити»: a saved conversation becomes the current one (the current one is saved first)."""
+        self.save_conversation()
+        self.conversation_id, self.conversation_started_at = saved["id"], saved["started_at"]
+        self.conversation.load(saved["turns"])
 
 
 _summarizer = None
@@ -283,6 +342,18 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         )
         return ToolResult(ok=True, status="ok", message=head + found["text"], data={"total": found["total"], "shown": found["shown"]})
 
+    def confirm_guest(args: dict, ctx: ToolExecutionContext) -> ToolResult:
+        name = " ".join(str(args.get("full_name") or "").split())[:200]
+        verified = bool(args.get("verified"))
+        user.guest = {"name": name, "verified": verified, "at": time.time()}
+        logger.info("web.concierge.guest verified=%s", verified)
+        if verified:
+            return ToolResult(ok=True, status="ok", message=f"Гостя підтверджено: {name}. Привітай на ім'я і спитай, як минає день.")
+        return ToolResult(
+            ok=True, status="not_verified",
+            message="Не підтверджено. Ввічливо скажи, що не вдалося підтвердити, і запропонуй покликати когось із команди.",
+        )
+
     executor.register("set_assistant_name", set_name)
     executor.register("change_language", change_language)
     executor.register("change_voice", change_voice)
@@ -291,6 +362,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
     executor.register("web_search", web_search, run_in_thread=True)  # network: off the event loop
     executor.register("look_at_camera", look_at_camera, run_in_thread=True)  # may wait for a frame
     executor.register("knowledge_lookup", knowledge_lookup, run_in_thread=True)  # database
+    executor.register("confirm_guest", confirm_guest)
     return executor
 
 
@@ -302,19 +374,33 @@ class WebUserRegistry:
     def get(self, client_id: str) -> WebUser:
         with self._lock:
             user = self._users.get(client_id)
+            created = user is None
             if user is None:
                 self._evict_idle()
                 user = WebUser(client_id=client_id)
                 self._users[client_id] = user
                 logger.info("web.user.created users=%s", len(self._users))
             user.last_seen = time.time()
-            return user
+        if created:
+            user.restore_conversation()  # outside the lock: the database may take a moment
+        return user
+
+    def save_all(self) -> None:
+        """Server shutting down (a deploy): write the conversations still waiting to be saved."""
+        with self._lock:
+            pending = [u for u in self._users.values() if u._save_timer is not None]
+        for user in pending:
+            user.save_conversation()
 
     def _evict_idle(self) -> None:
         now = time.time()
         stale = [cid for cid, u in self._users.items() if now - u.last_seen > _IDLE_EVICT_S and not u.bridges]
         for cid in stale:
-            del self._users[cid]
+            self._forget(cid)
         while len(self._users) >= _MAX_USERS:
-            oldest = min(self._users.values(), key=lambda u: u.last_seen)
-            del self._users[oldest.client_id]
+            self._forget(min(self._users.values(), key=lambda u: u.last_seen).client_id)
+
+    def _forget(self, client_id: str) -> None:
+        user = self._users.pop(client_id)
+        if user._save_timer is not None:  # not written yet: now, before it is gone
+            user.save_conversation()

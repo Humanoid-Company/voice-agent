@@ -574,3 +574,54 @@ def test_diag_keeps_numbers_only():
     assert client.post("/api/diag", headers=headers, content=b"x" * 5000).status_code == 413
     last = client.get("/api/diag", params={"n": 1}).json()[-1]
     assert last["data"] == {"gate": {"echo": 0.12, "mic": "speakers"}, "said": None, "barge": {"muteMs": [800, 1500]}}
+
+
+def test_typed_line_joins_the_conversation_and_the_chat_note(client):
+    """/chat: a typed message is the user's line (history, tools), and a chat call knows they type."""
+    from server.live_bridge import SidebandToolBridge
+
+    user = web.users.get("chat-browser-0123456789ab")
+    bridge = SidebandToolBridge(client=None, session_id="s9", executor=user.executor, conversation=user.conversation)
+    user.bridges.add(bridge)
+    res = client.post("/api/conversation/text", json={"text": "  Зміни голос на чоловічий  "},
+                      headers={"X-Client-Id": "chat-browser-0123456789ab"})
+    assert res.json() == {"ok": True}
+    assert user.conversation.to_list() == [{"role": "user", "text": "Зміни голос на чоловічий"}]
+    assert bridge._user_turns[-1] == "Зміни голос на чоловічий"  # change_voice sees it as asked
+    assert client.post("/api/conversation/text", json={"text": " "}, headers={"X-Client-Id": "chat-browser-0123456789ab"}).status_code == 422
+    assert "Text chat" in web._session_config(user, chat=True)["instructions"]
+    assert "Text chat" not in web._session_config(user)["instructions"]
+
+
+def test_chat_calls_do_not_think_aloud():
+    """/chat: no «thinking aloud» lines while the backend works — she read the typed question back."""
+    from server.live_bridge import SidebandToolBridge
+
+    async def run():
+        voice = SidebandToolBridge(client=None, session_id="v", executor=web.users.get("tv-browser-0123456789abc").executor)
+        chat = SidebandToolBridge(client=None, session_id="c", executor=web.users.get("tc-browser-0123456789abc").executor,
+                                  think_aloud=False)
+        voice._work_started("k")
+        chat._work_started("k")
+        assert "k" in voice._mumbles and "k" not in chat._mumbles
+        voice._mumbles["k"].cancel()
+
+    asyncio.run(run())
+
+
+def test_concierge_mode_and_confirm_guest(client):
+    """«Консьєрж»: her rules and the backend's check protocol only in that mode; confirm_guest marks the guest,
+    «Наступний гість» clears it, and the page sees it in /api/me."""
+    user = web.users.get("conc-browser-0123456789ab")
+    plain, conc = web._session_config(user), web._session_config(user, concierge=True)
+    assert "Concierge mode" in conc["instructions"] and "Concierge mode" not in plain["instructions"]
+    names = lambda c: [t["name"] for t in c["delegation"]["responses"]["tools"]]  # noqa: E731
+    assert "confirm_guest" in names(conc) and "confirm_guest" not in names(plain)
+    assert "CONCIERGE" in conc["delegation"]["responses"]["instructions"]
+    ok = asyncio.run(user.executor.execute("confirm_guest", {"full_name": "Олег Петренко", "verified": True},
+                                           ToolExecutionContext(session_id="s")))
+    assert ok.ok and "Олег Петренко" in ok.message
+    me = client.get("/api/me", headers={"X-Client-Id": "conc-browser-0123456789ab"}).json()
+    assert me["guest"]["name"] == "Олег Петренко" and me["guest"]["verified"] is True
+    client.delete("/api/conversation", headers={"X-Client-Id": "conc-browser-0123456789ab"})  # «Наступний гість»
+    assert client.get("/api/me", headers={"X-Client-Id": "conc-browser-0123456789ab"}).json()["guest"] is None

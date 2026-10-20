@@ -15,6 +15,12 @@ from tools.executor import ToolExecutionContext
 CSV = "ПІБ;Посада;Тварини\nОлег Петренко;бекенд-розробник;кіт Бублик\nОлег Гнатюк;дизайнер;\n".encode()
 
 
+@pytest.fixture(autouse=True)
+def guest_list():
+    """The team's list the concierge checks against (the stores are temporary per test, conftest.py)."""
+    knowledge.store.create_set("Гості", parse_file("g.csv", CSV).items)
+
+
 @pytest.fixture()
 def client(monkeypatch):
     monkeypatch.setattr(web, "ACCESS_CODE", "")
@@ -59,7 +65,6 @@ def test_not_verified_needs_no_answer():
 
 
 def test_lookup_in_concierge_marks_who_is_in():
-    knowledge.store.create_set("Гості", parse_file("g.csv", CSV).items)
     checkins.store.add("Олег Петренко")
     user = web.users.get("conc-f-0123456789abcdef")
     ctx = ToolExecutionContext(session_id="s")
@@ -82,4 +87,87 @@ def test_the_prompts_forbid_skipping_the_check_and_inventing():
     conc = web._session_config(web.users.get("conc-g-0123456789abcdef"), concierge=True)
     assert "Never invent a place" in conc["instructions"]
     backend = conc["delegation"]["responses"]["instructions"]
-    assert "never enough" in backend and "ВЖЕ ВІДМІЧЕНО" in backend and "never invent places" in backend
+    assert "never enough" in backend and "already registered" in backend and "never invent places" in backend
+    assert "find_guest" in backend and "who invited them" in backend and "who invited them" in conc["instructions"]
+
+
+def test_its_own_prompt_no_small_talk_and_only_the_tools_it_needs():
+    """v5 made her a friend for a chat («Ну що, як твої справи?»); the concierge has its own prompt."""
+    user = web.users.get("conc-h-0123456789abcdef")
+    conc = web._session_config(user, concierge=True)
+    assert "No small talk" in conc["instructions"] and "«ти»" not in conc["instructions"]
+    assert "personal voice assistant" not in conc["instructions"]  # not v5
+    tools = {t["name"] for t in conc["delegation"]["responses"]["tools"]}
+    assert tools == {"find_guest", "confirm_guest", "knowledge_lookup", "end_conversation", "change_language"}  # no web, no camera
+    ok = confirm(user, ["Петренко", "кіт Бублик"], "кіт Бублик")
+    assert "Проходьте" in ok.message and "як минає" not in ok.message
+
+
+def test_the_check_question_is_about_a_random_fact_stable_within_a_visit():
+    user = web.users.get("conc-i-0123456789abcdef")
+    user.concierge = True
+    ctx = ToolExecutionContext(session_id="s")
+
+    def asked():
+        message = asyncio.run(user.executor.execute("knowledge_lookup", {"query": "Петренко"}, ctx)).message
+        line = next(x for x in message.splitlines() if x.startswith("[Гості] Олег Петренко"))
+        return line.rsplit("[перевірка: ", 1)[1].rstrip("]")
+
+    first = asked()
+    assert first in ("Посада", "Тварини") and asked() == first  # the same while this guest talks
+    picks = set()
+    for _ in range(20):  # next guests: «Наступний гість» starts a new conversation
+        user.new_conversation()
+        picks.add(asked())
+    assert picks == {"Посада", "Тварини"}
+
+
+def test_no_thinking_aloud_for_the_concierge():
+    """«Так, Тарас у нас є, зараз звірю…» told a stranger the name is on the list before any check."""
+    from server.live_bridge import SidebandToolBridge
+
+    async def run():
+        user = web.users.get("conc-j-0123456789abcdef")
+        voice = SidebandToolBridge(client=None, session_id="v", executor=user.executor)
+        host = SidebandToolBridge(client=None, session_id="c", executor=user.executor, think_aloud=False)
+        voice._work_started("k")
+        host._work_started("k")
+        assert "k" in voice._mumbles and "k" not in host._mumbles
+        voice._mumbles["k"].cancel()
+
+    asyncio.run(run())
+
+
+def find(user, name, surname=""):
+    return asyncio.run(user.executor.execute("find_guest", {"name": name, "surname": surname},
+                                             ToolExecutionContext(session_id="s")))
+
+
+def test_find_guest_short_forms_surnames_and_people_not_on_the_list():
+    knowledge.store.create_set("Ще", parse_file("h.csv", "ПІБ;Хобі\nКатерина Шаповал;книжки\nДмитро Кравець;гольф\n".encode()).items)
+    user = web.users.get("conc-k-0123456789abcdef")
+    katya = find(user, "Катя")
+    assert katya.status == "found" and "Катерина Шаповал" in katya.message and "коротка форма" in katya.message
+    assert find(user, "Діма").status == "found" and find(user, "Каті").status == "found"  # a case ending too
+    assert find(user, "Олег").status == "ask_surname" and "нікого не називай" in find(user, "Олег").message
+    assert find(user, "Алєг", "Гнатюк").data["name"] == "Олег Гнатюк"  # how a recogniser may write Олег
+    for stranger in ("Петро", "Тімлід", "Саша"):  # «Петро» is not «Петренко»
+        res = find(user, stranger)
+        assert res.status == "not_found" and "хто запрошував" in res.message
+
+
+def test_find_guest_says_already_registered_without_a_check_question():
+    checkins.store.add("Олег Петренко")
+    res = find(web.users.get("conc-l-0123456789abcdef"), "Олег", "Петренко")
+    assert res.status == "already_checked_in" and "Без перевірочного питання" in res.message
+
+
+def test_find_guest_names_the_fact_to_ask_about():
+    res = find(web.users.get("conc-m-0123456789abcdef"), "Олег", "Петренко")
+    assert res.status == "found" and ("про «Посада»" in res.message or "про «Тварини»" in res.message)
+
+
+def test_nobody_off_the_list_can_be_confirmed():
+    res = confirm(web.users.get("conc-n-0123456789abcdef"), ["Петро Іваненко", "я бухгалтер"], "бухгалтер",
+                  name="Петро Іваненко")
+    assert res.status == "not_on_list" and checkins.store.all() == []

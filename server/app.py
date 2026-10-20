@@ -39,14 +39,20 @@ from config import (
     WEB_SEARCH_API_KEY,
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
-from prompts.live_prompt import build_live_prompt
+from prompts.live_prompt import build_concierge_prompt, build_live_prompt
 from server import checkins, conversations, knowledge, usage
 from server.call_log import CallLogStore
 from server.db import StoreError
 from server.knowledge_import import KnowledgeImportError, make_openai_extract, parse_file
 from server.live_bridge import SidebandToolBridge
 from server.web_users import WebUser, WebUserRegistry
-from tools.live_schemas import CONFIRM_GUEST_TOOL, KNOWLEDGE_LOOKUP_TOOL, LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL
+from tools.live_schemas import (
+    CONFIRM_GUEST_TOOL,
+    FIND_GUEST_TOOL,
+    KNOWLEDGE_LOOKUP_TOOL,
+    LIVE_BACKEND_TOOLS,
+    LOOK_AT_CAMERA_TOOL,
+)
 from voice.background import wake_commentary
 from voice.delegation import responses_delegation
 from voice.options import (
@@ -181,6 +187,8 @@ def _session_config(
     language = LANGUAGE_OPTIONS.get(user.language, LANGUAGE_OPTIONS["uk"])
     today = local_today()
     voice = _user_voice(user)
+    if concierge:
+        return _concierge_config(user, language, today, voice)
     config = {
         "model": OPENAI_LIVE_MODEL,
         "instructions": build_live_prompt(
@@ -193,22 +201,47 @@ def _session_config(
         )
         + _WEB_NOTE
         + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
-        + knowledge.live_note(knowledge_sets or [])
-        + (knowledge.CONCIERGE_NOTE if concierge else ""),
+        + knowledge.live_note(knowledge_sets or []),
         "audio": {"output": {"voice": voice}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
-            + knowledge.BACKEND_NOTE
-            + (knowledge.CONCIERGE_BACKEND_NOTE if concierge else ""),
-            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL,
-                   *([CONFIRM_GUEST_TOOL] if concierge else [])],
+            + knowledge.BACKEND_NOTE,
+            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
         ),
     }
     # A new voice or a wake after a long pause is a new Live session: it starts from the
     # conversation so far, so nothing said before is forgotten.
+    history = user.conversation.live_input()
+    if history:
+        config["input"] = history
+    return config
+
+
+# «Консьєрж»: the backend gets only what the job needs — the list, the check-in, ending, the language. No web
+# search or camera: nothing to make up a bar «five minutes away» from.
+_CONCIERGE_TOOLS = ("find_guest", "confirm_guest", "knowledge_lookup", "end_conversation", "change_language")
+
+
+def _concierge_config(user: WebUser, language: str, today: str, voice: str) -> dict:
+    """Its own prompt (prompts/live_prompt.py build_concierge_prompt), not the friend-for-a-chat v5."""
+    tools = [t for t in [*LIVE_BACKEND_TOOLS, FIND_GUEST_TOOL, CONFIRM_GUEST_TOOL, KNOWLEDGE_LOOKUP_TOOL]
+             if t["name"] in _CONCIERGE_TOOLS]
+    config = {
+        "model": OPENAI_LIVE_MODEL,
+        "instructions": build_concierge_prompt(language_name=language, today=today, voice=voice),
+        "audio": {"output": {"voice": voice}},
+        "delegation": responses_delegation(
+            model=OPENAI_LIVE_BACKEND_MODEL,
+            instructions=build_backend_prompt(today=today, language_name=language)
+            + knowledge.BACKEND_NOTE + knowledge.CONCIERGE_BACKEND_NOTE,
+            tools=tools,
+            parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
+            effort=OPENAI_LIVE_BACKEND_EFFORT,
+        ),
+    }
     history = user.conversation.live_input()
     if history:
         config["input"] = history
@@ -327,6 +360,7 @@ async def create_session(
         conversation=user.conversation,
         on_voice_request=user.switch_voice_by_request,
         call_log=call_log,
+        think_aloud=not user.concierge,
     )
     user.bridges.add(bridge)
     task = asyncio.create_task(bridge.run())

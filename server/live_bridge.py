@@ -117,9 +117,13 @@ class SidebandToolBridge:
         conversation: ConversationLog | None = None,
         on_voice_request: Callable[[str], bool] | None = None,
         call_log: CallLog | None = None,
+        think_aloud: bool = True,
     ) -> None:
         self._client = client
         self.expired = False  # closed by the cost cap (max_duration_s), not by the page
+        # Short lines while the backend works. Off for «Консьєрж»: «Так, Тарас у нас є, зараз звірю…» told a
+        # stranger the name is on the list before any check, and a host just says «Секунду».
+        self._think_aloud = think_aloud
         # /logs: what was said and done in this call (server/call_log.py).
         self.call_log = call_log
         self.session_id = session_id
@@ -379,7 +383,8 @@ class SidebandToolBridge:
             return
         self._work[key] = []
         self._work_started_at[key] = time.time()
-        self._mumbles[key] = asyncio.create_task(self._mumble(key))
+        if self._think_aloud:
+            self._mumbles[key] = asyncio.create_task(self._mumble(key))
 
     async def _mumble(self, key: str) -> None:
         """Delegated work runs: short lines thinking aloud until its answer is ready."""

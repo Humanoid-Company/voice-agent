@@ -61,10 +61,11 @@
   }
 
   // One record: the name, then its facts.
-  function recordCard(item, onRemove) {
-    return el("article", { class: "record" },
+  function recordCard(item, onRemove, checkedAt) {
+    return el("article", { class: "record" + (checkedAt ? " checked" : "") },
       el("div", { class: "record-head" },
         el("strong", {}, item.title),
+        checkedAt && el("span", { class: "check-badge", title: "Консьєрж уже пропустив цю людину" }, "✓ відмічено о " + checkedAt),
         onRemove && el("button", { class: "icon-btn", type: "button", title: "Прибрати", "aria-label": "Прибрати " + item.title, onclick: onRemove }, "×")),
       Object.keys(item.fields).length
         ? el("dl", {}, Object.entries(item.fields).map(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]))
@@ -196,9 +197,19 @@
   }
 
   // A big set draws its first PREVIEW_MAX records: a phone would choke on two thousand cards.
+  // «Консьєрж» marks who has been let in (server/checkins.py): the same name, any word order.
+  const nameKey = (t) => t.toLowerCase().replace(/[’ʼ]/g, "'").split(/[^\p{L}'-]+/u).filter((w) => w.length >= 3).sort().join(" ");
+  let checked = new Map(); // name key → «18:46»
+  async function loadCheckins() {
+    try {
+      const data = await api("/api/concierge/checkins");
+      checked = new Map(data.checkins.map((c) => [nameKey(c.full_name), c.time]));
+    } catch { checked = new Map(); }
+  }
+
   function fillRecords(body, items) {
     const more = items.length > PREVIEW_MAX ? [el("p", { class: "hint" }, "…і ще " + records(items.length - PREVIEW_MAX) + ".")] : [];
-    body.replaceChildren(...items.slice(0, PREVIEW_MAX).map((item) => recordCard(item)), ...more);
+    body.replaceChildren(...items.slice(0, PREVIEW_MAX).map((item) => recordCard(item, null, checked.get(nameKey(item.title)))), ...more);
   }
 
   async function toggleView(s, body, button) {
@@ -211,7 +222,7 @@
     }
     button.disabled = true;
     try {
-      const full = await api("/api/knowledge/" + s.id);
+      const [full] = await Promise.all([api("/api/knowledge/" + s.id), loadCheckins()]);
       opened.set(s.id, full.items);
       fillRecords(body, full.items);
       body.hidden = false;

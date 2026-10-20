@@ -579,9 +579,13 @@ def test_diag_keeps_numbers_only():
 def test_concierge_mode_and_confirm_guest(client):
     """«Консьєрж»: her rules and the backend's check protocol only in that mode; confirm_guest marks the guest,
     «Наступний гість» clears it, and the page sees it in /api/me."""
+    from server import knowledge
+    from server.knowledge_import import parse_file
+
+    knowledge.store.create_set("Гості", parse_file("g.csv", "ПІБ;Посада\nОлег Петренко;бекенд-розробник\n".encode()).items)
     user = web.users.get("conc-browser-0123456789ab")
     plain, conc = web._session_config(user), web._session_config(user, concierge=True)
-    assert "Concierge mode" in conc["instructions"] and "Concierge mode" not in plain["instructions"]
+    assert "the concierge at the entrance" in conc["instructions"] and "concierge" not in plain["instructions"]
     names = lambda c: [t["name"] for t in c["delegation"]["responses"]["tools"]]  # noqa: E731
     assert "confirm_guest" in names(conc) and "confirm_guest" not in names(plain)
     assert "CONCIERGE" in conc["delegation"]["responses"]["instructions"]

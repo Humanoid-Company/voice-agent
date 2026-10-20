@@ -19,7 +19,7 @@ from typing import Any
 
 from config import WEB_SEARCH_MAX_CALLS_PER_TURN
 from integrations.web_search import WebSearchRateLimiter
-from server import checkins, conversations, knowledge
+from server import checkins, conversations, guests, knowledge
 from server.db import StoreError
 from tools.executor import ToolExecutionContext, ToolExecutor
 from tools.results import ToolResult
@@ -197,19 +197,30 @@ class WebUser:
 _summarizer = None
 
 
-def _mark_checked_in(text: str) -> str:
-    """«Консьєрж»: a record of someone already let in says so, so the backend stops before the check question."""
+def _concierge_marks(text: str, conversation_id: str) -> str:
+    """«Консьєрж»: each record says what to ask about — a fact picked at random per guest and visit (one
+    question for everyone, «ким ви працюєте?», could be learned) — or that the person was let in already, so
+    the backend stops before the check question."""
     try:
         done = {checkins.name_key(c["full_name"]): c["time"] for c in checkins.store.all()}
     except StoreError:
-        return text
-    if not done:
-        return text
+        done = {}
     lines = []
     for line in text.split("\n"):
-        title = line.split("] ", 1)[-1].split(" — ", 1)[0]
+        if not line.startswith("[") or " — " not in line:
+            lines.append(line)
+            continue
+        title, facts = line.split("] ", 1)[-1].split(" — ", 1)
         when = done.get(checkins.name_key(title))
-        lines.append(f"{line} [ВЖЕ ВІДМІЧЕНО о {when}]" if when else line)
+        if when:
+            lines.append(f"{line} [ВЖЕ ВІДМІЧЕНО о {when}]")
+            continue
+        keys = [f.split(":", 1)[0].strip() for f in facts.split("; ") if ":" in f]
+        pick = guests.pick_fact(title, keys, conversation_id)
+        if pick:
+            lines.append(f"{line} [перевірка: {pick}]")
+        else:
+            lines.append(line)
     return "\n".join(lines)
 
 
@@ -357,13 +368,56 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             )
         text = found["text"]
         if user.concierge:
-            text = _mark_checked_in(text)
+            text = _concierge_marks(text, user.conversation_id)
         head = (
             f"Записи команди ({found['shown']} з {found['total']}"
             + (", найближчі до запиту" if found["shown"] < found["total"] else ", усі")
             + "). Відповідай лише з них; чого тут немає — того ти не знаєш.\n"
         )
         return ToolResult(ok=True, status="ok", message=head + text, data={"total": found["total"], "shown": found["shown"]})
+
+    def find_guest(args: dict, ctx: ToolExecutionContext) -> ToolResult:
+        heard = " ".join(str(args.get("name") or "").split())[:100]
+        surname = " ".join(str(args.get("surname") or "").split())[:100]
+        try:
+            records = knowledge.store.enabled_records()[1]
+        except knowledge.KnowledgeError as exc:
+            return ToolResult(ok=False, status="error", message=f"{exc} Скажи, що зараз не можеш перевірити список, і поклич когось із команди.")
+        found = guests.find_guest(heard, surname, records)
+        logger.info("web.concierge.find status=%s", found.status)
+        said = (heard + " " + surname).strip()
+        if found.status == "not_found":
+            return ToolResult(
+                ok=True, status="not_found", data=guests.as_dict(found),
+                message=f"У списку гостей нікого з іменем «{said}» немає (перевірено й короткі форми та схожі написання). "
+                "Ввічливо скажи, що не знаходиш людину з таким ім'ям серед гостей; якщо ти ще не перепитувала — попроси "
+                "повторити ім'я або назвати прізвище. Якщо й тоді немає — порадь звернутися до того, хто запрошував, або "
+                "до когось із команди. Не пускай і нікого зі списку не називай.",
+            )
+        if found.status == "ask_surname":
+            return ToolResult(
+                ok=True, status="ask_surname", data=guests.as_dict(found),
+                message=f"З цим ім'ям у списку {found.count} людей. Спитай прізвище — нікого не називай.",
+            )
+        record = found.record
+        assert record is not None
+        try:
+            before = checkins.store.find(record.title)
+        except StoreError:
+            before = None
+        if before is not None:
+            return ToolResult(
+                ok=True, status="already_checked_in", data=guests.as_dict(found),
+                message=f"{record.title} вже відмічений сьогодні о {before['time']} — другий раз пройти не можна. Без "
+                "перевірочного питання: ввічливо скажи, що цю людину вже зареєстровано, і що зараз підійде хтось із команди.",
+            )
+        pick = guests.pick_fact(record.title, list(record.fields), user.conversation_id)
+        return ToolResult(
+            ok=True, status="found", data=guests.as_dict(found),
+            message=f"У списку є: {record.title}" + (f" ({found.short_form})" if found.short_form else "") + ". "
+            f"Запис (нікому не зачитуй): {record.line()}. Перевірочне питання — про «{pick}»: одне відкрите питання, "
+            "яке не містить відповіді й не підказує її. Відповідь гостя звір за змістом і тоді виклич confirm_guest.",
+        )
 
     def confirm_guest(args: dict, ctx: ToolExecutionContext) -> ToolResult:
         name = " ".join(str(args.get("full_name") or "").split())[:200]
@@ -375,7 +429,19 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                 ok=True, status="not_verified",
                 message="Не підтверджено. Ввічливо скажи, що не вдалося підтвердити, і запропонуй покликати когось із команди.",
             )
-        # Only with the guest's own answer to the check question, heard in this call — not their name.
+        # Only for a person really on the list…
+        try:
+            on_list = guests.is_on_list(name, knowledge.store.enabled_records()[1])
+        except knowledge.KnowledgeError:
+            on_list = True  # the list can't be read: the check question still guards it
+        if not on_list:
+            logger.info("web.concierge.confirm_refused why=not_on_list")
+            return ToolResult(
+                ok=False, status="not_on_list",
+                message="Такої людини у списку гостей немає — підтвердити не можна. Порадь звернутися до того, хто "
+                "запрошував, або до когось із команди.",
+            )
+        # …and only with the guest's own answer to the check question, heard in this call — not their name.
         problem = checkins.answer_problem(name, str(args.get("guest_answer") or ""), ctx.user_utterances or [])
         if problem:
             logger.info("web.concierge.confirm_refused why=%s", problem)
@@ -401,7 +467,10 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             )
         user.guest = {"name": name, "verified": True, "at": time.time()}
         logger.info("web.concierge.guest verified=True")
-        return ToolResult(ok=True, status="ok", message=f"Гостя підтверджено й відмічено: {name}. Привітай на ім'я і спитай, як минає день.")
+        return ToolResult(
+            ok=True, status="ok",
+            message=f"Гостя підтверджено й відмічено: {name}. Коротко привітай на ім'я і скажи «Проходьте, будь ласка» — без питань і розпитувань.",
+        )
 
     executor.register("set_assistant_name", set_name)
     executor.register("change_language", change_language)
@@ -411,7 +480,8 @@ def _build_executor(user: WebUser) -> ToolExecutor:
     executor.register("web_search", web_search, run_in_thread=True)  # network: off the event loop
     executor.register("look_at_camera", look_at_camera, run_in_thread=True)  # may wait for a frame
     executor.register("knowledge_lookup", knowledge_lookup, run_in_thread=True)  # database
-    executor.register("confirm_guest", confirm_guest)
+    executor.register("find_guest", find_guest, run_in_thread=True)  # database
+    executor.register("confirm_guest", confirm_guest, run_in_thread=True)
     return executor
 
 

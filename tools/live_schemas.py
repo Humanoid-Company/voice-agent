@@ -116,3 +116,17 @@ CONFIRM_GUEST_TOOL: dict = _fn(
     },
     required=["full_name", "verified", "guest_answer"],
 )
+
+# Web «Консьєрж»: who on the list a name belongs to — matched by the server (short forms, case endings, near
+# spellings), not guessed by the model.
+FIND_GUEST_TOOL: dict = _fn(
+    "find_guest",
+    "Concierge: check a name a person gave against the team's guest list. The server matches short forms "
+    "(«Катя» → Катерина), case endings and near spellings, and says what to reply: not on the list, ask the "
+    "surname, already registered, or the one person with the fact to ask the check question about.",
+    {
+        "name": {"type": "string", "description": "The first name as heard"},
+        "surname": {"type": "string", "description": "The surname if they said it, else omit"},
+    },
+    required=["name"],
+)

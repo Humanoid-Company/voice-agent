@@ -55,7 +55,7 @@ def call_row(log: CallLog) -> dict[str, Any]:
     ended = log.ended_at or time.time()
     backend = [e for e in data["events"] if e["kind"] == "backend_done"]
     meta = log.meta
-    kind = "chat" if meta.get("via") == "chat" else "concierge" if meta.get("mode") == "concierge" else "voice"
+    kind = "concierge" if meta.get("mode") == "concierge" else "voice"
     return {
         "session_id": log.session_id, "client": log.client, "started_at": log.started_at,
         "seconds": max(0.0, ended - log.started_at), "kind": kind,

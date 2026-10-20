@@ -33,10 +33,9 @@ def _log(session: str, minutes: float, *, tokens=(0, 0), tools=0, **meta) -> Cal
 
 
 def test_call_row_counts_minutes_tokens_and_kind():
-    row = usage.call_row(_log("s1", 2, tokens=(6000, 50), tools=1, via="chat"))
-    assert round(row["seconds"]) == 120 and row["tokens_in"] == 6000 and row["tools"] == 1 and row["kind"] == "chat"
+    row = usage.call_row(_log("s1", 2, tokens=(6000, 50), tools=1))
+    assert round(row["seconds"]) == 120 and row["tokens_in"] == 6000 and row["tools"] == 1 and row["kind"] == "voice"
     assert usage.call_row(_log("s2", 1, mode="concierge"))["kind"] == "concierge"
-    assert usage.call_row(_log("s3", 1))["kind"] == "voice"
 
 
 def test_summary_per_day_and_browser_with_prices():

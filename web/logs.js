@@ -207,7 +207,7 @@
 
   // ── what the calls cost (server/usage.py): kept in the database, so a deploy doesn't clear it ──
   const usd = (v) => "$" + Number(v).toFixed(2);
-  const KIND = { voice: "голос", chat: "чат", concierge: "консьєрж" };
+  const KIND = { voice: "голос", concierge: "консьєрж" };
   const kinds = (k) => Object.entries(k || {}).map(([name, n]) => (KIND[name] || name) + " " + n).join(", ");
   async function loadUsage() {
     if (!token) { $("usage").textContent = "Введіть токен (LOGS_TOKEN на Render)."; return; }

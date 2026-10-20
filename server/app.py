@@ -100,14 +100,6 @@ _CAMERA_NOTE_V5 = (
     "imagination. Tell what it saw as if you looked («Бачу…»), only what it reported; one look per "
     "request. A description no look confirmed is your mistake, never the user's."
 )
-# /chat: the user types and hears her. Their messages go to the backend (the page sends them as the user's
-# message, like a request said with the wake phrase), and she says its answers.
-_CHAT_NOTE = (
-    "\nText chat: right now the user can't talk — they type to you in a chat and hear you. Each message "
-    "goes to the backend and its answer comes to you: say it in your own words, as speech, briefly (a long "
-    "list or a link — the gist). You hear nothing from them; never ask them to say something aloud or "
-    "wonder why they are quiet — they read and type."
-)
 # Delivery prompts the page may pick; v5 is the default. v1 and v2 are desktop-only (a page asking for them gets v5).
 WEB_PROMPT_VARIANTS = ("v3", "v4", "v5")
 # A camera frame (JPEG from the page, 768 px): far below this; anything bigger is not ours.
@@ -182,7 +174,7 @@ def _knowledge_sets() -> list[dict]:
 
 
 def _session_config(
-    user: WebUser, knowledge_sets: list[dict] | None = None, *, chat: bool = False, concierge: bool = False
+    user: WebUser, knowledge_sets: list[dict] | None = None, *, concierge: bool = False
 ) -> dict:
     """knowledge_sets: what the team uploaded (_knowledge_sets) — she is told about it, so questions about
     those people go to the backend; the lookup tool is there either way."""
@@ -202,7 +194,6 @@ def _session_config(
         + _WEB_NOTE
         + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
         + knowledge.live_note(knowledge_sets or [])
-        + (_CHAT_NOTE if chat else "")
         + (knowledge.CONCIERGE_NOTE if concierge else ""),
         "audio": {"output": {"voice": voice}},
         "delegation": responses_delegation(
@@ -238,8 +229,6 @@ class SessionRequest(BaseModel):
     keep_old: bool = False
     # Delivery prompt: v4 (default) or v3.
     prompt: str | None = None
-    # Opened by /chat: the user types, she answers aloud (_CHAT_NOTE).
-    chat: bool = False
     # The page's top switch: "concierge" — she welcomes people and checks them against «Знання».
     mode: str | None = None
 
@@ -303,7 +292,7 @@ async def create_session(
         user.conversation.end_turn()
     try:
         result = await openai_client.live.create(
-            session=_session_config(user, await asyncio.to_thread(_knowledge_sets), chat=body.chat,
+            session=_session_config(user, await asyncio.to_thread(_knowledge_sets),
                                     concierge=body.mode == "concierge"),
             transport={"type": "webrtc", "sdp": body.sdp},
         )
@@ -324,7 +313,6 @@ async def create_session(
         session_id, user.client_id[:8], voice=_user_voice(user), prompt=user.prompt_variant,
         model=OPENAI_LIVE_MODEL, backend=OPENAI_LIVE_BACKEND_MODEL, effort=OPENAI_LIVE_BACKEND_EFFORT or "default",
         history=len(user.conversation.live_input()), speed=user.speed, style=user.style,
-        **({"via": "chat"} if body.chat else {}),
         **({"mode": "concierge"} if body.mode == "concierge" else {}),
     )
     if body.user_text and body.user_text.strip():
@@ -338,7 +326,6 @@ async def create_session(
         conversation=user.conversation,
         on_voice_request=user.switch_voice_by_request,
         call_log=call_log,
-        think_aloud=not body.chat,
     )
     user.bridges.add(bridge)
     task = asyncio.create_task(bridge.run())
@@ -630,30 +617,6 @@ def current_conversation(
     user = _user(x_client_id, x_access_code)
     return {"id": user.conversation_id, "started_at": user.conversation_started_at,
             "turns": conversations.visible(user.conversation.to_list())}
-
-
-class TypedLine(BaseModel):
-    text: str
-
-
-@app.post("/api/conversation/text")
-def typed_line(
-    body: TypedLine,
-    x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
-) -> dict:
-    """A message typed on /chat: into the conversation (history, «Історія», her memory) and the call's log.
-    The page itself hands it to the backend through the call."""
-    user = _user(x_client_id, x_access_code)
-    text = " ".join(body.text.split())[:2000]
-    if not text:
-        raise HTTPException(status_code=422, detail="empty_text")
-    user.conversation.end_turn()
-    user.conversation.add("user", text)
-    user.conversation.end_turn()
-    for bridge in list(user.bridges):
-        bridge.user_typed(text)
-    return {"ok": True}
 
 
 @app.get("/api/conversations")

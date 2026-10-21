@@ -243,6 +243,7 @@ def test_the_blunt_voice_is_a_character_on_cedar(client):
     assert "that is the game, not distress" in config["instructions"] and "never a word of Russian" in config["instructions"]
     assert "never an apology" in config["delegation"]["responses"]["instructions"]
     # «давай його менш мрачним… про смерть постійно не дуже добре»
+    assert "always in the right place" in config["instructions"]  # more mat when telling, placed right
     assert "no death, dying, graves" in config["instructions"] and "never death" in config["delegation"]["responses"]["instructions"]
     # …and v5's friendly lines are gone for him (they won: «Та нормально, з тобою от балакаю. А в тебе як?»).
     assert "з тобою от балакаю" not in config["instructions"] and "warm and friendly" not in config["instructions"]

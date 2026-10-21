@@ -97,11 +97,10 @@
 
   const DEBUG = params.get("debug") === "1";
   // Delivery prompt (prompts/live_prompt.py): v5 is the usual one (v4 condensed, the same rules said
-  // once), v4 the long one, v3 behaves like a person. Picked in the voice card (or ?prompt=v4); a change
-  // reopens the call, as a voice change does. v1 and v2 are gone from the web (the desktop keeps them):
-  // a choice saved earlier becomes v5.
+  // once), v4 the long one, v3 behaves like a person. v1 and v2 are gone from the web (the desktop keeps them).
   const WEB_PROMPTS = ["v3", "v4", "v5"];
-  let promptVariant = params.get("prompt") || store.get("va-prompt") || "v5";
+  // No picker on the page any more: v5 for everyone (?prompt=v4 still works for a test).
+  let promptVariant = params.get("prompt") || "v5";
   // The top switch: «Помічниця» (the usual talk) or «Консьєрж» — she welcomes people, asks their name and
   // checks it against «Знання» with one check question (server/knowledge.py CONCIERGE_NOTE).
   let mode = store.get("va-mode") === "concierge" ? "concierge" : "assistant";
@@ -2154,25 +2153,6 @@
     if (auth.token()) fit(await auth.refresh());
   }
 
-  const PROMPT_INFO = {
-    v3: "Говорить живо, як у телефонній розмові з другом, і поводиться як людина: має свою думку, цікавиться " +
-      "вами, спершу реагує на ваші новини, повертається до сказаного раніше, без «чим ще можу допомогти?».",
-    v4: "v3 з повними відповідями: довжина за питанням (коротко на дрібниці, розгорнуто на «поясни», «порадь», " +
-      "«як»), конкретні назви, числа й кроки, без «хочеш, розкажу?» замість відповіді, рідше питання наприкінці, " +
-      "не перебиває, поки ви не договорили.",
-    v5: "Ті самі правила, що й у v4, але промпт удвічі коротший: кожне правило сказане раз, без дублів і зайвих " +
-      "прикладів. На живих тестах не гірший за v4, а на слабких місцях кращий.",
-  };
-  const showPromptInfo = () => { $("promptInfo").textContent = PROMPT_INFO[$("promptVariant").value] || ""; };
-
-  function changePrompt() {
-    showPromptInfo();
-    promptVariant = $("promptVariant").value;
-    store.set("va-prompt", promptVariant);
-    if (eva.mode === "active") switchVoiceFast(false, true); // a new call with the same voice and memory
-    else if (eva.mode === "waiting") restartSession("switching", {});
-  }
-
   // ── devices: microphone (in), speaker (out), camera ──
   // Browser echo cancellation keeps the agent from hearing (and interrupting) itself.
   const micConstraints = () => Object.assign(
@@ -2552,9 +2532,6 @@
     $("voiceNow").addEventListener("change", toggleVoiceNow);
     $("cleanVoice").checked = cleanVoice;
     $("cleanVoice").addEventListener("change", toggleCleanVoice);
-    $("promptVariant").value = promptVariant;
-    $("promptVariant").addEventListener("change", changePrompt);
-    showPromptInfo();
     showVoiceNow();
     $("newChat").addEventListener("click", newConversation);
     $("nextGuest").addEventListener("click", newConversation);

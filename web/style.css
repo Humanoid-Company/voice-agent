@@ -135,9 +135,6 @@ h2 label { display: inline; margin: 0; font-weight: inherit; }
 .empty { margin: 0; }
 footer { margin-top: 20px; text-align: center; }
 
-/* Delivery prompt picker */
-.prompt-pick { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
-.prompt-pick select { width: 100%; }
 
 
 /* Devices: microphone, speaker, camera */
@@ -276,6 +273,48 @@ form.card[hidden], [role="tabpanel"][hidden] { display: none; }
 .guide details:first-of-type { border-top: 0; }
 .guide summary { font-weight: 600; cursor: pointer; }
 .guide p { margin: 8px 0 0; }
-.account-link { display: inline-flex; gap: 6px; }
-.head-links { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-@media (max-width: 480px) { .wide-only { display: none; } }
+
+/* Header links to the other pages («Знання», «Налаштування», «← До Єви») */
+.head-links { display: flex; gap: 8px; flex: 0 0 auto; margin-top: 4px; }
+.nav-btn { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 0.9rem; font-weight: 600;
+  text-decoration: none; white-space: nowrap; transition: border-color 0.15s, color 0.15s, background 0.15s; }
+.nav-btn:hover { border-color: var(--accent); color: var(--accent); }
+.nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-btn.header-link { margin-top: 4px; }
+.nav-icon { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 480px) {
+  .wide-only { display: none; }
+  .nav-btn { padding: 8px 11px; }
+}
+
+/* The main page on a wide screen: the call and its settings on the left, the conversation on the right at
+   full height — not one narrow column in the middle of a big monitor. */
+@media (min-width: 1000px) {
+  .wrap.app {
+    max-width: 1320px; padding: 24px 28px 40px;
+    display: grid; grid-template-columns: minmax(380px, 500px) minmax(0, 1fr); column-gap: 24px;
+    grid-template-areas:
+      "head head"
+      "tabs conv"
+      "call conv"
+      "devices conv"
+      "voice conv"
+      "foot foot";
+    align-items: start;
+  }
+  .wrap.app > .page-head { grid-area: head; margin-bottom: 4px; }
+  .wrap.app > .mode-tabs { grid-area: tabs; }
+  .wrap.app > .call { grid-area: call; }
+  .wrap.app > #devices { grid-area: devices; }
+  .wrap.app > #voiceCard { grid-area: voice; }
+  .wrap.app > #conversation {
+    grid-area: conv; position: sticky; top: 16px; margin-top: 16px;
+    display: flex; flex-direction: column; height: calc(100vh - 32px); min-height: 420px;
+  }
+  .wrap.app > #conversation .log { flex: 1 1 auto; max-height: none; min-height: 0; margin-top: 8px; }
+  .wrap.app > footer { grid-area: foot; }
+  .wrap.app .devices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.wrap.wide { max-width: 1100px; }

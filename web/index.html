@@ -11,18 +11,18 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <main class="wrap">
+  <main class="wrap app">
     <header class="page-head">
       <div>
         <h1>Єва</h1>
         <p class="sub">Голосова помічниця. Говоріть з нею як з людиною.</p>
       </div>
-      <div class="head-links header-link">
-        <a id="knowledgeLink" class="btn small-btn" href="knowledge.html"
-          title="Що Єва знає про людей і події: завантажити список чи документ">Знання</a>
-        <a id="settingsLink" class="btn small-btn" href="settings.html" aria-label="Налаштування"
-          title="Акаунт, версія й моделі, довідка, люди команди">⚙<span class="wide-only"> Налаштування</span></a>
-      </div>
+      <nav class="head-links" aria-label="Сторінки">
+        <a id="knowledgeLink" class="nav-btn" href="knowledge.html"
+          title="Що Єва знає про людей і події: завантажити список чи документ"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg><span>Знання</span></a>
+        <a id="settingsLink" class="nav-btn" href="settings.html" aria-label="Налаштування"
+          title="Акаунт, версія й моделі, довідка, люди команди"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="wide-only">Налаштування</span></a>
+      </nav>
     </header>
 
     <nav class="mode-tabs" role="tablist" aria-label="Режим Єви">
@@ -99,7 +99,7 @@
       <p id="devicesInfo" class="hint">Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.</p>
     </section>
 
-    <section class="card">
+    <section id="voiceCard" class="card">
       <h2><label for="voice">Голос Єви</label></h2>
       <div class="row voice-pick">
         <select id="voice" disabled>
@@ -151,18 +151,9 @@
         </span>
         <input id="cleanVoice" type="checkbox" class="switch" role="switch">
       </label>
-      <div class="prompt-pick">
-        <label for="promptVariant">Промпт подачі</label>
-        <select id="promptVariant">
-          <option value="v5">v5 — стислий v4 (основний)</option>
-          <option value="v4">v4 — повні, конкретні відповіді (довгий промпт)</option>
-          <option value="v3">v3 — поводиться як людина</option>
-        </select>
-        <p id="promptInfo" class="hint"></p>
-      </div>
     </section>
 
-    <section class="card">
+    <section id="conversation" class="card">
       <div class="card-head">
         <h2>Розмова</h2>
         <div class="head-actions">

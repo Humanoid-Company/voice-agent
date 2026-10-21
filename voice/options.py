@@ -334,3 +334,20 @@ def _sanitize_name(raw: str) -> str:
     if len(candidate) < _MIN_NAME_LENGTH or candidate.lower() in _NOT_A_NAME:
         return ""
     return candidate
+
+
+# What a request to speak another language sounds like (any case of the word). A Russian sentence alone is not
+# one (prod: «расскажи, как ИИ работает» → change_language ru by the model, never switched back — every new call
+# then opened with «speak exclusively in Russian»: «Привет! Я здесь», «Я говорю по-русски»).
+_LANGUAGE_ASKS: dict[str, tuple[str, ...]] = {
+    "ru": ("російськ", "русск", "русски", "по-русски", "russian"),
+    "en": ("англійськ", "английск", "по-английски", "english", "інгліш", "инглиш"),
+}
+
+
+def asked_for_language(language: str, utterances: list[str] | None) -> bool:
+    """Did the user ask for this language? Ukrainian — always fine (it is the default); None = no transcript."""
+    if language == "uk" or utterances is None:
+        return True
+    text = " ".join(utterances[-2:]).lower().replace("’", "'")
+    return any(word in text for word in _LANGUAGE_ASKS.get(language, ()))

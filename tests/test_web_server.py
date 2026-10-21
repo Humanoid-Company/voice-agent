@@ -502,6 +502,21 @@ def test_model_cannot_change_the_voice_nobody_asked_for():
     assert "попросила модель" in user.voice_switch_note
 
 
+def test_the_language_changes_only_when_asked():
+    """Prod: «Ну так, расскажи, как ИИ работает» → change_language ru by the model; «Українською говори» never
+    switched it back, and every next call opened with «speak exclusively in Russian»."""
+    user = web.users.get("lang-guard-0123456789a")
+    said = lambda *u: ToolExecutionContext(session_id="s", user_utterances=list(u))  # noqa: E731
+    refused = asyncio.run(user.executor.execute("change_language", {"language": "ru"}, said("Алло", "расскажи, как ИИ работает")))
+    assert not refused.ok and user.language == "uk" and "не змінюй" in refused.message
+    assert asyncio.run(user.executor.execute("change_language", {"language": "en"}, said("What's up"))).ok is False
+    asked = asyncio.run(user.executor.execute("change_language", {"language": "en"}, said("Давай англійською")))
+    assert asked.ok and user.language == "en"
+    back = asyncio.run(user.executor.execute("change_language", {"language": "uk"}, said("ok")))  # back home: always
+    assert back.ok and user.language == "uk"
+    assert asyncio.run(user.executor.execute("change_language", {"language": "ru"}, said("говори по-русски"))).ok
+
+
 @pytest.mark.parametrize(
     "utterances, expected",
     [

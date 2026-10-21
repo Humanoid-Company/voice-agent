@@ -33,6 +33,7 @@ from voice.options import (
     VOICE_PERSONAS,
     VOICE_REQUEST_RE,
     _sanitize_name,
+    asked_for_language,
     asked_for_voice_change,
     delivery_instruction,
     voice_request_target,
@@ -269,6 +270,14 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         language = str(args.get("language") or "").strip().lower()
         if language not in LANGUAGE_OPTIONS:
             return ToolResult(ok=False, status="needs_more_info", message="Доступні мови: uk, ru, en.")
+        if not asked_for_language(language, ctx.user_utterances):
+            # They spoke Russian (or English) — not a request: it stuck for every next call.
+            logger.info("web.language.tool_refused language=%s (user didn't ask for it)", language)
+            return ToolResult(
+                ok=False, status="error",
+                message=f"Користувач не просив змінити мову — не змінюй її: говори далі "
+                f"{LANGUAGE_OPTIONS[user.language]}, навіть якщо він сказав щось іншою мовою.",
+            )
         user.language = language
         lang_name = LANGUAGE_OPTIONS[language]
         # The running call was started with «Speak exclusively in …» the old language: without this

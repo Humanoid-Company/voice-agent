@@ -92,6 +92,9 @@ def test_the_prompts_forbid_skipping_the_check_and_inventing():
     # Prod: «Так, тепер маленька перевірка… яку вуличну їжу ви любите?» — a question of her own, copied from
     # an example, before the backend said there are eleven Владислави.
     assert "never ask a check question of your own" in conc["instructions"]
+    # Prod: «Віктор» (13 on the list) → «Вікторе, вуаля. Ви в списку. Проходьте» with no surname asked.
+    assert "a first name alone never is" in conc["instructions"]
+    assert "a first name alone never is" in web._session_config(web.users.get("conc-g2-0123456789abcd"), concierge=True)["instructions"]
     assert "яку їжу" not in conc["instructions"] and "питання на мільйон" not in conc["instructions"]
 
 
@@ -163,6 +166,13 @@ def test_find_guest_short_forms_surnames_and_people_not_on_the_list():
     res = find(user, "Олег", "Сеньків")
     assert res.status == "not_found" and "Олег Сеньків" in res.message
     assert find(user, "Олег", "Петренка").data["name"] == "Олег Петренко"  # a case ending on the surname still finds him
+    # Prod: «Артем Шаповалов» was let in as Артем Шаповал — «-ов» is another surname, not a case ending.
+    knowledge.store.create_set("Ще 2", [{"title": "Артем Шаповал", "fields": {"Хобі": "шахи"}}])
+    assert find(user, "Артем", "Шаповалов").status == "not_found"
+    assert find(user, "Артем", "Шаповалові").data["name"] == "Артем Шаповал"
+    knowledge.store.create_set("Ще 3", [{"title": "Павло Шевчук"}, {"title": "Павло Шевченко"}])
+    assert find(user, "Павло", "Шевчука").data["name"] == "Павло Шевчук"  # not «which one?»
+    assert find(user, "Павло", "Шевченка").data["name"] == "Павло Шевченко"
 
 
 def test_find_guest_says_already_registered_without_a_check_question():

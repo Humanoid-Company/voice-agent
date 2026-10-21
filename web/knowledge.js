@@ -184,12 +184,13 @@
         el("div", { class: "set-head" },
           el("div", { class: "set-text" },
             el("strong", {}, s.name),
-            el("span", { class: "muted small" }, [records(s.count), s.source, fmtDate(s.created_at)].filter(Boolean).join(" · "))),
+            el("span", { class: "muted small" }, [records(s.count), s.source, s.owner_name, fmtDate(s.created_at)].filter(Boolean).join(" · "))),
           el("label", { class: "set-switch" }, el("span", { class: "small" }, s.enabled ? "Єва знає" : "Вимкнено"), sw)),
         s.note && el("p", { class: "hint" }, s.note),
         el("div", { class: "row set-actions" },
           view,
-          el("button", { class: "btn small-btn ghost danger-text", type: "button", onclick: () => remove(s) }, "Видалити")),
+          // Only the one who uploaded it and admins (the server says so in can_delete).
+          s.can_delete && el("button", { class: "btn small-btn ghost danger-text", type: "button", onclick: () => remove(s) }, "Видалити")),
         body);
     }));
   }

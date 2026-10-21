@@ -62,6 +62,9 @@ class StoreError(Exception):
 
 class SqlStore:
     SCHEMA: ClassVar[dict[str, list[str]]] = {"postgres": [], "sqlite": []}
+    # Columns added after a table was first made: (table, column, its type per kind). A database made before
+    # gets them on first use; CREATE TABLE in SCHEMA already has them for a new one.
+    ADDED_COLUMNS: ClassVar[list[tuple[str, str, dict[str, str]]]] = []
     # Words for the page: «База знань недоступна», «Історія розмов недоступна»…
     UNAVAILABLE = "База даних недоступна"
     FAILED = "Помилка бази даних"
@@ -93,6 +96,9 @@ class SqlStore:
                     if not self._ready:
                         for statement in self.SCHEMA[self.kind]:
                             conn.execute(statement)
+                        for table, column, types in self.ADDED_COLUMNS:
+                            if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {types['sqlite']}")
                         conn.commit()
                         self._ready = True
             yield conn
@@ -119,6 +125,8 @@ class SqlStore:
             if not self._ready:
                 for statement in self.SCHEMA["postgres"]:
                     conn.execute(statement)
+                for table, column, types in self.ADDED_COLUMNS:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {types['postgres']}")
                 conn.commit()
                 self._ready = True
             yield conn

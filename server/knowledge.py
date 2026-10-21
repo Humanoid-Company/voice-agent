@@ -42,7 +42,8 @@ _SCHEMA = {
         """CREATE TABLE IF NOT EXISTS kb_sets (
             id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
             source TEXT NOT NULL DEFAULT '', enabled BOOLEAN NOT NULL DEFAULT TRUE,
-            item_count INTEGER NOT NULL DEFAULT 0, created_at DOUBLE PRECISION NOT NULL)""",
+            item_count INTEGER NOT NULL DEFAULT 0, created_at DOUBLE PRECISION NOT NULL,
+            owner_id BIGINT, owner_name TEXT NOT NULL DEFAULT '')""",
         """CREATE TABLE IF NOT EXISTS kb_items (
             id BIGSERIAL PRIMARY KEY, set_id BIGINT NOT NULL REFERENCES kb_sets(id) ON DELETE CASCADE,
             position INTEGER NOT NULL, title TEXT NOT NULL, fields TEXT NOT NULL)""",
@@ -52,7 +53,8 @@ _SCHEMA = {
         """CREATE TABLE IF NOT EXISTS kb_sets (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
             source TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
-            item_count INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL)""",
+            item_count INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL,
+            owner_id INTEGER, owner_name TEXT NOT NULL DEFAULT '')""",
         """CREATE TABLE IF NOT EXISTS kb_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT, set_id INTEGER NOT NULL REFERENCES kb_sets(id) ON DELETE CASCADE,
             position INTEGER NOT NULL, title TEXT NOT NULL, fields TEXT NOT NULL)""",
@@ -103,6 +105,12 @@ def clean_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 class KnowledgeStore(SqlStore):
     SCHEMA = _SCHEMA
+    # Who uploaded a set (an account's id and name): they and admins may delete it. Sets from before have none.
+    ADDED_COLUMNS = [
+        ("kb_sets", "owner_id", {"postgres": "BIGINT", "sqlite": "INTEGER"}),
+        ("kb_sets", "owner_name", {"postgres": "TEXT NOT NULL DEFAULT ''", "sqlite": "TEXT NOT NULL DEFAULT ''"}),
+    ]
+    _SET_COLS = "id, name, note, source, enabled, item_count, created_at, owner_id, owner_name"
     UNAVAILABLE = "База знань недоступна"
     FAILED = "Помилка бази знань"
 
@@ -119,19 +127,20 @@ class KnowledgeStore(SqlStore):
     def list_sets(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, name, note, source, enabled, item_count, created_at FROM kb_sets ORDER BY created_at DESC, id DESC"
+                f"SELECT {self._SET_COLS} FROM kb_sets ORDER BY created_at DESC, id DESC"
             ).fetchall()
         return [self._set_row(r) for r in rows]
 
     @staticmethod
     def _set_row(r: Any) -> dict[str, Any]:
         return {"id": int(r[0]), "name": r[1], "note": r[2], "source": r[3], "enabled": bool(r[4]),
-                "count": int(r[5]), "created_at": float(r[6])}
+                "count": int(r[5]), "created_at": float(r[6]),
+                "owner_id": int(r[7]) if r[7] is not None else None, "owner_name": r[8] or ""}
 
     def get_set(self, set_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
             row = conn.execute(
-                self._q("SELECT id, name, note, source, enabled, item_count, created_at FROM kb_sets WHERE id = %s"),
+                self._q(f"SELECT {self._SET_COLS} FROM kb_sets WHERE id = %s"),
                 (set_id,),
             ).fetchone()
             if row is None:
@@ -143,7 +152,8 @@ class KnowledgeStore(SqlStore):
         data["items"] = [{"title": t, "fields": json.loads(f)} for t, f in items]
         return data
 
-    def create_set(self, name: str, items: list[dict[str, Any]], *, note: str = "", source: str = "") -> dict[str, Any]:
+    def create_set(self, name: str, items: list[dict[str, Any]], *, note: str = "", source: str = "",
+                   owner_id: int | None = None, owner_name: str = "") -> dict[str, Any]:
         name = " ".join(name.split())[:MAX_SET_NAME_CHARS]
         items = clean_items(items)
         if not name:
@@ -152,9 +162,10 @@ class KnowledgeStore(SqlStore):
             raise KnowledgeError("У наборі немає жодного запису.")
         with self._conn() as conn:
             row = conn.execute(
-                self._q("INSERT INTO kb_sets (name, note, source, enabled, item_count, created_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id"),
-                (name, note.strip()[:MAX_NOTE_CHARS], source.strip()[:200], True, len(items), time.time()),
+                self._q("INSERT INTO kb_sets (name, note, source, enabled, item_count, created_at, owner_id, owner_name) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"),
+                (name, note.strip()[:MAX_NOTE_CHARS], source.strip()[:200], True, len(items), time.time(),
+                 owner_id, " ".join(owner_name.split())[:120]),
             ).fetchone()
             set_id = int(row[0])
             rows = [(set_id, i, it["title"], json.dumps(it["fields"], ensure_ascii=False)) for i, it in enumerate(items)]

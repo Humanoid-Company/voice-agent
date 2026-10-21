@@ -942,7 +942,7 @@ _extract = None
 
 
 def _team(auth: AuthInfo) -> None:
-    """Anyone logged in (anybody when login isn't required): «Знання» — upload, switch, rename, delete — and the
+    """Anyone logged in (anybody when login isn't required): «Знання» — upload, switch, rename — and the
     concierge's marks."""
     if _login_required():
         _account(auth)
@@ -952,6 +952,19 @@ def _admin(auth: AuthInfo) -> None:
     """Resetting the concierge's marks, people, logs and costs: admins only (when login is required)."""
     if _login_required() and not _account(auth).is_admin:
         raise HTTPException(status_code=403, detail="Це може лише адмін.")
+
+
+def _may_delete(auth: AuthInfo, kb_set: dict) -> bool:
+    """A knowledge set goes away only by the one who uploaded it or an admin (anybody when login isn't
+    required); a set from before owners were kept — only an admin."""
+    if not _login_required():
+        return True
+    account = _account(auth)
+    return account.is_admin or (kb_set.get("owner_id") is not None and kb_set["owner_id"] == account.id)
+
+
+def _with_rights(auth: AuthInfo, kb_set: dict) -> dict:
+    return {**kb_set, "can_delete": _may_delete(auth, kb_set)}
 
 
 def _kb(call, *args, **kwargs):
@@ -1009,14 +1022,17 @@ async def knowledge_parse(request: Request, auth: AuthInfo = Depends(_auth)) -> 
 def knowledge_sets(auth: AuthInfo = Depends(_auth)) -> dict:
     _team(auth)
     return {"storage": knowledge.store.kind, "persistent": knowledge.store.persistent,
-            "sets": _kb(knowledge.store.list_sets)}
+            "sets": [_with_rights(auth, s) for s in _kb(knowledge.store.list_sets)]}
 
 
 @app.post("/api/knowledge")
 def knowledge_create(body: KnowledgeSetIn, auth: AuthInfo = Depends(_auth)) -> dict:
     _team(auth)
     items = [item.model_dump() for item in body.items]
-    return _kb(knowledge.store.create_set, body.name, items, note=body.note, source=body.source)
+    owner = auth.account
+    created = _kb(knowledge.store.create_set, body.name, items, note=body.note, source=body.source,
+                  owner_id=owner.id if owner else None, owner_name=(owner.name or owner.email) if owner else "")
+    return _with_rights(auth, created)
 
 
 @app.get("/api/knowledge/{set_id}")
@@ -1025,7 +1041,7 @@ def knowledge_get(set_id: int, auth: AuthInfo = Depends(_auth)) -> dict:
     found = _kb(knowledge.store.get_set, set_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Такого набору немає.")
-    return found
+    return _with_rights(auth, found)
 
 
 @app.post("/api/knowledge/{set_id}")
@@ -1035,12 +1051,18 @@ def knowledge_update(set_id: int, body: KnowledgeSetPatch, auth: AuthInfo = Depe
     found = _kb(knowledge.store.update_set, set_id, enabled=body.enabled, name=body.name, note=body.note)
     if found is None:
         raise HTTPException(status_code=404, detail="Такого набору немає.")
-    return found
+    return _with_rights(auth, found)
 
 
 @app.delete("/api/knowledge/{set_id}")
 def knowledge_delete(set_id: int, auth: AuthInfo = Depends(_auth)) -> dict:
     _team(auth)
+    found = _kb(knowledge.store.get_set, set_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Такого набору немає.")
+    if not _may_delete(auth, found):
+        raise HTTPException(status_code=403, detail="Видалити набір може лише той, хто його завантажив, або адмін.")
     if not _kb(knowledge.store.delete_set, set_id):
         raise HTTPException(status_code=404, detail="Такого набору немає.")
+    logger.info("knowledge.set_deleted id=%s by=%s", set_id, auth.account.id if auth.account else "-")
     return {"ok": True}

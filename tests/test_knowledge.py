@@ -135,6 +135,22 @@ def test_store_create_toggle_delete(store):
     assert store.delete_set(created["id"]) and store.list_sets() == []
 
 
+def test_a_table_from_before_owners_gets_the_columns(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "old.db")
+    with sqlite3.connect(path) as conn:  # kb_sets as prod had it before owners
+        conn.execute("""CREATE TABLE kb_sets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+            item_count INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL)""")
+        conn.execute("INSERT INTO kb_sets (name, item_count, created_at) VALUES ('Старий', 0, 1)")
+    s = KnowledgeStore("", path)
+    assert s.list_sets()[0]["name"] == "Старий" and s.list_sets()[0]["owner_id"] is None
+    created = s.create_set("Новий", [{"title": "Олег"}], owner_id=7, owner_name="Анна")
+    assert (created["owner_id"], created["owner_name"]) == (7, "Анна")
+    assert KnowledgeStore("", path).list_sets()[0]["owner_id"] == 7  # a second start: nothing added twice
+
+
 def test_lookup_returns_everything_while_it_fits_else_the_closest(store, monkeypatch):
     store.create_set("Корпоратив", parse_file("a.csv", PEOPLE_CSV).items)
     found = store.lookup("Олегові")
@@ -191,8 +207,23 @@ def test_knowledge_needs_a_login_and_every_member_changes_it(client, monkeypatch
     saved = client.post("/api/knowledge", json={"name": "X", "items": [{"title": "Олег"}]}, headers=member)
     assert saved.status_code == 200  # members upload…
     set_id = saved.json()["id"]
+    assert saved.json()["owner_name"] == "anna@team.ua" and saved.json()["can_delete"] is True
     assert client.post(f"/api/knowledge/{set_id}", json={"enabled": False}, headers=member).json()["enabled"] is False
-    assert client.delete(f"/api/knowledge/{set_id}", headers=member).status_code == 200  # …switch and delete
+    assert client.delete(f"/api/knowledge/{set_id}", headers=member).status_code == 200  # …switch and delete their own
+    # Someone else's set: switched by anyone, deleted only by the one who uploaded it or an admin.
+    other = login("ivan@team.ua")
+    theirs = client.post("/api/knowledge", json={"name": "Y", "items": [{"title": "Марина"}]}, headers=other).json()["id"]
+    assert client.post(f"/api/knowledge/{theirs}", json={"enabled": False}, headers=member).status_code == 200
+    rights = {who: client.get("/api/knowledge", headers=h).json()["sets"][0]["can_delete"]
+              for who, h in [("member", member), ("other", other), ("admin", admin)]}
+    assert rights == {"member": False, "other": True, "admin": True}
+    refused = client.delete(f"/api/knowledge/{theirs}", headers=member)
+    assert refused.status_code == 403 and "завантажив" in refused.json()["detail"]
+    assert client.delete(f"/api/knowledge/{theirs}", headers=admin).status_code == 200
+    # A set from before owners were kept: only an admin deletes it.
+    old = knowledge.store.create_set("Z", [{"title": "Тарас"}])
+    assert client.delete(f"/api/knowledge/{old['id']}", headers=other).status_code == 403
+    assert client.delete(f"/api/knowledge/{old['id']}", headers=admin).status_code == 200
     # A new event (everyone may come in again) and the people stay the admin's.
     assert client.delete("/api/concierge/checkins", headers=member).status_code == 403
     assert client.delete("/api/concierge/checkins", headers=admin).status_code == 200

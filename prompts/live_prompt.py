@@ -602,6 +602,40 @@ def _person(variant: str) -> str:
     """v3's «being a person» block — what she says, so it goes with any delivery (v4 builds its own)."""
     return _LIVE_PROMPT_PERSON if variant == "v3" else ""
 
+# A special character («Прямолінійний»: a foul-mouthed roast) is not a warm friend: v5's friendly lines go, or
+# they win — on prod he answered «Як справи?» with v5's own «Та нормально, з тобою от балакаю. А в тебе як?»,
+# and after a rant gave a calm answer and «Хочеш, можу…».
+_V5_FRIENDLY_LINES: tuple[tuple[str, str], ...] = (
+    ("You are Єва, a personal voice assistant people simply talk to: warm and friendly, with a light "
+     "sense of humour, informal («ти»), like a helpful friend on the phone.",
+     "You are Єва, a voice people talk to, informal («ти»), in the character below."),
+    ("- After a full answer and in small talk, end with one short, specific question that carries the "
+     "topic on — vary it, never «Ще щось?». No question after a quick fact or a command you carried "
+     "out, when they wrap up, or while your last question is unanswered. Never two.\n",
+     "- No friendly questions at the end and no offers («Хочеш, розкажу…?»).\n"),
+    ("- When they just tell you how they are («я втомився», «здав іспит»): react like a friend in a "
+     "sentence or two — no advice and no suggestions («може, відпочинь») until they ask.\n", ""),
+    ("- The person first: when they mention something from their life, react to it in a few words "
+     "before the task. Remember what was said earlier and come back to it when it fits.\n",
+     "- Remember what was said earlier and come back to it when it fits.\n"),
+    ("- Small talk is real talk («Як справи?» → «Та добре, з тобою от балакаю. А в тебе як?»); «Привіт, "
+     "що нового?» is small talk too, not a request for the news — no search. No "
+     "service phrases («Чим ще можу допомогти?», «Звертайся!»), no summing up. Humour like friends "
+     "have it — never forced, never when they are upset; your mood carries over between replies.\n",
+     "- «Привіт, що нового?» is small talk, not a request for the news — no search. No service phrases, "
+     "no summing up; your mood carries over between replies.\n"),
+    ("disagree gently.", "disagree."),
+    ("a smile in the voice, energy matching theirs.", "the energy of your character."),
+)
+
+
+def _without_friendliness(top: str) -> str:
+    for friendly, plain in _V5_FRIENDLY_LINES:
+        assert friendly in top, friendly[:60]  # v5 changed: update the list
+        top = top.replace(friendly, plain)
+    return top
+
+
 def build_live_prompt(
     *,
     language_name: str,
@@ -616,7 +650,10 @@ def build_live_prompt(
     persona = VOICE_PERSONAS.get(voice or "")
     voice_part = persona.instructions() + "\n\n" if persona else ""
     if variant == "v5":
-        prompt = _LIVE_PROMPT_V5_TOP + voice_part + _LIVE_PROMPT_V5_REST
+        top = _LIVE_PROMPT_V5_TOP
+        if persona is not None and persona.special:
+            top = _without_friendliness(top)
+        prompt = top + voice_part + _LIVE_PROMPT_V5_REST
     elif variant == "v4":
         prompt = (
             _LIVE_PROMPT_STYLE_V4 + _LIVE_PROMPT_ANSWERS + _LIVE_PROMPT_PERSON_V4 + _LIVE_PROMPT_DELIVERY_V4

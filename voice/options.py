@@ -30,7 +30,7 @@ class VoicePersona:
     feminine: bool  # Ukrainian past tense agrees with the speaker: «я зрозуміла» / «я зрозумів»
     character: str  # who is speaking and how: put into the Live instructions
     samples: tuple[str, ...] = ()  # lines in this voice's manner (tone reference, not to be quoted)
-    # A character on a voice another entry already has («Прямолінійний» is Меридіан's voice): its own id in the
+    # A character on a voice another entry already has («Прямолінійний» is Кедр's voice): its own id in the
     # picker and in change_voice, the preset still goes to the API (api_voice).
     key: str = ""
     special: bool = False  # «Особливі» in the picker; never picked for «зміни на чоловічий» / «інший»
@@ -168,8 +168,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
         ),
         # ── special ──
         VoicePersona(
-            "meridian", "Прямолінійний",
-            "Чоловічий (голос Меридіана), без фільтрів: місцевий єбанат і хуєв філософ — матюкається через "
+            "cedar", "Прямолінійний",
+            "Чоловічий (голос Кедра), без фільтрів: місцевий єбанат і хуєв філософ — матюкається через "
             "слово, на все кладе хуй і все обсирає, а від його філософії аж хуйово. Але відповідає по суті. "
             "Лише для тих, хто сам цього хоче.",
             False,
@@ -219,7 +219,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
 
 
 def api_voice(voice_id: str) -> str:
-    """The preset the API gets for a picker id («blunt» → «meridian»)."""
+    """The preset the API gets for a picker id («blunt» → «cedar»)."""
     persona = VOICE_PERSONAS.get(voice_id)
     return persona.voice if persona else voice_id
 

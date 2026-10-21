@@ -207,27 +207,31 @@ def test_voice_tool_accepts_only_picker_voices():
     assert ok.ok and user.voice == "gleam"
 
 
-def test_the_blunt_voice_is_a_character_on_meridian(client):
-    """«Прямолінійний»: Меридіан's voice with a foul-mouthed roast — apart in the picker, only on request, and
+def test_the_blunt_voice_is_a_character_on_cedar(client):
+    """«Прямолінійний»: Кедр's voice with a foul-mouthed roast — apart in the picker, only on request, and
     never at the concierge's door."""
     from voice.options import voice_request_target as target
 
     blunt = next(v for v in client.get("/api/voices").json()["voices"] if v["id"] == "blunt")
-    assert blunt["special"] and blunt["sample"] == "meridian" and blunt["label"] == "Прямолінійний"
+    assert blunt["special"] and blunt["sample"] == "cedar" and blunt["label"] == "Прямолінійний"
     user = web.users.get("blunt-0123456789abcdef")
     assert client.post("/api/voice", json={"voice": "blunt"}, headers={"X-Client-Id": "blunt-0123456789abcdef"}).status_code == 200
     config = web._session_config(user)
-    assert config["audio"]["output"]["voice"] == "meridian"  # the API gets the preset
+    assert config["audio"]["output"]["voice"] == "cedar"  # the API gets the preset
     assert "хуєв філософ" in config["instructions"] and "This character comes first" in config["instructions"]
     assert "masculine grammatical gender" in config["instructions"]
     # Prod: a rant, then a calm helpful answer and «А ти як?» — the whole reply stays in character.
     assert "never switch to a normal assistant's tone" in config["instructions"] and "«бляха»" in config["instructions"]
+    # …and v5's friendly lines are gone for him (they won: «Та нормально, з тобою от балакаю. А в тебе як?»).
+    assert "з тобою от балакаю" not in config["instructions"] and "warm and friendly" not in config["instructions"]
+    assert "end with one short, specific question" not in config["instructions"]
     assert "VOICE CHARACTER" in config["delegation"]["responses"]["instructions"]
     conc = web._session_config(user, concierge=True)
-    assert conc["audio"]["output"]["voice"] == "meridian" and "хуєв філософ" not in conc["instructions"]
+    assert conc["audio"]["output"]["voice"] == "cedar" and "хуєв філософ" not in conc["instructions"]
     assert "VOICE CHARACTER" not in conc["delegation"]["responses"]["instructions"]
     # Others keep their voice and none of it.
     plain = web._session_config(web.users.get("blunt-plain-0123456789a"))
+    assert "з тобою от балакаю" in plain["instructions"]  # the others keep them
     assert "хуєв філософ" not in plain["instructions"] and "VOICE CHARACTER" not in plain["delegation"]["responses"]["instructions"]
 
     assert target("зміни голос на прямолінійний", "gleam") == "blunt"

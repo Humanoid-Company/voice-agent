@@ -238,6 +238,10 @@ def test_the_blunt_voice_is_a_character_on_cedar(client):
     assert "masculine grammatical gender" in config["instructions"]
     # Prod: a rant, then a calm helpful answer and «А ти як?» — the whole reply stays in character.
     assert "never switch to a normal assistant's tone" in config["instructions"] and "«бляха»" in config["instructions"]
+    # Prod: «Блять, що ти несеш, я ніхуя не розумію» → «Вибач, я справді занадто складно пояснив», and «Алло» →
+    # «Да, я здесь»: their swearing is the game, not distress; never Russian.
+    assert "that is the game, not distress" in config["instructions"] and "never a word of Russian" in config["instructions"]
+    assert "never an apology" in config["delegation"]["responses"]["instructions"]
     # …and v5's friendly lines are gone for him (they won: «Та нормально, з тобою от балакаю. А в тебе як?»).
     assert "з тобою от балакаю" not in config["instructions"] and "warm and friendly" not in config["instructions"]
     assert "end with one short, specific question" not in config["instructions"]

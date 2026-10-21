@@ -267,7 +267,8 @@ def _mumble_line(count: int, first: str, doing: str) -> str:
 def search_mumble_note(query: str, count: int) -> str:
     """While a web search runs she thinks aloud, like a person scrolling through results — a search
     and its summary took 6–10 s of silence after her «Секунду» (feedback: «довга мовчанка»)."""
-    first = "Say three to six words thinking aloud about what you are checking right now, trailing off."
+    first = ("Say three to six words thinking aloud, in your own character and manner, about what you are "
+             "checking right now, trailing off.")
     return (
         f"Note, not a message from the user: you are searching the web for their request ({query!r}) "
         "and the results are not in yet. "
@@ -279,7 +280,8 @@ def search_mumble_note(query: str, count: int) -> str:
 def thinking_mumble_note(count: int) -> str:
     """The backend is still working out an answer (no search): she thinks aloud, like a person mulling
     it over — the team wants her talking the whole time she works, not a silent wait."""
-    first = "Say three to six words thinking aloud about this exact request, trailing off."
+    first = ("Say three to six words thinking aloud, in your own character and manner, about this exact "
+             "request, trailing off.")
     return (
         "Note, not a message from the user: you are still working out the answer to their last request "
         "and it is not ready yet. "

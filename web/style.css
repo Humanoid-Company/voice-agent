@@ -319,3 +319,7 @@ form.card[hidden], [role="tabpanel"][hidden] { display: none; }
   .wrap.app .devices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .wrap.wide { max-width: 1100px; }
+
+/* login.html: «Увійти як гість» under the forms */
+.guest-entry { margin-top: 16px; text-align: center; }
+.guest-entry .btn { width: 100%; }

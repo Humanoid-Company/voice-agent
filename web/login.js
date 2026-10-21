@@ -53,6 +53,10 @@
     }
   }
 
+  $("guestBtn").addEventListener("click", () => {
+    auth.enterGuest();
+    location.href = auth.link("index.html");
+  });
   $("tabLogin").addEventListener("click", () => show("login"));
   $("tabRegister").addEventListener("click", () => show("register"));
   $("loginForm").addEventListener("submit", (e) => {
@@ -77,5 +81,6 @@
   // Without a team code (a local server) there is nothing to ask for.
   fetch(BACKEND + "/api/config").then((r) => r.json()).then((cfg) => {
     $("inviteBlock").hidden = !cfg.invite_required;
+    $("guestBlock").hidden = !cfg.guest_allowed;
   }).catch(() => {});
 })();

@@ -77,6 +77,9 @@ FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS",
 ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
 # Registration (server/accounts.py) takes this code; unset → ACCESS_CODE, the team's code from before accounts.
 INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
+# «Увійти як гість» on the login page: talking to Єва without an account (their conversations stay with the
+# browser). «Знання», the concierge's marks, settings and admin stay the accounts'. GUEST_ACCESS=0 closes it.
+GUEST_ACCESS = os.getenv("GUEST_ACCESS", "1").strip().lower() not in ("0", "false", "no", "off")
 # These emails are admins from registration (besides the first account).
 ADMIN_EMAILS = frozenset(e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip())
 SERVER_STARTED_AT = time.time()
@@ -197,7 +200,7 @@ def _account(auth: AuthInfo) -> Account:
 
 
 def _user(client_id: str | None, auth: AuthInfo) -> WebUser:
-    if _login_required():
+    if _login_required() and not GUEST_ACCESS:
         _account(auth)
     if not client_id or not _CLIENT_ID_RE.match(client_id):
         raise HTTPException(status_code=400, detail="bad_client_id")
@@ -342,7 +345,8 @@ def healthz() -> dict:
 @app.get("/api/config")
 def public_config() -> dict:
     """What the page needs to know before anything else."""
-    return {"login_required": _login_required(), "invite_required": bool(INVITE_CODE or ACCESS_CODE)}
+    return {"login_required": _login_required(), "invite_required": bool(INVITE_CODE or ACCESS_CODE),
+            "guest_allowed": GUEST_ACCESS}
 
 
 # ── accounts (server/accounts.py, web/login.html, web/settings.html) ──

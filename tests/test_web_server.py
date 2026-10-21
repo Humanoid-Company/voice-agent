@@ -234,7 +234,7 @@ def test_the_blunt_voice_is_a_character_on_cedar(client):
     assert client.post("/api/voice", json={"voice": "blunt"}, headers={"X-Client-Id": "blunt-0123456789abcdef"}).status_code == 200
     config = web._session_config(user)
     assert config["audio"]["output"]["voice"] == "cedar"  # the API gets the preset
-    assert "хуєв філософ" in config["instructions"] and "This character comes first" in config["instructions"]
+    assert "Mostly you are just blunt" in config["instructions"] and "This character comes first" in config["instructions"]
     assert "masculine grammatical gender" in config["instructions"]
     # Prod: a rant, then a calm helpful answer and «А ти як?» — the whole reply stays in character.
     assert "never switch to a normal assistant's tone" in config["instructions"] and "«бляха»" in config["instructions"]
@@ -250,13 +250,13 @@ def test_the_blunt_voice_is_a_character_on_cedar(client):
     assert "end with one short, specific question" not in config["instructions"]
     assert "VOICE CHARACTER" in config["delegation"]["responses"]["instructions"]
     conc = web._session_config(user, concierge=True)
-    assert conc["audio"]["output"]["voice"] == "cedar" and "хуєв філософ" not in conc["instructions"]
+    assert conc["audio"]["output"]["voice"] == "cedar" and "Mostly you are just blunt" not in conc["instructions"]
     assert "VOICE CHARACTER" not in conc["delegation"]["responses"]["instructions"]
     # Others keep their voice and none of it.
     plain = web._session_config(web.users.get("blunt-plain-0123456789a"))
     assert "з тобою от балакаю" in plain["instructions"]  # the others keep them
 
-    assert "хуєв філософ" not in plain["instructions"] and "VOICE CHARACTER" not in plain["delegation"]["responses"]["instructions"]
+    assert "Mostly you are just blunt" not in plain["instructions"] and "VOICE CHARACTER" not in plain["delegation"]["responses"]["instructions"]
 
     assert target("зміни голос на прямолінійний", "gleam") == "blunt"
     for current in ("gleam", "cedar", "meridian", "stone", "verse"):  # never by «чоловічий» / «інший»

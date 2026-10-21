@@ -49,8 +49,9 @@ _MUMBLE_EVERY_S = 2.5
 _MUMBLE_MAX = 12
 # «Консьєрж» while a check runs: one neutral line, nothing about who or what.
 _NEUTRAL_WAIT_NOTE = (
-    "Note, not a message from the user: the check is still running. Say only «Ще секундочку…» or «Хвилинку, "
-    "перевіряю…» — no name, nothing about the person or the list, not a question. Nothing else."
+    "Note, not a message from the user: the check is still running. Say one short, light line, not one you "
+    "already said — «Ще секундочку…», «Майже-майже…», «Список у нас солідний — ще мить.» — no name, nothing "
+    "about the person or what you found, not a question. Nothing else."
 )
 _MUMBLE_QUIET_S = 1.0
 # The user's own request may still be transcribed this long after the work started.

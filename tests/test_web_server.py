@@ -207,6 +207,37 @@ def test_voice_tool_accepts_only_picker_voices():
     assert ok.ok and user.voice == "gleam"
 
 
+def test_the_blunt_voice_is_a_character_on_stone(client):
+    """«Прямолінійний»: Стоун's voice with a foul-mouthed roast — apart in the picker, only on request, and
+    never at the concierge's door."""
+    from voice.options import voice_request_target as target
+
+    blunt = next(v for v in client.get("/api/voices").json()["voices"] if v["id"] == "blunt")
+    assert blunt["special"] and blunt["sample"] == "stone" and blunt["label"] == "Прямолінійний"
+    user = web.users.get("blunt-0123456789abcdef")
+    assert client.post("/api/voice", json={"voice": "blunt"}, headers={"X-Client-Id": "blunt-0123456789abcdef"}).status_code == 200
+    config = web._session_config(user)
+    assert config["audio"]["output"]["voice"] == "stone"  # the API gets the preset
+    assert "foul-mouthed" in config["instructions"] and "This character comes first" in config["instructions"]
+    assert "masculine grammatical gender" in config["instructions"]
+    assert "VOICE CHARACTER" in config["delegation"]["responses"]["instructions"]
+    conc = web._session_config(user, concierge=True)
+    assert conc["audio"]["output"]["voice"] == "stone" and "foul-mouthed" not in conc["instructions"]
+    assert "VOICE CHARACTER" not in conc["delegation"]["responses"]["instructions"]
+    # Others keep their voice and none of it.
+    plain = web._session_config(web.users.get("blunt-plain-0123456789a"))
+    assert "foul-mouthed" not in plain["instructions"] and "VOICE CHARACTER" not in plain["delegation"]["responses"]["instructions"]
+
+    assert target("зміни голос на прямолінійний", "gleam") == "blunt"
+    for current in ("gleam", "cedar", "meridian", "stone", "verse"):  # never by «чоловічий» / «інший»
+        assert target("зміни голос на чоловічий", current) != "blunt"
+        assert target("зміни голос на інший", current) != "blunt"
+    other = web.users.get("blunt-tool-0123456789ab")
+    ok = asyncio.run(other.executor.execute("change_voice", {"voice": "blunt"},
+                                            ToolExecutionContext(session_id="s", user_utterances=["постав прямолінійний голос"])))
+    assert ok.ok and other.voice == "blunt"
+
+
 def test_voice_change_keeps_the_conversation(client):
     """Conversation → voice change by voice → the new session starts with everything said before."""
     from server.live_bridge import SidebandToolBridge

@@ -63,6 +63,7 @@ from voice.options import (
     SPEED_OPTIONS,
     STYLE_OPTIONS,
     VOICE_PERSONAS,
+    api_voice,
     delivery_instruction,
 )
 
@@ -238,11 +239,12 @@ def _session_config(
         + _WEB_NOTE
         + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
         + knowledge.live_note(knowledge_sets or []),
-        "audio": {"output": {"voice": voice}},
+        "audio": {"output": {"voice": api_voice(voice)}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
-            + knowledge.BACKEND_NOTE,
+            + knowledge.BACKEND_NOTE
+            + (VOICE_PERSONAS[voice].backend_note if voice in VOICE_PERSONAS else ""),
             tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
@@ -269,7 +271,7 @@ def _concierge_config(user: WebUser, language: str, today: str, voice: str) -> d
         "model": OPENAI_LIVE_MODEL,
         "instructions": build_concierge_prompt(language_name=language, today=today, voice=voice,
                                                check_question=user.check_question),
-        "audio": {"output": {"voice": voice}},
+        "audio": {"output": {"voice": api_voice(voice)}},  # the voice only: a concierge never roasts guests
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language)
@@ -625,7 +627,8 @@ def voices() -> dict:
     return {
         "default": OPENAI_LIVE_VOICE,
         "voices": [
-            {"id": p.voice, "label": p.label, "description": p.description, "feminine": p.feminine}
+            {"id": p.id, "label": p.label, "description": p.description, "feminine": p.feminine,
+             "special": p.special, "sample": p.voice}
             for p in VOICE_PERSONAS.values()
         ],
     }

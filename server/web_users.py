@@ -289,7 +289,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         voice = str(args.get("voice") or "").strip().lower()
         # Only the voices offered in the page's picker, so the picker can always show the choice.
         if voice not in VOICE_PERSONAS:
-            names = ", ".join(f"{p.label} ({p.voice})" for p in VOICE_PERSONAS.values())
+            names = ", ".join(f"{p.label} ({p.id})" for p in VOICE_PERSONAS.values())
             return ToolResult(ok=False, status="needs_more_info", message=f"Такого голосу немає. Доступні: {names}.")
         if voice == user.voice or time.time() - user.voice_switched_at < VOICE_SWITCH_DEDUP_S:
             return ToolResult(ok=True, status="ok", message="Голос уже змінено. Нічого про це не кажи.")

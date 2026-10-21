@@ -1659,8 +1659,10 @@
         return g;
       };
       $("voice").replaceChildren(
-        group("Жіночі", voices.filter((x) => x.feminine)),
-        group("Чоловічі", voices.filter((x) => !x.feminine)),
+        group("Жіночі", voices.filter((x) => x.feminine && !x.special)),
+        group("Чоловічі", voices.filter((x) => !x.feminine && !x.special)),
+        // A character on one of the voices above («Прямолінійний»), kept apart.
+        ...(voices.some((x) => x.special) ? [group("Особливі", voices.filter((x) => x.special))] : []),
       );
       $("voice").disabled = !voices.length;
       $("voicePreview").disabled = !voices.length;
@@ -2014,7 +2016,8 @@
   }
   function togglePreview() {
     if (preview) { stopPreview(); return; }
-    const audio = new Audio("samples/" + encodeURIComponent($("voice").value) + ".m4a");
+    const picked = voices.find((x) => x.id === $("voice").value);
+    const audio = new Audio("samples/" + encodeURIComponent((picked && picked.sample) || $("voice").value) + ".m4a");
     audio.volume = volume;
     if (speakerId && audio.setSinkId) audio.setSinkId(speakerId).catch(() => {});
     audio.onended = stopPreview;

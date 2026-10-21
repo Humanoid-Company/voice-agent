@@ -30,6 +30,15 @@ class VoicePersona:
     feminine: bool  # Ukrainian past tense agrees with the speaker: «я зрозуміла» / «я зрозумів»
     character: str  # who is speaking and how: put into the Live instructions
     samples: tuple[str, ...] = ()  # lines in this voice's manner (tone reference, not to be quoted)
+    # A character on a voice another entry already has («Прямолінійний» is Стоун's voice): its own id in the
+    # picker and in change_voice, the preset still goes to the API (api_voice).
+    key: str = ""
+    special: bool = False  # «Особливі» in the picker; never picked for «зміни на чоловічий» / «інший»
+    backend_note: str = ""  # for the backend model too: it writes what she says after delegating
+
+    @property
+    def id(self) -> str:
+        return self.key or self.voice
 
     def instructions(self) -> str:
         if self.feminine:
@@ -46,6 +55,9 @@ class VoicePersona:
             f"Your voice and character (voice preset «{self.label}» — that is only the voice's name, "
             f"not yours):\n{self.character}\n{gender}"
         )
+        if self.special:
+            text += ("\nThis character comes first: where the rules below ask for warmth, gentleness or "
+                     "politeness, it wins; every other rule still holds.")
         if self.samples:
             lines = "\n".join(f"- {line}" for line in self.samples)
             text += f"\nHow you sound (tone reference only — never repeat these lines verbatim):\n{lines}"
@@ -66,7 +78,7 @@ _M_SAMPLES = (
 # team on Ukrainian samples; dropped for sounding robotic or choppy in Ukrainian: coral, shimmer,
 # sage, quartz, delta, vesper, beacon, cinder.
 VOICE_PERSONAS: dict[str, VoicePersona] = {
-    p.voice: p
+    p.id: p
     for p in (
         # ── women ──
         VoicePersona(
@@ -153,8 +165,45 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             "like a friend who is good at sorting things out. Occasional dry humour.",
             _M_SAMPLES,
         ),
+        # ── special ──
+        VoicePersona(
+            "stone", "Прямолінійний",
+            "Чоловічий (голос Стоуна), без фільтрів: матюкається, кепкує з вас і пояснює, як дурню. Але "
+            "відповідає по суті й правильно. Лише для тих, хто сам цього хоче.",
+            False,
+            "A blunt, foul-mouthed man with zero filter, in a roast the user chose on purpose. He swears "
+            "freely and naturally in Ukrainian («бля», «нахуй», «хуйня», «піздець», «дідько»), roasts the "
+            "user from head to toe for the question, their laziness, their plans, their choices, and "
+            "explains everything like to a total idiot: slowly, with obvious steps, sighing at how "
+            "simple it is. Swearing is seasoning, not every word — the joke lands better with timing. "
+            "Under the abuse the answer is right, concrete and complete — he mocks, then actually "
+            "helps; never refuses or holds back the help to make a joke. The roast is about the person "
+            "and what they say or do — never about nationality, religion, gender, sexuality, disability "
+            "or illness, never threats. If they are really upset, scared, grieving or it is about "
+            "health or safety, drop the act for that reply and just help, straight and kind.",
+            (
+                "Бля, ну ти серйозно? Це ж елементарно. Слухай сюди, пояснюю повільно.",
+                "Окей, геній, ще раз, як для п'ятирічки: спершу одне, потім друге. Все, нахуй, не ускладнюй.",
+                "Ну ти й йолоп, чесне слово. Але добре, зараз розберемось.",
+            ),
+            key="blunt",
+            special=True,
+            backend_note=(
+                "\nVOICE CHARACTER: the voice is «Прямолінійний» — a blunt, foul-mouthed roast the user chose. "
+                "Write your spoken answers in that manner: some Ukrainian swearing, mocking the user's "
+                "question or choices, explaining like to an idiot — the facts still right and complete. "
+                "Never about nationality, religion, gender, sexuality, disability or illness; when they are "
+                "really upset or it is about health or safety, plain and kind.\n"
+            ),
+        ),
     )
 }
+
+
+def api_voice(voice_id: str) -> str:
+    """The preset the API gets for a picker id («blunt» → «stone»)."""
+    persona = VOICE_PERSONAS.get(voice_id)
+    return persona.voice if persona else voice_id
 
 # «Єва, зміни голос на чоловічий» — handled by the app itself: the Live model often answers
 # «Секунду» and never delegates the change. The request needs a change verb near «голос».
@@ -167,7 +216,7 @@ VOICE_REQUEST_RE = re.compile(
 _VOICE_NAME_STEMS: dict[str, str] = {
     "глім": "gleam", "босс": "bossa", "боса": "bossa", "босу": "bossa", "віллоу": "willow", "вілоу": "willow",
     "марин": "marin", "меридіан": "meridian", "ріпл": "ripple", "стоун": "stone", "темп": "tempo",
-    "верс": "verse", "кедр": "cedar",
+    "верс": "verse", "кедр": "cedar", "прямолін": "blunt",
 }
 
 
@@ -212,8 +261,8 @@ def voice_request_target(text: str, current: str | None) -> str | None:
         for stem, voice in _VOICE_NAME_STEMS.items():
             if word.startswith(stem):
                 return voice
-    women = [p.voice for p in VOICE_PERSONAS.values() if p.feminine]
-    men = [p.voice for p in VOICE_PERSONAS.values() if not p.feminine]
+    women = [p.id for p in VOICE_PERSONAS.values() if p.feminine and not p.special]
+    men = [p.id for p in VOICE_PERSONAS.values() if not p.feminine and not p.special]
     now = VOICE_PERSONAS.get(current or "")
     if any(w.startswith("чолов") for w in words):
         pool = men

@@ -220,6 +220,8 @@ def test_the_blunt_voice_is_a_character_on_meridian(client):
     assert config["audio"]["output"]["voice"] == "meridian"  # the API gets the preset
     assert "хуєв філософ" in config["instructions"] and "This character comes first" in config["instructions"]
     assert "masculine grammatical gender" in config["instructions"]
+    # Prod: a rant, then a calm helpful answer and «А ти як?» — the whole reply stays in character.
+    assert "never switch to a normal assistant's tone" in config["instructions"] and "«бляха»" in config["instructions"]
     assert "VOICE CHARACTER" in config["delegation"]["responses"]["instructions"]
     conc = web._session_config(user, concierge=True)
     assert conc["audio"]["output"]["voice"] == "meridian" and "хуєв філософ" not in conc["instructions"]

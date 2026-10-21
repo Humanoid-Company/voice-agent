@@ -232,6 +232,7 @@ def test_the_blunt_voice_is_a_character_on_cedar(client):
     # Others keep their voice and none of it.
     plain = web._session_config(web.users.get("blunt-plain-0123456789a"))
     assert "з тобою от балакаю" in plain["instructions"]  # the others keep them
+
     assert "хуєв філософ" not in plain["instructions"] and "VOICE CHARACTER" not in plain["delegation"]["responses"]["instructions"]
 
     assert target("зміни голос на прямолінійний", "gleam") == "blunt"
@@ -242,6 +243,16 @@ def test_the_blunt_voice_is_a_character_on_cedar(client):
     ok = asyncio.run(other.executor.execute("change_voice", {"voice": "blunt"},
                                             ToolExecutionContext(session_id="s", user_utterances=["постав прямолінійний голос"])))
     assert ok.ok and other.voice == "blunt"
+
+
+def test_blunt_prompt_takes_the_users_additions(monkeypatch):
+    """voice/blunt_prompt.py: MY_ADDITIONS go to the Live prompt and to the backend; empty — nothing extra."""
+    from voice import blunt_prompt
+
+    assert "More from the user" not in blunt_prompt.character()
+    monkeypatch.setattr(blunt_prompt, "MY_ADDITIONS", "\nКажи «братан» замість «друже».\n")
+    assert blunt_prompt.character().endswith("(these win over the above):\nКажи «братан» замість «друже».")
+    assert "Кажи «братан»" in blunt_prompt.backend_note() and blunt_prompt.backend_note().endswith("\n")
 
 
 def test_voice_change_keeps_the_conversation(client):

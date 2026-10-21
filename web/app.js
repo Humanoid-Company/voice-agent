@@ -15,7 +15,6 @@
     clientId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9-]/g, "");
     store.set("va-client-id", clientId);
   }
-  let accessCode = store.get("va-access-code") || "";
   let assistantName = ""; // set when renamed by voice (/api/me); «Єва» otherwise
   // Voice picker: the choice lives here (the server forgets it on restart) and is sent with
   // every new call. Voice is fixed for a Live session, so a change applies from the next call.
@@ -127,7 +126,7 @@
   const headers = () => ({
     "Content-Type": "application/json",
     "X-Client-Id": clientId,
-    "X-Access-Code": accessCode,
+    ...window.EvaAuth.headers(), // the login (web/auth.js)
   });
 
   function setStatus(text, state) {
@@ -1134,7 +1133,7 @@
       if (my !== attempt) return;
       if (res.status === 401) {
         showGate();
-        throw new Error("Потрібен код доступу");
+        throw new Error("Потрібен вхід в акаунт");
       }
       if (!res.ok) throw new Error("Сервер відповів " + res.status);
       const { sdp } = await res.json();
@@ -2141,7 +2140,19 @@
     } catch { /* backend asleep / offline: keep the old state */ }
   }
 
-  function showGate() { $("gate").hidden = false; $("code").focus(); }
+  // Not logged in (or the login ended): to the login page, back here after it.
+  function showGate() { window.EvaAuth.toLogin(); }
+
+  // Who is logged in: «Скинути відмітки» is an admin's (a new event); the settings link carries the name.
+  async function showAccount() {
+    const auth = window.EvaAuth;
+    const fit = (a) => {
+      $("checkinReset").hidden = Boolean(a) && a.role !== "admin";
+      if (a) $("settingsLink").title = (a.name || a.email) + " · акаунт, версія й моделі, довідка";
+    };
+    fit(auth.account());
+    if (auth.token()) fit(await auth.refresh());
+  }
 
   const PROMPT_INFO = {
     v3: "Говорить живо, як у телефонній розмові з другом, і поводиться як людина: має свою думку, цікавиться " +
@@ -2572,6 +2583,7 @@
     $("cameraSelect").addEventListener("change", changeCamera);
     $("knowledgeLink").href = "knowledge.html" + location.search; // keep ?backend=… for a test backend
     $("historyLink").href = "history.html" + location.search;
+    $("settingsLink").href = "settings.html" + location.search;
     $("devicesAllow").addEventListener("click", allowDevices);
     for (const id of ["micSelect", "speakerSelect", "cameraSelect"]) {
       $(id).addEventListener("mousedown", namesFirst); // the empty list doesn't open
@@ -2593,12 +2605,6 @@
       });
     }
     updateButtons();
-    $("saveCode").addEventListener("click", () => {
-      accessCode = $("code").value.trim();
-      store.set("va-access-code", accessCode);
-      $("gate").hidden = true;
-      refreshMe();
-    });
     // Closing or leaving the tab ends the paid Live session instead of leaving it open.
     window.addEventListener("pagehide", () => { if (eva.mode !== "off") stop(); });
     if (!BACKEND) { addLine("system", "Не вказано адресу бекенду."); return; }
@@ -2608,7 +2614,8 @@
     const cfg = await wakeBackend();
     if (micMissing) setStatus("Немає доступу до мікрофона", "err");
     if (cfg) {
-      if (cfg.access_code_required && !accessCode) showGate();
+      if (cfg.login_required && !window.EvaAuth.token()) { showGate(); return; }
+      showAccount();
       await loadVoices();
       refreshMe();
       loadConversation();

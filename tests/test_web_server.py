@@ -23,13 +23,17 @@ def client(monkeypatch):
 def test_health_and_config(client):
     health = client.get("/healthz").json()
     assert health["ok"] is True and isinstance(health["web_search"], bool)
-    assert set(client.get("/api/config").json()) == {"access_code_required"}
+    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False}
 
 
-def test_access_code_is_enforced(client, monkeypatch):
+def test_with_a_team_code_only_a_login_gets_in(client, monkeypatch):
     monkeypatch.setattr(web, "ACCESS_CODE", "team-secret")
     assert client.get("/api/me", headers={"X-Client-Id": ALICE}).status_code == 401
-    ok = client.get("/api/me", headers={"X-Client-Id": ALICE, "X-Access-Code": "team-secret"})
+    # The old code alone no longer opens the page: it is the registration code now.
+    assert client.get("/api/me", headers={"X-Client-Id": ALICE, "X-Access-Code": "team-secret"}).status_code == 401
+    token = client.post("/api/auth/register", json={"email": "a@team.ua", "password": "password1",
+                                                    "invite_code": "team-secret"}).json()["token"]
+    ok = client.get("/api/me", headers={"X-Client-Id": ALICE, "Authorization": "Bearer " + token})
     assert ok.status_code == 200
 
 

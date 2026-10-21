@@ -7,6 +7,7 @@
   <meta name="description" content="Голосовий агент Єва: розмова голосом через GPT-Live.">
   <link rel="stylesheet" href="style.css">
   <script src="config.js"></script>
+  <script src="auth.js"></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -16,22 +17,18 @@
         <h1>Єва</h1>
         <p class="sub">Голосова помічниця. Говоріть з нею як з людиною.</p>
       </div>
-      <a id="knowledgeLink" class="btn small-btn header-link" href="knowledge.html"
-        title="Що Єва знає про людей і події: завантажити список чи документ">Знання</a>
+      <div class="head-links header-link">
+        <a id="knowledgeLink" class="btn small-btn" href="knowledge.html"
+          title="Що Єва знає про людей і події: завантажити список чи документ">Знання</a>
+        <a id="settingsLink" class="btn small-btn" href="settings.html" aria-label="Налаштування"
+          title="Акаунт, версія й моделі, довідка, люди команди">⚙<span class="wide-only"> Налаштування</span></a>
+      </div>
     </header>
 
     <nav class="mode-tabs" role="tablist" aria-label="Режим Єви">
       <button id="modeAssistant" role="tab" type="button" aria-selected="true">Помічниця</button>
       <button id="modeConcierge" role="tab" type="button" aria-selected="false">Консьєрж</button>
     </nav>
-
-    <section id="gate" class="card" hidden>
-      <label for="code">Код доступу</label>
-      <div class="row">
-        <input id="code" type="password" autocomplete="off" placeholder="Отримайте в команди">
-        <button id="saveCode" class="btn">Зберегти</button>
-      </div>
-    </section>
 
     <section class="card call">
       <div class="status-line">

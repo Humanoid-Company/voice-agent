@@ -1,4 +1,4 @@
-// «Історія» — this browser's saved conversations (server/conversations.py via /api/conversations): read one,
+// «Історія» — the account's saved conversations (this browser's without a login) (server/conversations.py via /api/conversations): read one,
 // continue it (Єва remembers it from the next call), copy or delete it.
 (() => {
   const params = new URLSearchParams(location.search);
@@ -9,7 +9,7 @@
     set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
   };
   const clientId = store.get("va-client-id") || "";
-  let accessCode = store.get("va-access-code") || "";
+  const auth = window.EvaAuth; // the login (web/auth.js)
   let current = "";
   const opened = new Map(); // conversation id → its turns, once opened
 
@@ -37,11 +37,11 @@
   }
 
   async function api(path, opts = {}) {
-    const res = await fetch(BACKEND + path, { ...opts, headers: { "X-Client-Id": clientId, "X-Access-Code": accessCode } });
+    const res = await fetch(BACKEND + path, { ...opts, headers: { "X-Client-Id": clientId, ...auth.headers() } });
     if (!res.ok) {
       let detail = "Помилка " + res.status;
       try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
-      if (res.status === 401) { $("gate").hidden = false; $("code").focus(); }
+      if (res.status === 401) auth.toLogin();
       throw new ApiError(res.status, typeof detail === "string" ? detail : "Помилка " + res.status);
     }
     return res.json();
@@ -160,12 +160,6 @@
   }
 
   $("backLink").href = "index.html" + location.search; // keep ?backend=… for a test backend
-  $("saveCode").addEventListener("click", () => {
-    accessCode = $("code").value.trim();
-    store.set("va-access-code", accessCode);
-    $("gate").hidden = true;
-    load();
-  });
   if (!BACKEND) { $("list").replaceChildren(el("p", { class: "muted empty" }, "Не вказано адресу бекенду.")); return; }
   load();
 })();

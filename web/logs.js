@@ -10,6 +10,8 @@
   };
   const myClient = (store.get("va-client-id") || "").slice(0, 8);
   let token = store.get("va-logs-token") || "";
+  // An admin's login opens the logs without the token (web/auth.js).
+  const admin = () => Boolean(window.EvaAuth && window.EvaAuth.token() && window.EvaAuth.isAdmin());
   let calls = [];
   let current = null; // the call shown on the right
   let liveTimer = null;
@@ -40,7 +42,7 @@
   };
 
   async function api(path) {
-    const res = await fetch(BACKEND + path, { headers: { "X-Logs-Token": token } });
+    const res = await fetch(BACKEND + path, { headers: { "X-Logs-Token": token, ...(window.EvaAuth ? window.EvaAuth.headers() : {}) } });
     if (!res.ok) {
       let detail = res.status + "";
       try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
@@ -51,7 +53,7 @@
 
   // ── calls ──
   async function loadCalls() {
-    if (!token) { $("calls").replaceChildren(el("p", { class: "muted empty" }, "Введіть токен (LOGS_TOKEN на Render).")); return; }
+    if (!token && !admin()) { $("calls").replaceChildren(el("p", { class: "muted empty" }, "Увійдіть як адмін або введіть токен (LOGS_TOKEN на Render).")); return; }
     try {
       calls = await api("/api/logs?n=200");
     } catch (err) {
@@ -210,7 +212,7 @@
   const KIND = { voice: "голос", concierge: "консьєрж" };
   const kinds = (k) => Object.entries(k || {}).map(([name, n]) => (KIND[name] || name) + " " + n).join(", ");
   async function loadUsage() {
-    if (!token) { $("usage").textContent = "Введіть токен (LOGS_TOKEN на Render)."; return; }
+    if (!token && !admin()) { $("usage").textContent = "Увійдіть як адмін або введіть токен (LOGS_TOKEN на Render)."; return; }
     let data;
     try { data = await api("/api/usage?days=30"); } catch (err) { $("usage").textContent = "Помилка: " + err.message; return; }
     if (!data.days.length) { $("usage").textContent = "Дзвінків за 30 днів ще не записано (облік іде з цього оновлення)."; return; }

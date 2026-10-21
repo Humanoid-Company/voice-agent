@@ -109,7 +109,8 @@ uv run python main.py
 | `OPENAI_LIVE_MODEL`, `OPENAI_LIVE_BACKEND_MODEL`, `OPENAI_LIVE_VOICE` | моделі GPT-Live і голос за замовчуванням |
 | `TIMEZONE` | часовий пояс, за замовчуванням `Europe/Kyiv` |
 | `WEB_SEARCH_API_KEY` | ключ [Tavily](https://tavily.com) для вебпошуку; без нього Єва каже, що пошук недоступний. Ще: `WEB_SEARCH_TIMEOUT_S` (9), `WEB_SEARCH_MAX_CALLS_PER_TURN` (2 пошуки на один запит) |
-| `PUBLIC_BACKEND_URL`, `FRONTEND_ORIGINS`, `ACCESS_CODE` | веб-бекенд: адреса, дозволені сторінки, пароль |
+| `PUBLIC_BACKEND_URL`, `FRONTEND_ORIGINS` | веб-бекенд: адреса, дозволені сторінки |
+| `ACCESS_CODE` (або `INVITE_CODE`), `ADMIN_EMAILS` | код запрошення для реєстрації: задано — сайт пускає лише з акаунтом (адмін / учасник, `server/accounts.py`); адміни з реєстрації |
 | `LOGS_TOKEN` | пароль прихованої сторінки `/logs` (історія дзвінків і викликів інструментів); порожньо — логи вимкнені |
 | `BACKGROUND_LISTENING` | десктоп: слухати фоном на паузі |
 | `IDLE_PAUSE_SECONDS`, `PAUSE_CLOSE_SECONDS` | десктоп: пауза після тиші (90 с, 0 — ніколи) і скільки пауза тримає сесію відкритою (30 с) |

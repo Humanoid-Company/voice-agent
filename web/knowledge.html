@@ -8,6 +8,7 @@
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="style.css">
   <script src="config.js"></script>
+  <script src="auth.js"></script>
   <script src="knowledge.js" defer></script>
 </head>
 <body>
@@ -22,14 +23,6 @@
     </header>
 
     <p id="storageNote" class="banner" hidden></p>
-
-    <section id="gate" class="card" hidden>
-      <label for="code">Код доступу</label>
-      <div class="row">
-        <input id="code" type="password" autocomplete="off" placeholder="Отримайте в команди">
-        <button id="saveCode" class="btn">Зберегти</button>
-      </div>
-    </section>
 
     <section class="card">
       <h2>Новий набір</h2>
@@ -70,7 +63,7 @@
       </div>
       <div id="sets" class="sets"><p class="muted empty">Завантаження…</p></div>
       <p class="hint">Увімкнені набори Єва знає з наступної розмови. Вимкнений набір лишається тут, але Єва
-        про нього не знає. Дані бачать усі, хто має код доступу.</p>
+        про нього не знає. Набори бачать і змінюють усі учасники команди.</p>
     </section>
   </main>
 </body>

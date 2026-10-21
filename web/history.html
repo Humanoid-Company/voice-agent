@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Єва — історія розмов</title>
-  <meta name="description" content="Збережені розмови з Євою в цьому браузері: перегляд, продовження, видалення.">
+  <meta name="description" content="Збережені розмови з Євою: перегляд, продовження, видалення.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="style.css">
   <script src="config.js"></script>
+  <script src="auth.js"></script>
   <script src="history.js" defer></script>
 </head>
 <body>
@@ -15,21 +16,13 @@
     <header class="page-head">
       <div>
         <h1>Історія</h1>
-        <p class="sub">Ваші розмови з Євою в цьому браузері. Будь-яку можна перечитати або продовжити — Єва
-          згадає, про що говорили.</p>
+        <p class="sub">Ваші розмови з Євою — з будь-якого пристрою, де ви увійшли. Будь-яку можна перечитати або
+          продовжити — Єва згадає, про що говорили.</p>
       </div>
       <a id="backLink" class="btn small-btn header-link" href="index.html">← До Єви</a>
     </header>
 
     <p id="storageNote" class="banner" hidden></p>
-
-    <section id="gate" class="card" hidden>
-      <label for="code">Код доступу</label>
-      <div class="row">
-        <input id="code" type="password" autocomplete="off" placeholder="Отримайте в команди">
-        <button id="saveCode" class="btn">Зберегти</button>
-      </div>
-    </section>
 
     <section class="card">
       <div class="card-head">

@@ -9,7 +9,7 @@
     get(key) { try { return localStorage.getItem(key); } catch { return null; } },
     set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
   };
-  let accessCode = store.get("va-access-code") || "";
+  const auth = window.EvaAuth; // the login (web/auth.js)
   let draft = null; // { items, file } — the parsed file before it is saved
   const PREVIEW_MAX = 200; // records drawn in the preview; all of them are saved
   const opened = new Map(); // set id → its records, once «Переглянути» loaded them
@@ -41,18 +41,16 @@
   async function api(path, opts = {}) {
     const res = await fetch(BACKEND + path, {
       ...opts,
-      headers: { "X-Access-Code": accessCode, ...(opts.body && !(opts.body instanceof Blob) ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
+      headers: { ...auth.headers(), ...(opts.body && !(opts.body instanceof Blob) ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
     });
     if (!res.ok) {
       let detail = "Помилка " + res.status;
       try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
-      if (res.status === 401) showGate();
+      if (res.status === 401) auth.toLogin();
       throw new ApiError(res.status, typeof detail === "string" ? detail : "Помилка " + res.status);
     }
     return res.json();
   }
-
-  function showGate() { $("gate").hidden = false; $("code").focus(); }
 
   function status(text, kind = "") {
     $("parseStatus").hidden = !text;
@@ -154,7 +152,7 @@
       data = await api("/api/knowledge");
     } catch (err) {
       if (err instanceof ApiError) {
-        $("sets").replaceChildren(el("p", { class: "muted empty" }, err.status === 401 ? "Введіть код доступу." : err.message));
+        $("sets").replaceChildren(el("p", { class: "muted empty" }, err.status === 401 ? "Потрібен вхід." : err.message));
         return;
       }
       // Render's free plan sleeps: the first request wakes it (up to a minute).
@@ -266,12 +264,6 @@
   drop.addEventListener("drop", (e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]); });
   $("saveSet").addEventListener("click", save);
   $("cancelSet").addEventListener("click", cancel);
-  $("saveCode").addEventListener("click", () => {
-    accessCode = $("code").value.trim();
-    store.set("va-access-code", accessCode);
-    $("gate").hidden = true;
-    loadSets();
-  });
   if (!BACKEND) { $("sets").replaceChildren(el("p", { class: "muted empty" }, "Не вказано адресу бекенду.")); return; }
   loadSets();
 })();

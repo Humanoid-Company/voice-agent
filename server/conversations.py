@@ -110,6 +110,13 @@ class ConversationStore(SqlStore):
             ).fetchone()
         return self._row(row, with_turns=True) if row else None
 
+    def reassign(self, old_owner: str, new_owner: str) -> int:
+        """A login: what this browser said before is the account's from now on (keyed by Account.owner)."""
+        with self._conn() as conn:
+            return conn.execute(
+                self._q("UPDATE conversations SET client_id = %s WHERE client_id = %s"), (new_owner, old_owner)
+            ).rowcount
+
     def delete(self, client_id: str, conv_id: str) -> bool:
         with self._conn() as conn:
             gone = conn.execute(

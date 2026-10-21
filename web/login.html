@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Єва — вхід</title>
+  <meta name="description" content="Вхід і реєстрація в команді Єви.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="auth.js"></script>
+  <script src="login.js" defer></script>
+</head>
+<body>
+  <main class="wrap narrow">
+    <header class="page-head">
+      <div>
+        <h1>Єва</h1>
+        <p class="sub">Голосова помічниця команди. Увійдіть, щоб поговорити з нею.</p>
+      </div>
+    </header>
+
+    <nav class="mode-tabs" role="tablist" aria-label="Вхід або реєстрація">
+      <button id="tabLogin" role="tab" type="button" aria-selected="true" aria-controls="loginForm">Вхід</button>
+      <button id="tabRegister" role="tab" type="button" aria-selected="false" aria-controls="registerForm">Реєстрація</button>
+    </nav>
+
+    <form id="loginForm" class="card" novalidate>
+      <label for="loginEmail">Email</label>
+      <input id="loginEmail" class="field" type="email" autocomplete="username" required>
+      <label for="loginPassword" class="gap">Пароль</label>
+      <input id="loginPassword" class="field" type="password" autocomplete="current-password" required>
+      <button class="btn primary big" type="submit">Увійти</button>
+      <p class="hint">Забули пароль? Попросіть адміна команди задати тимчасовий — у «Налаштуваннях» → «Люди».</p>
+    </form>
+
+    <form id="registerForm" class="card" novalidate hidden>
+      <label for="regName">Ім'я</label>
+      <input id="regName" class="field" type="text" autocomplete="name" maxlength="80" placeholder="Як вас звати в команді">
+      <label for="regEmail" class="gap">Email</label>
+      <input id="regEmail" class="field" type="email" autocomplete="username" required>
+      <label for="regPassword" class="gap">Пароль <span class="muted small">— щонайменше 8 символів</span></label>
+      <input id="regPassword" class="field" type="password" autocomplete="new-password" minlength="8" required>
+      <div id="inviteBlock">
+        <label for="regCode" class="gap">Код запрошення</label>
+        <input id="regCode" class="field" type="password" autocomplete="off" placeholder="Отримайте в адміна команди">
+      </div>
+      <button class="btn primary big" type="submit">Зареєструватися</button>
+      <p class="hint">Перший зареєстрований акаунт стає адміном: він керує людьми й бачить витрати.</p>
+    </form>
+
+    <p id="msg" class="status-msg" role="status" hidden></p>
+  </main>
+</body>
+</html>

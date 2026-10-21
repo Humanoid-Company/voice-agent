@@ -7,7 +7,8 @@ audio; this server only:
   - creates the Live session from the browser's SDP offer (the OpenAI key never leaves it),
   - attaches a sideband to that session and runs the tools (voice, name, language…).
 
-Env: OPENAI_API_KEY, PUBLIC_BACKEND_URL, FRONTEND_ORIGINS, optional ACCESS_CODE. See DEPLOY.md.
+Env: OPENAI_API_KEY, PUBLIC_BACKEND_URL, FRONTEND_ORIGINS, ACCESS_CODE / INVITE_CODE (registration code; set → only
+people with an account get in), optional ADMIN_EMAILS. See DEPLOY.md.
 """
 from __future__ import annotations
 
@@ -21,10 +22,11 @@ import time
 import urllib.parse
 from collections import deque
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -40,7 +42,8 @@ from config import (
 )
 from prompts.backend_prompt import build_backend_prompt, local_today
 from prompts.live_prompt import build_concierge_prompt, build_live_prompt
-from server import checkins, conversations, knowledge, usage
+from server import accounts, checkins, conversations, knowledge, usage
+from server.accounts import Account, AccountError
 from server.call_log import CallLogStore
 from server.db import StoreError
 from server.knowledge_import import KnowledgeImportError, make_openai_extract, parse_file
@@ -71,6 +74,11 @@ logger = logging.getLogger("server")
 PUBLIC_BACKEND_URL = os.getenv("PUBLIC_BACKEND_URL", "http://localhost:8000").rstrip("/")
 FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS", "*").split(",") if o.strip()]
 ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
+# Registration (server/accounts.py) takes this code; unset → ACCESS_CODE, the team's code from before accounts.
+INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
+# These emails are admins from registration (besides the first account).
+ADMIN_EMAILS = frozenset(e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip())
+SERVER_STARTED_AT = time.time()
 # The hidden /logs page reads whole conversations: only with this token (unset = logs can't be read).
 LOGS_TOKEN = os.getenv("LOGS_TOKEN", "").strip()
 # Cap on one Live session (cost guard: a tab left open in a noisy room kept a call going). 10 min, not 30: a
@@ -159,12 +167,40 @@ users = WebUserRegistry()
 calls = CallLogStore()
 
 
-def _user(client_id: str | None, access_code: str | None) -> WebUser:
-    if ACCESS_CODE and (access_code or "") != ACCESS_CODE:
-        raise HTTPException(status_code=401, detail="access_code_required")
+# ── who is asking (server/accounts.py): a login token in «Authorization: Bearer …» ──
+@dataclass(frozen=True)
+class AuthInfo:
+    account: Account | None = None
+    token: str = ""
+
+
+def _auth(authorization: str | None = Header(default=None)) -> AuthInfo:
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not token:
+        return AuthInfo()
+    try:
+        return AuthInfo(accounts.store.by_token(token), token)
+    except StoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _login_required() -> bool:
+    """With a team code set (prod) only people with an account get in; locally without one — anybody."""
+    return bool(INVITE_CODE or ACCESS_CODE)
+
+
+def _account(auth: AuthInfo) -> Account:
+    if auth.account is None:
+        raise HTTPException(status_code=401, detail="login_required")
+    return auth.account
+
+
+def _user(client_id: str | None, auth: AuthInfo) -> WebUser:
+    if _login_required():
+        _account(auth)
     if not client_id or not _CLIENT_ID_RE.match(client_id):
         raise HTTPException(status_code=400, detail="bad_client_id")
-    return users.get(client_id)
+    return users.get(client_id, auth.account.owner if auth.account else None)
 
 
 def _user_voice(user: WebUser) -> str:
@@ -301,17 +337,180 @@ def healthz() -> dict:
 @app.get("/api/config")
 def public_config() -> dict:
     """What the page needs to know before anything else."""
-    return {"access_code_required": bool(ACCESS_CODE)}
+    return {"login_required": _login_required(), "invite_required": bool(INVITE_CODE or ACCESS_CODE)}
+
+
+# ── accounts (server/accounts.py, web/login.html, web/settings.html) ──
+class RegisterIn(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+    invite_code: str = ""
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class PasswordIn(BaseModel):
+    current: str
+    new: str
+
+
+class AccountPatch(BaseModel):
+    role: str | None = None
+    disabled: bool | None = None
+    name: str | None = None
+    password: str | None = None  # an admin sets a temporary one for someone who forgot theirs
+
+
+def _accounts(call, *args, **kwargs):
+    try:
+        return call(*args, **kwargs)
+    except AccountError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    except StoreError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _logged_in(token: str, account: Account, client_id: str | None) -> dict:
+    """After login or registration: this browser's conversations become the account's, so nothing said
+    before logging in is lost; the page keeps the token."""
+    if client_id and _CLIENT_ID_RE.match(client_id):
+        here = users.peek(client_id)
+        if here is not None and here.owner == client_id:
+            here.save_conversation()  # a line said a second ago is in the database before it moves
+        try:
+            moved = conversations.store.reassign(client_id, account.owner)
+        except StoreError:
+            moved = 0
+        users.get(client_id, account.owner)
+        logger.info("web.auth.login account=%s moved_conversations=%s", account.id, moved)
+    return {"token": token, "account": account.to_dict()}
+
+
+@app.post("/api/auth/register")
+def auth_register(body: RegisterIn, x_client_id: str | None = Header(default=None)) -> dict:
+    code = INVITE_CODE or ACCESS_CODE
+    if code and not hmac.compare_digest(body.invite_code.strip().encode(), code.encode()):
+        raise HTTPException(status_code=403, detail="Невірний код запрошення. Попросіть його в адміна команди.")
+    account = _accounts(accounts.store.create, body.email, body.password, body.name, admin_emails=ADMIN_EMAILS)
+    logger.info("web.auth.registered account=%s role=%s", account.id, account.role)
+    return _logged_in(_accounts(accounts.store.start_session, account), account, x_client_id)
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginIn, request: Request, x_client_id: str | None = Header(default=None)) -> dict:
+    address = request.client.host if request.client else ""
+    token, account = _accounts(accounts.store.login, body.email, body.password, address=address)
+    return _logged_in(token, account, x_client_id)
+
+
+@app.post("/api/auth/logout")
+def auth_logout(auth: AuthInfo = Depends(_auth), x_client_id: str | None = Header(default=None)) -> dict:
+    """This browser only: the account's conversations stay the account's; the page here starts clean."""
+    if auth.token:
+        _accounts(accounts.store.logout, auth.token)
+    if x_client_id and _CLIENT_ID_RE.match(x_client_id):
+        users.get(x_client_id)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(auth: AuthInfo = Depends(_auth)) -> dict:
+    return {"account": _account(auth).to_dict()}
+
+
+@app.post("/api/auth/me")
+def auth_update_me(body: AccountPatch, auth: AuthInfo = Depends(_auth)) -> dict:
+    """The person's own name (role and the rest are the admin's)."""
+    account = _account(auth)
+    return {"account": _accounts(accounts.store.update, account.id, name=body.name).to_dict()}
+
+
+@app.post("/api/auth/password")
+def auth_password(body: PasswordIn, auth: AuthInfo = Depends(_auth)) -> dict:
+    _accounts(accounts.store.change_password, _account(auth).id, body.current, body.new, auth.token)
+    return {"ok": True}
+
+
+@app.get("/api/admin/users")
+def admin_users(auth: AuthInfo = Depends(_auth)) -> dict:
+    _admin(auth)
+    return {"accounts": [a.to_dict() for a in _accounts(accounts.store.list)],
+            "invite_code": INVITE_CODE or ACCESS_CODE}
+
+
+@app.post("/api/admin/users/{account_id}")
+def admin_user_update(account_id: int, body: AccountPatch, auth: AuthInfo = Depends(_auth)) -> dict:
+    _admin(auth)
+    found = _accounts(accounts.store.update, account_id, role=body.role, disabled=body.disabled,
+                      name=body.name, password=body.password)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Такого акаунта немає.")
+    logger.info("web.admin.account_updated account=%s by=%s", account_id, auth.account.id if auth.account else "-")
+    return {"account": found.to_dict()}
+
+
+# ── «Налаштування» → «Про систему»: what runs where, so nobody has to ask in chat ──
+def _repo_url() -> str:
+    slug = os.getenv("RENDER_GIT_REPO_SLUG", "").strip()
+    return f"https://github.com/{slug}" if slug else ""
+
+
+@app.get("/api/system")
+def system_info(auth: AuthInfo = Depends(_auth)) -> dict:
+    _team(auth)
+    commit = os.getenv("RENDER_GIT_COMMIT", "").strip()
+    repo = _repo_url()
+
+    def safe(call, default):
+        try:
+            return call()
+        except (StoreError, knowledge.KnowledgeError):
+            return default
+
+    sets = safe(knowledge.store.list_sets, [])
+    info: dict[str, Any] = {
+        "deploy": {
+            "commit": commit[:7] or None,
+            "commit_url": f"{repo}/commit/{commit}" if repo and commit else "",
+            "branch": os.getenv("RENDER_GIT_BRANCH") or None,
+            "repo_url": repo,
+            "started_at": SERVER_STARTED_AT,
+            "host": "Render" if os.getenv("RENDER") else "локально",
+        },
+        "models": {
+            "live": OPENAI_LIVE_MODEL, "backend": OPENAI_LIVE_BACKEND_MODEL,
+            "effort": OPENAI_LIVE_BACKEND_EFFORT or "за замовчуванням", "voice": OPENAI_LIVE_VOICE,
+        },
+        "services": {
+            "web_search": bool(WEB_SEARCH_API_KEY),
+            "database": knowledge.store.kind, "persistent": knowledge.store.persistent,
+            "logs": bool(LOGS_TOKEN),
+        },
+        "limits": {
+            "session_minutes": round(MAX_SESSION_S / 60, 1),
+            "live_price_per_minute": usage.LIVE_PRICE_PER_MINUTE,
+        },
+        "knowledge": {"sets": len(sets), "enabled": sum(1 for s in sets if s.get("enabled"))},
+        "accounts": safe(accounts.store.count, None),
+    }
+    if not _login_required() or (auth.account and auth.account.is_admin):
+        month = safe(lambda: usage.store.summary(30), None)
+        info["usage"] = {"days": 30, **month["total"], "today": month["days"][0] if month and month["days"] else None} if month else None
+    return info
 
 
 @app.post("/api/session")
 async def create_session(
     body: SessionRequest,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """Browser SDP offer in → SDP answer out; tools run here over a sideband."""
-    user = await asyncio.to_thread(_user, x_client_id, x_access_code)  # may restore the conversation from the database
+    user = await asyncio.to_thread(_user, x_client_id, auth)  # may restore the conversation from the database
     if body.voice and body.voice.strip().lower() in VOICE_PERSONAS:
         user.voice = body.voice.strip().lower()
     if body.speed in SPEED_OPTIONS:
@@ -397,9 +596,9 @@ def _record_usage(row: dict) -> None:
 @app.get("/api/me")
 def me(
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     return {
         "assistant_name": user.assistant_name,
         "voice": user.voice,  # None until chosen; the page keeps its own choice then
@@ -431,12 +630,12 @@ def voices() -> dict:
 def set_voice(
     body: VoiceRequest,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """Voice (applies via reconnect) and speed/style. Both are applied by the page: it reconnects
     for a voice, and sends the returned speed/style instruction once Єва is quiet — the page hears
     her audio, while an instruction that lands mid-answer derails it."""
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     if body.voice is not None:
         voice = body.voice.strip().lower()
         if voice not in VOICE_PERSONAS:
@@ -463,11 +662,11 @@ class VoiceRequestBody(BaseModel):
 def voice_request(
     body: VoiceRequestBody,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """«Єва, зміни голос на …» heard by the browser's recogniser — faster than the Live transcript.
     The page restarts the call in the new voice when switched is true."""
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     switched = user.switch_voice_by_request(body.text[:500])
     if switched:
         user.reconnect_pending = False  # the page reconnects itself
@@ -482,10 +681,10 @@ class OverheardBody(BaseModel):
 def overheard(
     body: OverheardBody,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """A phrase the page's recogniser heard while Єва was paused (not addressed to her)."""
-    _user(x_client_id, x_access_code).background.add(body.text[:1000])
+    _user(x_client_id, auth).background.add(body.text[:1000])
     return {"ok": True}
 
 
@@ -515,9 +714,9 @@ def _numbers_only(value: Any, depth: int = 0) -> Any:
 async def diag_post(
     request: Request,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     raw = await request.body()
     if len(raw) > _DIAG_MAX_BYTES:
         raise HTTPException(status_code=413, detail="too_big")
@@ -534,7 +733,10 @@ def diag_get(n: int = 50) -> list[dict]:
     return list(_diag)[-max(1, min(n, 200)):]
 
 
-def _logs_auth(token: str | None) -> None:
+def _logs_auth(token: str | None, auth: AuthInfo) -> None:
+    """An admin's login, or the LOGS_TOKEN (the old way, for scripts)."""
+    if auth.account is not None and auth.account.is_admin:
+        return
     if not LOGS_TOKEN:
         raise HTTPException(status_code=503, detail="logs_disabled: set LOGS_TOKEN on the server")
     if not hmac.compare_digest((token or "").encode(), LOGS_TOKEN.encode()):
@@ -542,16 +744,16 @@ def _logs_auth(token: str | None) -> None:
 
 
 @app.get("/api/logs")
-def logs_list(x_logs_token: str | None = Header(default=None), n: int = 100) -> list[dict]:
+def logs_list(auth: AuthInfo = Depends(_auth), x_logs_token: str | None = Header(default=None), n: int = 100) -> list[dict]:
     """The latest calls, newest first (web/logs.html). In memory: a deploy clears them."""
-    _logs_auth(x_logs_token)
+    _logs_auth(x_logs_token, auth)
     return calls.latest(max(1, min(n, 200)))
 
 
 @app.get("/api/usage")
-def usage_summary(x_logs_token: str | None = Header(default=None), days: int = 14) -> dict:
+def usage_summary(auth: AuthInfo = Depends(_auth), x_logs_token: str | None = Header(default=None), days: int = 14) -> dict:
     """/logs → «Витрати»: minutes, tokens and the estimated $ per day and per browser (server/usage.py)."""
-    _logs_auth(x_logs_token)
+    _logs_auth(x_logs_token, auth)
     try:
         return usage.store.summary(max(1, min(days, 90)))
     except StoreError as exc:
@@ -559,9 +761,9 @@ def usage_summary(x_logs_token: str | None = Header(default=None), days: int = 1
 
 
 @app.get("/api/logs/{session_id}")
-def logs_call(session_id: str, x_logs_token: str | None = Header(default=None)) -> dict:
+def logs_call(session_id: str, auth: AuthInfo = Depends(_auth), x_logs_token: str | None = Header(default=None)) -> dict:
     """One call: every line, note, backend step and tool call with its arguments, result and time."""
-    _logs_auth(x_logs_token)
+    _logs_auth(x_logs_token, auth)
     log = calls.get(session_id)
     if log is None:
         raise HTTPException(status_code=404, detail="unknown_call")
@@ -571,20 +773,20 @@ def logs_call(session_id: str, x_logs_token: str | None = Header(default=None)) 
 @app.delete("/api/overheard")
 def overheard_clear(
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """Background listening turned off on the page: forget what was heard so far."""
-    _user(x_client_id, x_access_code).background.clear()
+    _user(x_client_id, auth).background.clear()
     return {"ok": True}
 
 
 @app.post("/api/overheard/digest")
 def overheard_digest(
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """On wake: the gist of the pause as a commentary for the page to send; kept in the history."""
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     note = user.background.digest()
     if not note:
         return {"commentary": ""}
@@ -597,10 +799,10 @@ def overheard_digest(
 async def camera_frame(
     request: Request,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """The page's latest camera frame (raw JPEG body), kept in memory for look_at_camera."""
-    user = await asyncio.to_thread(_user, x_client_id, x_access_code)
+    user = await asyncio.to_thread(_user, x_client_id, auth)
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_FRAME_BYTES:
         raise HTTPException(status_code=413, detail="frame_too_large")  # before reading it in
@@ -616,20 +818,20 @@ async def camera_frame(
 @app.delete("/api/frame")
 def camera_off(
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """Camera turned off on the page: forget the last frame."""
-    _user(x_client_id, x_access_code).camera_off()
+    _user(x_client_id, auth).camera_off()
     return {"ok": True}
 
 
 @app.delete("/api/conversation")
 def clear_conversation(
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """«Нова розмова»: Єва starts from a clean page; the old conversation stays saved («Історія»)."""
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     user.new_conversation()
     user.background.clear()
     return {"ok": True}
@@ -646,18 +848,18 @@ def _history(call, *args):
 @app.get("/api/conversation")
 def current_conversation(
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """What the page shows on load: the conversation Єва remembers, as it was said."""
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     return {"id": user.conversation_id, "started_at": user.conversation_started_at,
             "turns": conversations.visible(user.conversation.to_list())}
 
 
 # ── «Консьєрж»: who has been let in (server/checkins.py) — a second visit under the same name is caught ──
 @app.get("/api/concierge/checkins")
-def concierge_checkins(x_access_code: str | None = Header(default=None)) -> dict:
-    _team(x_access_code)
+def concierge_checkins(auth: AuthInfo = Depends(_auth)) -> dict:
+    _team(auth)
     try:
         return {"checkins": checkins.store.all()}
     except StoreError as exc:
@@ -665,9 +867,9 @@ def concierge_checkins(x_access_code: str | None = Header(default=None)) -> dict
 
 
 @app.delete("/api/concierge/checkins")
-def concierge_reset(x_access_code: str | None = Header(default=None)) -> dict:
+def concierge_reset(auth: AuthInfo = Depends(_auth)) -> dict:
     """A new event: everyone may come in again."""
-    _team(x_access_code)
+    _admin(auth)
     try:
         return {"ok": True, "removed": checkins.store.reset()}
     except StoreError as exc:
@@ -677,25 +879,25 @@ def concierge_reset(x_access_code: str | None = Header(default=None)) -> dict:
 @app.get("/api/conversations")
 def conversation_list(
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """This browser's saved conversations, newest first (the current one is marked)."""
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     user.save_conversation()  # the current one as it is now
     return {"current": user.conversation_id, "persistent": conversations.store.persistent,
-            "conversations": _history(conversations.store.list, user.client_id)}
+            "conversations": _history(conversations.store.list, user.owner)}
 
 
 @app.get("/api/conversations/{conv_id}")
 def conversation_get(
     conv_id: str,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     if conv_id == user.conversation_id:
         user.save_conversation()
-    found = _history(conversations.store.get, user.client_id, conv_id)
+    found = _history(conversations.store.get, user.owner, conv_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Такої розмови немає.")
     found["turns"] = conversations.visible(found["turns"])
@@ -706,11 +908,11 @@ def conversation_get(
 def conversation_resume(
     conv_id: str,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """«Продовжити»: a saved conversation becomes the current one — Єва remembers it from the next call."""
-    user = _user(x_client_id, x_access_code)
-    found = _history(conversations.store.get, user.client_id, conv_id)
+    user = _user(x_client_id, auth)
+    found = _history(conversations.store.get, user.owner, conv_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Такої розмови немає.")
     user.resume_conversation(found)
@@ -722,13 +924,13 @@ def conversation_resume(
 def conversation_delete(
     conv_id: str,
     x_client_id: str | None = Header(default=None),
-    x_access_code: str | None = Header(default=None),
+    auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """Delete a saved conversation; the current one is also forgotten by Єва (a new one starts)."""
-    user = _user(x_client_id, x_access_code)
+    user = _user(x_client_id, auth)
     if conv_id == user.conversation_id:
         user.new_conversation()
-    if not _history(conversations.store.delete, user.client_id, conv_id):
+    if not _history(conversations.store.delete, user.owner, conv_id):
         raise HTTPException(status_code=404, detail="Такої розмови немає.")
     return {"ok": True}
 
@@ -739,9 +941,17 @@ def conversation_delete(
 _extract = None
 
 
-def _team(access_code: str | None) -> None:
-    if ACCESS_CODE and not hmac.compare_digest((access_code or "").encode(), ACCESS_CODE.encode()):
-        raise HTTPException(status_code=401, detail="access_code_required")
+def _team(auth: AuthInfo) -> None:
+    """Anyone logged in (anybody when login isn't required): «Знання» — upload, switch, rename, delete — and the
+    concierge's marks."""
+    if _login_required():
+        _account(auth)
+
+
+def _admin(auth: AuthInfo) -> None:
+    """Resetting the concierge's marks, people, logs and costs: admins only (when login is required)."""
+    if _login_required() and not _account(auth).is_admin:
+        raise HTTPException(status_code=403, detail="Це може лише адмін.")
 
 
 def _kb(call, *args, **kwargs):
@@ -779,9 +989,9 @@ class KnowledgeSetPatch(BaseModel):
 
 
 @app.post("/api/knowledge/parse")
-async def knowledge_parse(request: Request, x_access_code: str | None = Header(default=None)) -> dict:
+async def knowledge_parse(request: Request, auth: AuthInfo = Depends(_auth)) -> dict:
     """The file as the raw body, its name in X-File-Name (URL-encoded) → the records it holds."""
-    _team(x_access_code)
+    _team(auth)
     filename = urllib.parse.unquote(request.headers.get("x-file-name", ""))[:200]
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > 5_000_000:
@@ -796,22 +1006,22 @@ async def knowledge_parse(request: Request, x_access_code: str | None = Header(d
 
 
 @app.get("/api/knowledge")
-def knowledge_sets(x_access_code: str | None = Header(default=None)) -> dict:
-    _team(x_access_code)
+def knowledge_sets(auth: AuthInfo = Depends(_auth)) -> dict:
+    _team(auth)
     return {"storage": knowledge.store.kind, "persistent": knowledge.store.persistent,
             "sets": _kb(knowledge.store.list_sets)}
 
 
 @app.post("/api/knowledge")
-def knowledge_create(body: KnowledgeSetIn, x_access_code: str | None = Header(default=None)) -> dict:
-    _team(x_access_code)
+def knowledge_create(body: KnowledgeSetIn, auth: AuthInfo = Depends(_auth)) -> dict:
+    _team(auth)
     items = [item.model_dump() for item in body.items]
     return _kb(knowledge.store.create_set, body.name, items, note=body.note, source=body.source)
 
 
 @app.get("/api/knowledge/{set_id}")
-def knowledge_get(set_id: int, x_access_code: str | None = Header(default=None)) -> dict:
-    _team(x_access_code)
+def knowledge_get(set_id: int, auth: AuthInfo = Depends(_auth)) -> dict:
+    _team(auth)
     found = _kb(knowledge.store.get_set, set_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Такого набору немає.")
@@ -819,9 +1029,9 @@ def knowledge_get(set_id: int, x_access_code: str | None = Header(default=None))
 
 
 @app.post("/api/knowledge/{set_id}")
-def knowledge_update(set_id: int, body: KnowledgeSetPatch, x_access_code: str | None = Header(default=None)) -> dict:
+def knowledge_update(set_id: int, body: KnowledgeSetPatch, auth: AuthInfo = Depends(_auth)) -> dict:
     """Turn a set on or off for Єва («Єва знає»), rename it, change its note."""
-    _team(x_access_code)
+    _team(auth)
     found = _kb(knowledge.store.update_set, set_id, enabled=body.enabled, name=body.name, note=body.note)
     if found is None:
         raise HTTPException(status_code=404, detail="Такого набору немає.")
@@ -829,8 +1039,8 @@ def knowledge_update(set_id: int, body: KnowledgeSetPatch, x_access_code: str | 
 
 
 @app.delete("/api/knowledge/{set_id}")
-def knowledge_delete(set_id: int, x_access_code: str | None = Header(default=None)) -> dict:
-    _team(x_access_code)
+def knowledge_delete(set_id: int, auth: AuthInfo = Depends(_auth)) -> dict:
+    _team(auth)
     if not _kb(knowledge.store.delete_set, set_id):
         raise HTTPException(status_code=404, detail="Такого набору немає.")
     return {"ok": True}

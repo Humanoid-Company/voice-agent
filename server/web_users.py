@@ -63,6 +63,9 @@ FRAME_FALLBACK_S = 6.0
 @dataclass
 class WebUser:
     client_id: str
+    # Whose conversations these are: the browser's own id, or a logged-in account's (Account.owner) — then
+    # «Історія» follows the person to any device.
+    owner: str = ""
     executor: ToolExecutor = field(init=False)
     assistant_name: str | None = None
     language: str = "uk"
@@ -144,6 +147,7 @@ class WebUser:
                 logger.debug("apply_delivery failed", exc_info=True)
 
     def __post_init__(self) -> None:
+        self.owner = self.owner or self.client_id
         self.executor = _build_executor(self)
         self.conversation.on_change = self._save_soon
 
@@ -164,21 +168,34 @@ class WebUser:
         with self._write_lock:  # one write at a time: an older snapshot never lands after a newer one
             try:
                 conversations.store.save(
-                    self.conversation_id, self.client_id, self.conversation_started_at, self.conversation.to_list()
+                    self.conversation_id, self.owner, self.conversation_started_at, self.conversation.to_list()
                 )
             except StoreError:
                 logger.warning("web.conversation.save_failed client=%s", self.client_id[:8])
 
-    def restore_conversation(self) -> None:
-        """After a restart: the browser's latest conversation becomes the current one again."""
+    def restore_conversation(self, in_use: frozenset[str] = frozenset()) -> None:
+        """After a restart: the owner's latest conversation becomes the current one again — unless another
+        device of the same account has it open now (two writers would overwrite each other's lines)."""
         try:
-            saved = conversations.store.latest(self.client_id)
+            saved = conversations.store.latest(self.owner)
         except StoreError:
             return
-        if saved and not len(self.conversation):
+        if saved and saved["id"] not in in_use and not len(self.conversation):
             self.conversation_id, self.conversation_started_at = saved["id"], saved["started_at"]
             self.conversation.load(saved["turns"])
             logger.info("web.conversation.restored client=%s turns=%s", self.client_id[:8], len(saved["turns"]))
+
+    def switch_owner(self, owner: str, in_use: frozenset[str] = frozenset()) -> None:
+        """Logged in or out in this browser: the current conversation is saved under the old owner, and the
+        new owner's latest one is picked up (none after a logout: the page starts clean)."""
+        if owner == self.owner:
+            return
+        self.save_conversation()
+        self.owner = owner
+        self.conversation_id, self.conversation_started_at = uuid.uuid4().hex, time.time()
+        self.conversation.clear()
+        self.guest = None
+        self.restore_conversation(in_use)
 
     def new_conversation(self) -> None:
         """«Нова розмова»: the current one stays saved (in «Історія»), a new one starts empty."""
@@ -498,19 +515,37 @@ class WebUserRegistry:
         self._users: dict[str, WebUser] = {}
         self._lock = threading.Lock()
 
-    def get(self, client_id: str) -> WebUser:
+    def get(self, client_id: str, owner: str | None = None) -> WebUser:
+        """The browser's state; `owner` = the logged-in account's Account.owner (None: the browser's own)."""
+        owner = owner or client_id
         with self._lock:
             user = self._users.get(client_id)
             created = user is None
             if user is None:
                 self._evict_idle()
-                user = WebUser(client_id=client_id)
+                user = WebUser(client_id=client_id, owner=owner)
                 self._users[client_id] = user
                 logger.info("web.user.created users=%s", len(self._users))
             user.last_seen = time.time()
+            switched = not created and user.owner != owner
+            in_use = self._open_elsewhere(owner, client_id) if created or switched else frozenset()
+        # Outside the lock: the database may take a moment.
         if created:
-            user.restore_conversation()  # outside the lock: the database may take a moment
+            user.restore_conversation(in_use)
+        elif switched:
+            user.switch_owner(owner, in_use)
         return user
+
+    def peek(self, client_id: str) -> WebUser | None:
+        """The browser's state if the server has it now — nothing is created or restored."""
+        with self._lock:
+            return self._users.get(client_id)
+
+    def _open_elsewhere(self, owner: str, client_id: str) -> frozenset[str]:
+        """Conversations of this owner current in its other browsers (seen within the hour)."""
+        now = time.time()
+        return frozenset(u.conversation_id for cid, u in self._users.items()
+                         if cid != client_id and u.owner == owner and now - u.last_seen < 3600)
 
     def save_all(self) -> None:
         """Server shutting down (a deploy): write the conversations still waiting to be saved."""

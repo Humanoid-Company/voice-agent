@@ -267,12 +267,13 @@ def _concierge_config(user: WebUser, language: str, today: str, voice: str) -> d
              if t["name"] in _CONCIERGE_TOOLS]
     config = {
         "model": OPENAI_LIVE_MODEL,
-        "instructions": build_concierge_prompt(language_name=language, today=today, voice=voice),
+        "instructions": build_concierge_prompt(language_name=language, today=today, voice=voice,
+                                               check_question=user.check_question),
         "audio": {"output": {"voice": voice}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language)
-            + knowledge.BACKEND_NOTE + knowledge.CONCIERGE_BACKEND_NOTE,
+            + knowledge.BACKEND_NOTE + knowledge.concierge_backend_note(user.check_question),
             tools=tools,
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
@@ -300,6 +301,8 @@ class SessionRequest(BaseModel):
     prompt: str | None = None
     # The page's top switch: "concierge" — she welcomes people and checks them against «Знання».
     mode: str | None = None
+    # «Консьєрж» → «Перевірочне питання»: false — the name on the list is enough.
+    check_question: bool | None = None
 
 
 # A kept old call still open this long after its successor opened is closed anyway (page gone).
@@ -519,6 +522,7 @@ async def create_session(
         user.style = body.style
     user.prompt_variant = body.prompt if body.prompt in WEB_PROMPT_VARIANTS else "v5"
     user.concierge = body.mode == "concierge"
+    user.check_question = body.check_question is not False
     user.reconnect_pending = False
     if body.user_text and body.user_text.strip():
         user.conversation.add("user", body.user_text.strip()[:500])
@@ -547,6 +551,7 @@ async def create_session(
         model=OPENAI_LIVE_MODEL, backend=OPENAI_LIVE_BACKEND_MODEL, effort=OPENAI_LIVE_BACKEND_EFFORT or "default",
         history=len(user.conversation.live_input()), speed=user.speed, style=user.style,
         **({"mode": "concierge"} if body.mode == "concierge" else {}),
+        **({"check_question": False} if body.mode == "concierge" and not user.check_question else {}),
     )
     if body.user_text and body.user_text.strip():
         call_log.add("user", text=body.user_text.strip()[:500], via="wake")

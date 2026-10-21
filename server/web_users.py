@@ -98,6 +98,7 @@ class WebUser:
     # «Консьєрж»: who the guest was confirmed as (confirm_guest); cleared by «Наступний гість».
     guest: dict | None = None
     concierge: bool = False  # the current call was opened in «Консьєрж» mode
+    check_question: bool = True  # «Перевірочне питання» on the page; off — the name on the list is enough
     camera_on: bool = False
     camera_frame: bytes | None = None
     camera_frame_at: float = 0.0
@@ -214,7 +215,7 @@ class WebUser:
 _summarizer = None
 
 
-def _concierge_marks(text: str, conversation_id: str) -> str:
+def _concierge_marks(text: str, conversation_id: str, check_question: bool = True) -> str:
     """«Консьєрж»: each record says what to ask about — a fact picked at random per guest and visit (one
     question for everyone, «ким ви працюєте?», could be learned) — or that the person was let in already, so
     the backend stops before the check question."""
@@ -233,7 +234,7 @@ def _concierge_marks(text: str, conversation_id: str) -> str:
             lines.append(f"{line} [ВЖЕ ВІДМІЧЕНО о {when}]")
             continue
         keys = [f.split(":", 1)[0].strip() for f in facts.split("; ") if ":" in f]
-        pick = guests.pick_fact(title, keys, conversation_id)
+        pick = guests.pick_fact(title, keys, conversation_id) if check_question else ""
         if pick:
             lines.append(f"{line} [перевірка: {pick}]")
         else:
@@ -385,7 +386,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             )
         text = found["text"]
         if user.concierge:
-            text = _concierge_marks(text, user.conversation_id)
+            text = _concierge_marks(text, user.conversation_id, user.check_question)
         head = (
             f"Записи команди ({found['shown']} з {found['total']}"
             + (", найближчі до запиту" if found["shown"] < found["total"] else ", усі")
@@ -434,6 +435,8 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                 message=f"{record.title} вже відмічений сьогодні о {before['time']} — другий раз пройти не можна. Без "
                 "перевірочного питання: ввічливо скажи, що цю людину вже зареєстровано, і що зараз підійде хтось із команди.",
             )
+        if not user.check_question:  # the name on the list is enough: in and marked, no question
+            return _let_in(record.title)
         pick = guests.pick_fact(record.title, list(record.fields), user.conversation_id)
         return ToolResult(
             ok=True, status="found", data=guests.as_dict(found),
@@ -466,8 +469,10 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                 message="Такої людини у списку гостей немає — підтвердити не можна. Порадь звернутися до того, хто "
                 "запрошував, або до когось із команди.",
             )
-        # …and only with the guest's own answer to the check question, heard in this call — not their name.
-        problem = checkins.answer_problem(name, str(args.get("guest_answer") or ""), ctx.user_utterances or [])
+        # …and only with the guest's own answer to the check question, heard in this call — not their name
+        # (unless the page turned the check question off).
+        problem = (checkins.answer_problem(name, str(args.get("guest_answer") or ""), ctx.user_utterances or [])
+                   if user.check_question else None)
         if problem:
             logger.info("web.concierge.confirm_refused why=%s", problem)
             return ToolResult(
@@ -475,6 +480,10 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                 message="Ще рано підтверджувати: спершу постав одне перевірочне питання про факт із запису цієї "
                 "людини і дочекайся її відповіді; guest_answer — її власні слова у відповідь (не ім'я).",
             )
+        return _let_in(name)
+
+    def _let_in(name: str) -> ToolResult:
+        """Mark the guest as in (once a day) and tell her to welcome them — or that they came already."""
         try:
             before = checkins.store.find(name)
             if before is None:

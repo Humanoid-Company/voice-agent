@@ -350,6 +350,12 @@ BACKEND_NOTE = (
 store = KnowledgeStore(os.getenv("DATABASE_URL", ""), os.getenv("KNOWLEDGE_SQLITE", "data/knowledge.db"))
 
 
+def concierge_backend_note(check_question: bool = True) -> str:
+    """The backend's protocol at the door; without the check question (the page's switch) find_guest lets the
+    one person in itself."""
+    return CONCIERGE_BACKEND_NOTE if check_question else CONCIERGE_NO_CHECK_BACKEND_NOTE
+
+
 # «Консьєрж» (web, the page's top switch): she has her own prompt (prompts/live_prompt.py
 # build_concierge_prompt); the backend checks people against these records with this protocol.
 CONCIERGE_BACKEND_NOTE = (
@@ -371,4 +377,19 @@ CONCIERGE_BACKEND_NOTE = (
     "confirmation. Questions about the place or the event: knowledge_lookup, answer only from the records "
     "(an event's notes); not there — say you don't know and offer to call someone from the team; never "
     "invent places, directions or times.\n"
+)
+
+CONCIERGE_NO_CHECK_BACKEND_NOTE = (
+    "\nCONCIERGE: you check people against the team's guest list for a voice concierge; she says your reply. "
+    "There is NO check question at this door: the name on the list is enough. A name someone gives (with or "
+    "without a surname): call find_guest(name, surname) — never decide from knowledge_lookup or from memory; "
+    "it matches short forms («Катя» — Катерина), case endings and near spellings itself, and lets the one "
+    "person in and marks them itself. Reply as its result says: not on the list — say you can't find this name "
+    "among the guests and ask them to repeat it or add the surname; still not there — suggest they contact the "
+    "person who invited them or someone from the team, and do not let them in; several with the name — ask the "
+    "surname without naming anyone; already registered — say so; let in — a short welcome by first name and "
+    "«Проходьте, будь ласка», no question, no small talk. Never ask a check question and never call "
+    "confirm_guest. Never reveal anything from a record. Questions about the place or the event: "
+    "knowledge_lookup, answer only from the records (an event's notes); not there — say you don't know and "
+    "offer to call someone from the team; never invent places, directions or times.\n"
 )

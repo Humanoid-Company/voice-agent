@@ -104,6 +104,8 @@
   // The top switch: «Помічниця» (the usual talk) or «Консьєрж» — she welcomes people, asks their name and
   // checks it against «Знання» with one check question (server/knowledge.py CONCIERGE_NOTE).
   let mode = store.get("va-mode") === "concierge" ? "concierge" : "assistant";
+  // «Консьєрж» → «Перевірочне питання»: off — the name on the list is enough (kept on this device).
+  let checkQuestion = store.get("va-check-question") !== "0";
   if (!WEB_PROMPTS.includes(promptVariant)) promptVariant = "v5";
   let pc = null;
   let channel = null;
@@ -502,6 +504,23 @@
     updateButtons();
   }
 
+  function showCheckQuestion() {
+    $("checkQuestion").checked = checkQuestion;
+    $("checkQuestionInfo").textContent = checkQuestion
+      ? "Після імені Єва питає щось із запису гостя (посаду, хобі…)."
+      : "Вимкнено: Єва пускає, щойно знайшла ім'я в списку.";
+  }
+
+  function setCheckQuestion() {
+    checkQuestion = $("checkQuestion").checked;
+    store.set("va-check-question", checkQuestion ? "1" : "0");
+    showCheckQuestion();
+    checkGuestList();
+    // A call keeps the instructions it opened with: «Наступний гість» opens a new one.
+    if (eva.mode !== "off") addLine("system", (checkQuestion ? "Перевірочне питання увімкнено" : "Перевірочне питання вимкнено") +
+      " — з наступного гостя.");
+  }
+
   // g: the server's {name, verified, duplicate?, time?} (/api/me); null — nobody yet.
   let shownGuest = "";
   function showGuest(g, announce = false) {
@@ -550,7 +569,8 @@
       $("conciergeInfo").classList.toggle("warn-text", !on.length);
       $("conciergeInfo").textContent = on.length
         ? "Список: " + on.map((s) => "«" + s.name + "»").join(", ") + " — " + people + " записів. Єва вітає людину, питає ім'я, " +
-          "звіряє його зі списком (однакові імена — питає прізвище) і ставить одне перевірочне питання."
+          "звіряє його зі списком (однакові імена — питає прізвище)" +
+          (checkQuestion ? " і ставить одне перевірочне питання." : " і пускає, щойно знайшла в списку.")
         : "Список людей порожній — завантажте його у «Знання» (кнопка вгорі), інакше Єві нема з ким звіряти.";
     } catch { /* asleep: the hint stays */ }
   }
@@ -1151,6 +1171,7 @@
   const sessionBody = (extra) => Object.assign({
     voice: voice || undefined, speed, style, prompt: promptVariant,
     mode: mode === "concierge" ? "concierge" : undefined,
+    check_question: mode === "concierge" ? checkQuestion : undefined,
   }, extra);
 
   // The offer's Opus line says how we want to receive her voice. Browser defaults leave the bitrate
@@ -2538,6 +2559,8 @@
     $("checkinReset").addEventListener("click", resetCheckins);
     $("modeAssistant").addEventListener("click", () => setMode("assistant"));
     $("modeConcierge").addEventListener("click", () => setMode("concierge"));
+    $("checkQuestion").addEventListener("change", setCheckQuestion);
+    showCheckQuestion();
     showMode();
     $("copyChat").addEventListener("click", copyConversation);
     $("voice").addEventListener("change", () => { stopPreview(); showVoice(true); });

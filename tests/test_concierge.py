@@ -229,3 +229,27 @@ def test_same_surname_and_short_name_asks_the_full_name_not_the_surname_again():
     res = find(user, "Саша", "Козак")
     assert res.status == "ask_full_name" and "повне ім'я" in res.message
     assert find(user, "Олександра", "Козак").data["name"] == "Олександра Козак"
+
+
+def test_without_the_check_question_the_name_on_the_list_lets_them_in():
+    """«Перевірочне питання» off on the page: find_guest lets the one person in and marks them, no question."""
+    user = web.users.get("conc-n-0123456789abcdef")
+    user.check_question = False
+    conc = web._session_config(user, concierge=True)
+    assert "There is no check question at this door" in conc["instructions"]
+    assert "its one check question" not in conc["instructions"]  # the usual steps 3–5 are replaced
+    assert "NO check question" in conc["delegation"]["responses"]["instructions"]
+    res = find(user, "Олег", "Петренко")
+    assert res.status == "ok" and "Олег Петренко" in res.message and "перевірочн" not in res.message.lower()
+    assert user.guest["verified"] is True and checkins.store.find("Олег Петренко") is not None
+    assert find(user, "Олег", "Петренко").status == "already_checked_in"  # once a day, as with the question
+    assert find(user, "Олег").status == "ask_surname"  # two Олеги: the surname still decides
+    lookup = asyncio.run(user.executor.execute("knowledge_lookup", {"query": "Гнатюк"}, ToolExecutionContext(session_id="s")))
+    assert "[перевірка:" not in lookup.message
+    # The model may still call confirm_guest: no answer needed then.
+    ok = confirm(user, ["Олег", "Гнатюк"], "", name="Олег Гнатюк")
+    assert ok.status == "ok"
+
+    user.check_question = True  # back on: the question again
+    on = web._session_config(user, concierge=True)
+    assert "There is no check question" not in on["instructions"] and "NO check question" not in on["delegation"]["responses"]["instructions"]

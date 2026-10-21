@@ -248,6 +248,7 @@ h3 { font-size: 1rem; margin: 0; }
 .guest-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
 .guest-line strong { overflow-wrap: anywhere; }
 .checkin-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; }
+.concierge .check-setting { margin-top: 10px; padding-top: 10px; }
 .guest-badge { font-size: 0.8rem; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
 .guest-badge.ok { color: var(--ok); }
 .guest-badge.err { color: var(--err); }

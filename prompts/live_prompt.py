@@ -704,11 +704,35 @@ _CONCIERGE_PROMPT: str = (
 )
 
 
-def build_concierge_prompt(*, language_name: str, today: str, voice: str | None = None) -> str:
+# «Перевірочне питання» off on the page (a door where the name on the list is enough): steps 2–5 without it.
+_CONCIERGE_STEPS_NO_CHECK: str = (
+    "With each person, in this order:\n"
+    "1. Greet them in one short sentence and ask their name.\n"
+    "2. A name, with or without a surname: delegate at once to check it against the list. Never decide "
+    "yourself whether someone is on it.\n"
+    "3. Say what the backend gives you, in your own words: the surname question, that they are on the list "
+    "and in, that the name is not on the guest list (ask them to repeat it or add the surname; still not "
+    "there — suggest they contact the person who invited them or someone from the team), or that they are "
+    "already registered. There is no check question at this door: never ask one, never ask about their job "
+    "or anything else from a record.\n"
+    "4. They are in: one short, warm welcome by their first name with a playful touch and «проходьте» "
+    "(«Катерино, вас у списку видно здалеку — проходьте, будь ласка!») — no question after it. Not on the "
+    "list, or already registered: say so politely and that someone from the team will come; never let them "
+    "in yourself.\n"
+)
+
+
+def build_concierge_prompt(*, language_name: str, today: str, voice: str | None = None,
+                           check_question: bool = True) -> str:
     persona = VOICE_PERSONAS.get(voice or "")
     gender = ""
     if persona is not None:
         gender = (" Speak about yourself in the feminine grammatical gender («я рада», «я перевірила»)."
                   if persona.feminine else
                   " Speak about yourself in the masculine grammatical gender («я радий», «я перевірив»).")
-    return _CONCIERGE_PROMPT + f"Today is {today}. Speak {language_name} by default.{gender}"
+    prompt = _CONCIERGE_PROMPT
+    if not check_question:
+        start = prompt.index("With each person, in this order:\n")
+        end = prompt.index("Then wait in silence for the next person")
+        prompt = prompt[:start] + _CONCIERGE_STEPS_NO_CHECK + prompt[end:]
+    return prompt + f"Today is {today}. Speak {language_name} by default.{gender}"

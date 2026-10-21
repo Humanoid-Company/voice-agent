@@ -105,6 +105,8 @@ def find_guest(name: str, surname: str, records: list[Record]) -> Found:
         narrowed = [(r, u) for r, u in by_name if _surname_match(heard, _words(r.title), u)]
         if narrowed:
             by_name = narrowed
+        elif heard_surname:  # «Владислав Сеньків»: eleven Владислави, none of them Сеньків — not on the list
+            return Found("not_found")
     if len(by_name) > 1:
         return Found("ask_surname", count=len(by_name))
     record, used = by_name[0]

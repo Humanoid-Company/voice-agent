@@ -89,6 +89,10 @@ def test_the_prompts_forbid_skipping_the_check_and_inventing():
     backend = conc["delegation"]["responses"]["instructions"]
     assert "never enough" in backend and "already registered" in backend and "never invent places" in backend
     assert "find_guest" in backend and "who invited them" in backend and "who invited them" in conc["instructions"]
+    # Prod: «Так, тепер маленька перевірка… яку вуличну їжу ви любите?» — a question of her own, copied from
+    # an example, before the backend said there are eleven Владислави.
+    assert "never ask a check question of your own" in conc["instructions"]
+    assert "яку їжу" not in conc["instructions"] and "питання на мільйон" not in conc["instructions"]
 
 
 def test_its_own_prompt_no_small_talk_and_only_the_tools_it_needs():
@@ -154,6 +158,11 @@ def test_find_guest_short_forms_surnames_and_people_not_on_the_list():
     for stranger in ("Петро", "Тімлід", "Саша"):  # «Петро» is not «Петренко»
         res = find(user, stranger)
         assert res.status == "not_found" and "хто запрошував" in res.message
+    # Prod: «Владислав» → «Сеньків», nobody with that surname among the Владислави — not «several people
+    # with the name and surname, say your full name» over and over.
+    res = find(user, "Олег", "Сеньків")
+    assert res.status == "not_found" and "Олег Сеньків" in res.message
+    assert find(user, "Олег", "Петренка").data["name"] == "Олег Петренко"  # a case ending on the surname still finds him
 
 
 def test_find_guest_says_already_registered_without_a_check_question():

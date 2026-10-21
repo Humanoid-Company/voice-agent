@@ -64,6 +64,12 @@ def _first_name_match(heard: list[str], title_words: list[str]) -> str | None:
     return None
 
 
+def _exact_first_name(heard: list[str], title_words: list[str]) -> bool:
+    """The name as written, or a short form of it — not just close: «Олександра» is exactly Олександра,
+    only close to Олександр (it looks like his name with a case ending)."""
+    return any(f in title_words for h in heard for form in _case_forms(h) for f in full_forms(form))
+
+
 def _surname_match(heard: list[str], title_words: list[str], used: str | None) -> bool:
     return any(_close(h, t) for h in heard if h != used for t in title_words)
 
@@ -92,6 +98,9 @@ def find_guest(name: str, surname: str, records: list[Record]) -> Found:
         by_name = [(r, "") for r in records if _surname_match(heard_surname, _words(r.title), None)]
     if not by_name:
         return Found("not_found")
+    exact = [(r, u) for r, u in by_name if u and _exact_first_name(heard_name or heard, _words(r.title))]
+    if exact:  # a name said in full wins over ones it only looks like
+        by_name = exact
     if heard_surname or len(heard) > 1:
         narrowed = [(r, u) for r, u in by_name if _surname_match(heard, _words(r.title), u)]
         if narrowed:

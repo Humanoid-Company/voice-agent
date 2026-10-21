@@ -211,3 +211,12 @@ def test_checkins_are_cached_and_a_new_one_shows_at_once():
     checkins.store.add("Олег Петренко")  # written by this server: seen at once
     assert checkins.store.find("Петренко Олег")["full_name"] == "Олег Петренко"
     assert checkins.store.reset() == 1 and checkins.store.find("Олег Петренко") is None
+
+
+def test_same_surname_and_short_name_asks_the_full_name_not_the_surname_again():
+    """«Саша Козак» with Олександр and Олександра Козак on the list: asking the surname again went round in circles."""
+    knowledge.store.create_set("Козаки", parse_file("k.csv", "ПІБ;Хобі\nОлександр Козак;біг\nОлександра Козак;йога\n".encode()).items)
+    user = web.users.get("conc-q-0123456789abcdef")
+    res = find(user, "Саша", "Козак")
+    assert res.status == "ask_full_name" and "повне ім'я" in res.message
+    assert find(user, "Олександра", "Козак").data["name"] == "Олександра Козак"

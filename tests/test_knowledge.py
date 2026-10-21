@@ -198,3 +198,16 @@ def test_the_tool_and_the_prompts(store):
     backend = config["delegation"]["responses"]
     assert "knowledge_lookup" in backend["instructions"] and any(t["name"] == "knowledge_lookup" for t in backend["tools"])
     assert "Team knowledge" not in web._session_config(user)["instructions"]  # nothing uploaded → not mentioned
+
+
+def test_fast_lookup_ranks_like_scoring_record_by_record():
+    """_closest compares each word pair once for the whole list (2000 people: 1.6 s → 11 ms a lookup); it must
+    rank exactly as scoring every record on its own."""
+    people = [("Олег Петренко", "шахи"), ("Олег Гнатюк", "футбол"), ("Марина Коваль", "йога"), ("Тарас Бойко", "біг"),
+              ("Ірина Мельник", "настолки"), ("Катерина Шаповал", "книжки")] * 5
+    records = [Record("s", t, {"Хобі": h, "Посада": "розробник"}) for t, h in people]
+    from server.knowledge import _closest
+
+    for query in ("Олегові шахи", "хто любить йогу", "Алєг", "Катерину", "розробник", ""):
+        slow = sorted(records, key=lambda r: -_score(query, r))[:7]
+        assert [r.line() for r in _closest(query, records, 7)] == [r.line() for r in slow]

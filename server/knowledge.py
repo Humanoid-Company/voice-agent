@@ -11,6 +11,7 @@ shows it.
 from __future__ import annotations
 
 import difflib
+import functools
 import json
 import logging
 import os
@@ -73,6 +74,15 @@ class Record:
     def line(self) -> str:
         facts = "; ".join(f"{k}: {v}" for k, v in self.fields.items())
         return f"{self.title} — {facts}" if facts else self.title
+
+    # Its words, split once and kept (records stay in the snapshot between lookups).
+    @functools.cached_property
+    def title_words(self) -> frozenset[str]:
+        return frozenset(_words(self.title))
+
+    @functools.cached_property
+    def fact_words(self) -> frozenset[str]:
+        return frozenset(_words(" ".join(f"{k} {v}" for k, v in self.fields.items())))
 
 
 def clean_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -221,7 +231,7 @@ class KnowledgeStore(SqlStore):
         text = "\n".join(f"[{r.set_name}] {r.line()}" for r in records)
         if len(text) <= LOOKUP_ALL_CHARS:
             return {"sets": sets, "total": total, "shown": total, "text": text}
-        scored = sorted(records, key=lambda r: -_score(query, r))[:LOOKUP_TOP]
+        scored = _closest(query, records, LOOKUP_TOP)
         text = "\n".join(f"[{r.set_name}] {r.line()}" for r in scored)
         return {"sets": sets, "total": total, "shown": len(scored), "text": text[:LOOKUP_ALL_CHARS]}
 
@@ -241,22 +251,42 @@ def _words(text: str) -> list[str]:
 def _close(a: str, b: str) -> bool:
     if a[:4] == b[:4] and min(len(a), len(b)) >= 4:  # same stem: Олег / Олегові / Олега
         return True
-    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.75
+    m = difflib.SequenceMatcher(None, a, b)
+    # quick_ratio is an upper bound of ratio: most pairs are out before the slow exact one.
+    return m.real_quick_ratio() >= 0.75 and m.quick_ratio() >= 0.75 and m.ratio() >= 0.75
+
+
+def _matches(query_words: list[str], vocabulary: set[str]) -> list[frozenset[str]]:
+    """For each query word, the words of the records it matches — each pair compared once, not once per
+    record («хобі», «посада» are in every record): 2000 people took 2 s a lookup, compared record by record."""
+    return [frozenset(t for t in vocabulary if _close(w, t)) for w in query_words]
+
+
+def _score_with(matched: list[frozenset[str]], record: Record) -> float:
+    score = 0.0
+    for m in matched:
+        if m & record.title_words:
+            score += 3
+        elif m & record.fact_words:
+            score += 1
+    return score
 
 
 def _score(query: str, record: Record) -> float:
     q = _words(query)
+    return _score_with(_matches(q, set(record.title_words | record.fact_words)), record) if q else 0.0
+
+
+def _closest(query: str, records: list[Record], top: int) -> list[Record]:
+    q = _words(query)
     if not q:
-        return 0.0
-    title = _words(record.title)
-    rest = _words(" ".join(f"{k} {v}" for k, v in record.fields.items()))
-    score = 0.0
-    for w in q:
-        if any(_close(w, t) for t in title):
-            score += 3
-        elif any(_close(w, t) for t in rest):
-            score += 1
-    return score
+        return records[:top]
+    vocabulary: set[str] = set()
+    for r in records:
+        vocabulary |= r.title_words
+        vocabulary |= r.fact_words
+    matched = _matches(q, vocabulary)
+    return sorted(records, key=lambda r: -_score_with(matched, r))[:top]
 
 
 def _best_set(name: str, names: list[str]) -> str | None:

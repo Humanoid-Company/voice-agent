@@ -395,6 +395,12 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                 "до когось із команди. Не пускай і нікого зі списку не називай.",
             )
         if found.status == "ask_surname":
+            if surname:  # «Саша Козак»: Олександр and Олександра Козак — the surname can't decide it
+                return ToolResult(
+                    ok=True, status="ask_full_name", data=guests.as_dict(found),
+                    message=f"З таким ім'ям і прізвищем у списку {found.count} людей. Спитай повне ім'я (не "
+                    "скорочене) — нікого не називай.",
+                )
             return ToolResult(
                 ok=True, status="ask_surname", data=guests.as_dict(found),
                 message=f"З цим ім'ям у списку {found.count} людей. Спитай прізвище — нікого не називай.",

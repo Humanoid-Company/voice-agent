@@ -59,10 +59,10 @@ from tools.live_schemas import (
 from voice.background import wake_commentary
 from voice.delegation import responses_delegation
 from voice.options import (
+    DEFAULT_PERSONA,
     LANGUAGE_OPTIONS,
     SPEED_OPTIONS,
     STYLE_OPTIONS,
-    DEFAULT_PERSONA,
     VOICE_PERSONAS,
     api_voice,
     delivery_instruction,
@@ -214,19 +214,9 @@ def _user_voice(user: WebUser) -> str:
     return user.voice if user.voice in VOICE_PERSONAS else _default_voice()
 
 
-def _knowledge_sets() -> list[dict]:
-    """The enabled knowledge sets for a new call's prompts; a store that is down just leaves them out."""
-    try:
-        return knowledge.store.enabled_records()[0]
-    except knowledge.KnowledgeError:
-        return []
-
-
-def _session_config(
-    user: WebUser, knowledge_sets: list[dict] | None = None, *, concierge: bool = False
-) -> dict:
-    """knowledge_sets: what the team uploaded (_knowledge_sets) — she is told about it, so questions about
-    those people go to the backend; the lookup tool is there either way."""
+def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
+    """«Знання» are the concierge's only (its guest list, the event's facts): the assistant's call gets no note
+    about them and no knowledge_lookup — «знання не мають працювати з помічниками, а тільки з консьєржами»."""
     language = LANGUAGE_OPTIONS.get(user.language, LANGUAGE_OPTIONS["uk"])
     today = local_today()
     voice = _user_voice(user)
@@ -243,15 +233,13 @@ def _session_config(
             variant=user.prompt_variant,
         )
         + _WEB_NOTE
-        + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
-        + knowledge.live_note(knowledge_sets or []),
+        + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE),
         "audio": {"output": {"voice": api_voice(voice)}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
-            + knowledge.BACKEND_NOTE
             + (VOICE_PERSONAS[voice].backend_note if voice in VOICE_PERSONAS else ""),
-            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL],
+            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
         ),
@@ -557,8 +545,7 @@ async def create_session(
         user.conversation.end_turn()
     try:
         result = await openai_client.live.create(
-            session=_session_config(user, await asyncio.to_thread(_knowledge_sets),
-                                    concierge=body.mode == "concierge"),
+            session=_session_config(user, concierge=body.mode == "concierge"),
             transport={"type": "webrtc", "sdp": body.sdp},
         )
     except Exception as exc:

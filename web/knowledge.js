@@ -137,7 +137,7 @@
       cancel();
       $("setName").value = "";
       $("setNote").value = "";
-      status("Збережено «" + saved.name + "»: " + records(saved.count) + ". Помічники знатимуть їх з наступної розмови.", "ok");
+      status("Збережено «" + saved.name + "»: " + records(saved.count) + ". Консьєрж знатиме їх з наступної розмови.", "ok");
       await loadSets();
     } catch (err) {
       $("saveSet").disabled = false;
@@ -178,14 +178,14 @@
       const view = el("button", { class: "btn small-btn", type: "button", "aria-expanded": String(opened.has(s.id)) },
         opened.has(s.id) ? "Згорнути" : "Переглянути");
       view.addEventListener("click", () => toggleView(s, body, view));
-      const sw = el("input", { type: "checkbox", class: "switch", role: "switch", checked: s.enabled, "aria-label": "Помічники знають «" + s.name + "»" });
+      const sw = el("input", { type: "checkbox", class: "switch", role: "switch", checked: s.enabled, "aria-label": "Консьєрж знає «" + s.name + "»" });
       sw.addEventListener("change", () => setEnabled(s, sw));
       return el("article", { class: "set" + (s.enabled ? "" : " off") },
         el("div", { class: "set-head" },
           el("div", { class: "set-text" },
             el("strong", {}, s.name),
             el("span", { class: "muted small" }, [records(s.count), s.source, s.owner_name, fmtDate(s.created_at)].filter(Boolean).join(" · "))),
-          el("label", { class: "set-switch" }, el("span", { class: "small" }, s.enabled ? "Знають" : "Вимкнено"), sw)),
+          el("label", { class: "set-switch" }, el("span", { class: "small" }, s.enabled ? "Консьєрж знає" : "Вимкнено"), sw)),
         s.note && el("p", { class: "hint" }, s.note),
         el("div", { class: "row set-actions" },
           view,
@@ -245,7 +245,7 @@
   }
 
   async function remove(s) {
-    if (!confirm("Видалити «" + s.name + "» (" + records(s.count) + ")? Помічники забудуть ці дані, відновити не можна.")) return;
+    if (!confirm("Видалити «" + s.name + "» (" + records(s.count) + ")? Консьєрж забуде ці дані, відновити не можна.")) return;
     try {
       await api("/api/knowledge/" + s.id, { method: "DELETE" });
       opened.delete(s.id);

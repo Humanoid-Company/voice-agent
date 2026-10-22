@@ -310,29 +310,6 @@ def _best_set(name: str, names: list[str]) -> str | None:
 
 
 # ── prompts ──
-def live_note(sets: list[dict[str, Any]]) -> str:
-    """For GPT-Live: what the team uploaded, so questions about those people go to the backend."""
-    if not sets:
-        return ""
-    parts = []
-    for s in sets[:10]:
-        names = ", ".join(s["titles"][:15])
-        more = "…" if s["count"] > len(s["titles"][:15]) else ""
-        parts.append(f"«{s['name']}» ({s['count']}: {names}{more})" + (f" — {s['note'][:150]}" if s["note"] else ""))
-    return (
-        "\nTeam knowledge: the team gave you records about people and events — " + "; ".join(parts) + ". "
-        "Anything about these people or events — who someone is, their age, hobbies, favourite films, who "
-        "likes what, who to seat together, a gift, food or a toast for them, what is planned — goes to the "
-        "backend at once (it looks them up); never answer about them from memory, never guess or invent a fact "
-        "about them. That holds whenever such a name comes up, also later in the talk: they asked for advice "
-        "for a colleague or a friend and then say who it is («його звати Олег», «це Тарас з нашої команди», "
-        "«для Марини») — delegate at once and redo the advice for that person; never keep general advice once "
-        "you know who it is for. A name you hear may be declined or misheard («Олегові», «про Марину», «Алєг»): "
-        "still delegate. "
-        "Asked what you know or remember about the team, name these sets. Tell what it found in your own "
-        "words, warmly, like someone who knows these people.")
-
-
 BACKEND_NOTE = (
     "\nTEAM KNOWLEDGE: knowledge_lookup returns the records the team uploaded (people with their age, "
     "hobbies, favourite films and so on; an event's facts). Call it for any question about a person or "

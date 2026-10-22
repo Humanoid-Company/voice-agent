@@ -239,11 +239,12 @@ def test_the_tool_and_the_prompts(store):
     store.create_set("Корпоратив 20.10", parse_file("a.csv", PEOPLE_CSV).items)
     found = asyncio.run(user.executor.execute("knowledge_lookup", {"query": "Олегові", "set": "корпоратив"}, ctx))
     assert found.ok and "Олег Петренко — Вік: 34" in found.message and "лише з них" in found.message
-    config = web._session_config(user, web._knowledge_sets())
-    assert "«Корпоратив 20.10» (2: Олег Петренко, Марина Коваль)" in config["instructions"]
-    backend = config["delegation"]["responses"]
+    # «Знання» are the concierge's only: the assistant's call knows nothing of them and has no lookup.
+    plain = web._session_config(user)
+    assert "Корпоратив" not in plain["instructions"] and "TEAM KNOWLEDGE" not in plain["delegation"]["responses"]["instructions"]
+    assert not any(t["name"] == "knowledge_lookup" for t in plain["delegation"]["responses"]["tools"])
+    backend = web._session_config(user, concierge=True)["delegation"]["responses"]
     assert "knowledge_lookup" in backend["instructions"] and any(t["name"] == "knowledge_lookup" for t in backend["tools"])
-    assert "Team knowledge" not in web._session_config(user)["instructions"]  # nothing uploaded → not mentioned
 
 
 def test_fast_lookup_ranks_like_scoring_record_by_record():

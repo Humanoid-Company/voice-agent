@@ -16,10 +16,25 @@
     <header class="page-head">
       <div>
         <h1>Єва</h1>
-        <p class="sub">Голосова помічниця команди. Увійдіть, щоб поговорити з нею.</p>
+        <p class="sub">Голосова помічниця команди. Назвіться й введіть код команди.</p>
       </div>
     </header>
 
+    <form id="joinForm" class="card" novalidate>
+      <label for="joinName">Ім'я</label>
+      <input id="joinName" class="field" type="text" autocomplete="name" maxlength="80" placeholder="Як вас звати" required>
+      <div id="joinCodeBlock">
+        <label for="joinCode" class="gap">Код запрошення</label>
+        <input id="joinCode" class="field" type="password" autocomplete="off" placeholder="Отримайте в адміна команди">
+      </div>
+      <button class="btn primary big" type="submit">Увійти</button>
+      <p class="hint">Наступного разу те саме ім'я відкриє вашу історію розмов.</p>
+    </form>
+
+    <p class="admin-entry"><button id="adminToggle" class="link-btn" type="button" aria-expanded="false"
+      aria-controls="adminBlock">Вхід для адміна — email і пароль</button></p>
+
+    <div id="adminBlock" hidden>
     <nav class="mode-tabs" role="tablist" aria-label="Вхід або реєстрація">
       <button id="tabLogin" role="tab" type="button" aria-selected="true" aria-controls="loginForm">Вхід</button>
       <button id="tabRegister" role="tab" type="button" aria-selected="false" aria-controls="registerForm">Реєстрація</button>
@@ -48,10 +63,6 @@
       <button class="btn primary big" type="submit">Зареєструватися</button>
       <p class="hint">Перший зареєстрований акаунт стає адміном: він керує людьми й бачить витрати.</p>
     </form>
-
-    <div id="guestBlock" class="guest-entry" hidden>
-      <button id="guestBtn" class="btn big" type="button">Увійти як гість</button>
-      <p class="hint">Без акаунта: можна говорити з Євою. «Знання» й «Налаштування» — після входу.</p>
     </div>
 
     <p id="msg" class="status-msg" role="status" hidden></p>

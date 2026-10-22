@@ -4,6 +4,10 @@ Registration takes the team's invite code (INVITE_CODE, or ACCESS_CODE as before
 whose email is in ADMIN_EMAILS — is an admin: admins edit «Знання», read the logs and costs and manage people;
 members talk to Єва and see their own history.
 
+Most people come in by name and the team's code (join): no email, no password — the name is the account, and
+the same name opens the same account again. Such an account is a member and can't be made an admin (anyone with
+the code could type the name); admins log in with email + password.
+
 A login is a random token the page keeps; the database holds only its SHA-256, so a leaked table logs nobody in.
 Passwords: scrypt (stdlib) with a per-account salt.
 """
@@ -33,6 +37,9 @@ FAILS_WINDOW_S = 15 * 60
 
 _SCRYPT = {"n": 2**14, "r": 8, "p": 1}
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+# A by-name account keeps «name:<the name, lower case>» where an email would be (unique, never a real email).
+NAME_KEY = "name:"
+NAME_MIN = 2
 
 _SCHEMA = {
     "postgres": [
@@ -82,12 +89,18 @@ class Account:
         return self.role == "admin"
 
     @property
+    def by_name(self) -> bool:
+        """Came in by name and the team's code — no email, no password."""
+        return self.email.startswith(NAME_KEY)
+
+    @property
     def owner(self) -> str:
         """Whose conversations these are (server/conversations.py keys them by this)."""
         return f"acct-{self.id}"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "email": self.email, "name": self.name, "role": self.role,
+        return {"id": self.id, "email": "" if self.by_name else self.email, "name": self.name, "role": self.role,
+                "by_name": self.by_name,
                 "disabled": self.disabled, "created_at": self.created_at, "last_login_at": self.last_login_at}
 
 
@@ -113,6 +126,14 @@ def _token_hash(token: str) -> str:
 
 def normalize_email(email: str) -> str:
     return (email or "").strip().lower()
+
+
+def clean_name(name: str) -> str:
+    return " ".join((name or "").replace("’", "'").replace("ʼ", "'").split())[:80]
+
+
+def name_key(name: str) -> str:
+    return NAME_KEY + clean_name(name).casefold()
 
 
 def _valid_password(password: str) -> None:
@@ -144,7 +165,9 @@ class AccountStore(SqlStore):
         with self._conn() as conn:
             if conn.execute(self._q("SELECT 1 FROM accounts WHERE email = %s"), (email,)).fetchone():
                 raise AccountError("Акаунт з цим email уже є — увійдіть.", 409)
-            first = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0
+            # The first one with an email is the admin (by-name accounts never are).
+            first = conn.execute(self._q("SELECT COUNT(*) FROM accounts WHERE email NOT LIKE %s"),
+                                 (NAME_KEY + "%",)).fetchone()[0] == 0
             role = "admin" if first or email in admin_emails else "member"
             row = conn.execute(
                 self._q(f"INSERT INTO accounts (email, name, password, role, created_at) VALUES (%s, %s, %s, %s, %s) "
@@ -152,6 +175,25 @@ class AccountStore(SqlStore):
                 (email, name, hash_password(password), role, time.time()),
             ).fetchone()
         return self._account(row)
+
+    def join(self, name: str) -> tuple[str, Account]:
+        """By name (the team's code is checked by the caller): the account with this name, or a new member."""
+        name = clean_name(name)
+        if sum(ch.isalpha() for ch in name) < NAME_MIN:
+            raise AccountError("Напишіть, як вас звати.")
+        key = name_key(name)
+        with self._conn() as conn:
+            row = conn.execute(self._q(f"SELECT {self._COLS} FROM accounts WHERE email = %s"), (key,)).fetchone()
+            if row is None:
+                row = conn.execute(
+                    self._q(f"INSERT INTO accounts (email, name, password, role, created_at) VALUES (%s, %s, %s, %s, %s) "
+                            f"RETURNING {self._COLS}"),
+                    (key, name, "", "member", time.time()),  # no password: email login never matches it
+                ).fetchone()
+        account = self._account(row)
+        if account.disabled:
+            raise AccountError("Доступ вимкнено. Зверніться до адміна.", 403)
+        return self.start_session(account), account
 
     def get(self, account_id: int) -> Account | None:
         with self._conn() as conn:
@@ -171,6 +213,10 @@ class AccountStore(SqlStore):
                name: str | None = None, password: str | None = None) -> Account | None:
         sets: list[str] = []
         args: list[Any] = []
+        current_account = self.get(account_id)
+        by_name = current_account is not None and current_account.by_name
+        if by_name and (role == "admin" or password is not None):
+            raise AccountError("Хто входить за ім'ям, лишається учасником і без пароля: адмін входить з email.", 409)
         if role is not None:
             if role not in ROLES:
                 raise AccountError("Невідома роль.")
@@ -181,7 +227,12 @@ class AccountStore(SqlStore):
             args.append(bool(disabled))
         if name is not None:
             sets.append("name = %s")
-            args.append(" ".join(name.split())[:80])
+            args.append(clean_name(name))
+            if by_name:  # the name is the login: renamed, it opens with the new name
+                if sum(ch.isalpha() for ch in clean_name(name)) < NAME_MIN:
+                    raise AccountError("Напишіть, як вас звати.")
+                sets.append("email = %s")
+                args.append(name_key(name))
         if password is not None:
             _valid_password(password)
             sets.append("password = %s")
@@ -195,6 +246,10 @@ class AccountStore(SqlStore):
                 current = conn.execute(self._q("SELECT role FROM accounts WHERE id = %s"), (account_id,)).fetchone()
                 if current and current[0] == "admin" and admins == 0:
                     raise AccountError("Це єдиний адмін: спершу зробіть адміном когось іншого.", 409)
+            if by_name and name is not None and conn.execute(
+                self._q("SELECT 1 FROM accounts WHERE email = %s AND id <> %s"), (name_key(name), account_id)
+            ).fetchone():
+                raise AccountError("Це ім'я вже зайняте — додайте прізвище чи першу літеру.", 409)
             if sets:
                 conn.execute(self._q(f"UPDATE accounts SET {', '.join(sets)} WHERE id = %s"), (*args, account_id))
             if disabled or password is not None:  # logged out everywhere

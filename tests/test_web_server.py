@@ -23,12 +23,11 @@ def client(monkeypatch):
 def test_health_and_config(client):
     health = client.get("/healthz").json()
     assert health["ok"] is True and isinstance(health["web_search"], bool)
-    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False, "guest_allowed": True}
+    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False}
 
 
 def test_with_a_team_code_only_a_login_gets_in(client, monkeypatch):
     monkeypatch.setattr(web, "ACCESS_CODE", "team-secret")
-    monkeypatch.setattr(web, "GUEST_ACCESS", False)  # GUEST_ACCESS=0: no «Увійти як гість»
     assert client.get("/api/me", headers={"X-Client-Id": ALICE}).status_code == 401
     # The old code alone no longer opens the page: it is the registration code now.
     assert client.get("/api/me", headers={"X-Client-Id": ALICE, "X-Access-Code": "team-secret"}).status_code == 401
@@ -36,21 +35,6 @@ def test_with_a_team_code_only_a_login_gets_in(client, monkeypatch):
                                                     "invite_code": "team-secret"}).json()["token"]
     ok = client.get("/api/me", headers={"X-Client-Id": ALICE, "Authorization": "Bearer " + token})
     assert ok.status_code == 200
-
-
-def test_a_guest_talks_but_the_team_s_pages_stay_closed(client, monkeypatch):
-    """«Увійти як гість»: no account — the call, the voice, their own conversation; not «Знання», the concierge's
-    marks or settings."""
-    monkeypatch.setattr(web, "ACCESS_CODE", "team-secret")
-    assert client.get("/api/config").json()["guest_allowed"] is True
-    guest = {"X-Client-Id": "guest-browser-0123456789"}
-    assert client.get("/api/me", headers=guest).status_code == 200
-    assert client.post("/api/voice", json={"voice": "cedar"}, headers=guest).status_code == 200
-    assert client.get("/api/conversation", headers=guest).status_code == 200
-    assert client.get("/api/knowledge", headers=guest).status_code == 401
-    assert client.get("/api/concierge/checkins", headers=guest).status_code == 401
-    assert client.get("/api/auth/me", headers=guest).status_code == 401
-    assert client.get("/api/admin/users", headers=guest).status_code == 401
 
 
 def test_client_id_is_validated(client):

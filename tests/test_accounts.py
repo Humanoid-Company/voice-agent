@@ -51,6 +51,46 @@ def test_register_needs_the_team_code_and_the_first_account_is_the_admin(client)
     assert register(client, "not-an-email").status_code == 400
 
 
+def join(client, name, code="team-secret", client_id=None):
+    headers = {"X-Client-Id": client_id} if client_id else {}
+    return client.post("/api/auth/join", headers=headers, json={"name": name, "invite_code": code})
+
+
+def test_by_name_and_the_team_code(client):
+    """The usual way in: a name and the code. The same name (any case) is the same account; always a member."""
+    assert join(client, "Влад", code="wrong").status_code == 403
+    assert join(client, " ", code="team-secret").status_code == 400
+    first = join(client, "Влад", client_id=LAPTOP)
+    assert first.status_code == 200
+    account = first.json()["account"]
+    assert account["name"] == "Влад" and account["role"] == "member" and account["by_name"] and account["email"] == ""
+    again = join(client, "  влад ", client_id=PHONE)
+    assert again.json()["account"]["id"] == account["id"]  # the same person on another device
+    assert client.get("/api/me", headers={"X-Client-Id": PHONE, **bearer(again)}).status_code == 200
+    # No password: the email login never opens it.
+    assert client.post("/api/auth/login", json={"email": "name:влад", "password": ""}).status_code == 401
+    # The first email account is still the admin, though by-name people came first.
+    boss = register(client, "boss@team.ua")
+    assert boss.json()["account"]["role"] == "admin"
+    # …and a by-name account is never made an admin nor given a password.
+    for patch in ({"role": "admin"}, {"password": "password1"}):
+        assert client.post(f"/api/admin/users/{account['id']}", json=patch, headers=bearer(boss)).status_code == 409
+    # Renamed, it opens with the new name; a name taken by someone else is refused.
+    join(client, "Оля")
+    assert client.post("/api/auth/me", json={"name": "Оля"}, headers=bearer(again)).status_code == 409
+    assert client.post("/api/auth/me", json={"name": "Влад К"}, headers=bearer(again)).status_code == 200
+    assert join(client, "Влад К").json()["account"]["id"] == account["id"]
+    # A disabled one can't come in by name either.
+    client.post(f"/api/admin/users/{account['id']}", json={"disabled": True}, headers=bearer(boss))
+    assert join(client, "Влад К").status_code == 403
+
+
+def test_wrong_codes_by_name_wait(client):
+    for _ in range(accounts.FAILS_MAX):
+        assert join(client, "Хтось", code="guess").status_code == 403
+    assert join(client, "Хтось").status_code == 429
+
+
 def test_admin_emails_are_admins_from_registration(client, monkeypatch):
     register(client, "first@team.ua")
     monkeypatch.setattr(web, "ADMIN_EMAILS", frozenset({"cto@team.ua"}))
@@ -139,7 +179,7 @@ def test_history_moves_into_the_account_and_follows_to_another_device(client):
 
 def test_without_a_team_code_nobody_needs_to_log_in(client, monkeypatch):
     monkeypatch.setattr(web, "ACCESS_CODE", "")
-    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False, "guest_allowed": True}
+    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False}
     assert client.get("/api/me", headers={"X-Client-Id": LAPTOP}).status_code == 200
     assert register(client, "dev@local.ua", code="").status_code == 200
 

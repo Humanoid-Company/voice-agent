@@ -17,6 +17,11 @@
     $("msg").className = "status-msg" + (kind ? " " + kind : "");
   }
 
+  function showAdmin(open) {
+    $("adminBlock").hidden = !open;
+    $("adminToggle").setAttribute("aria-expanded", String(open));
+  }
+
   function show(tab) {
     const login = tab === "login";
     $("tabLogin").setAttribute("aria-selected", String(login));
@@ -53,9 +58,15 @@
     }
   }
 
-  $("guestBtn").addEventListener("click", () => {
-    auth.enterGuest();
-    location.href = auth.link("index.html");
+  // The usual way in: a name and the team's code (/api/auth/join).
+  $("joinForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!$("joinName").value.trim()) { $("joinName").focus(); message("Напишіть, як вас звати.", "err"); return; }
+    send("/api/auth/join", { name: $("joinName").value, invite_code: $("joinCode").value }, e.currentTarget);
+  });
+  $("adminToggle").addEventListener("click", () => {
+    showAdmin($("adminBlock").hidden);
+    if (!$("adminBlock").hidden) show("login");
   });
   $("tabLogin").addEventListener("click", () => show("login"));
   $("tabRegister").addEventListener("click", () => show("register"));
@@ -77,10 +88,15 @@
     // Already logged in (a bookmarked login page): straight on, if the login still works.
     auth.refresh().then((a) => { if (a) location.href = auth.link(next); });
   }
-  if (location.hash === "#register") show("register");
+  if (location.hash === "#register" || location.hash === "#admin") {
+    showAdmin(true);
+    show(location.hash === "#register" ? "register" : "login");
+  } else {
+    $("joinName").focus();
+  }
   // Without a team code (a local server) there is nothing to ask for.
   fetch(BACKEND + "/api/config").then((r) => r.json()).then((cfg) => {
     $("inviteBlock").hidden = !cfg.invite_required;
-    $("guestBlock").hidden = !cfg.guest_allowed;
+    $("joinCodeBlock").hidden = !cfg.invite_required;
   }).catch(() => {});
 })();

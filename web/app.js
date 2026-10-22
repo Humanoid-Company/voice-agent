@@ -2170,9 +2170,8 @@
   async function showAccount() {
     const auth = window.EvaAuth;
     const fit = (a) => {
-      $("checkinReset").hidden = auth.isGuest() || (Boolean(a) && a.role !== "admin");
+      $("checkinReset").hidden = Boolean(a) && a.role !== "admin";
       if (a) $("settingsLink").title = (a.name || a.email) + " · акаунт, версія й моделі, довідка";
-      else if (auth.isGuest()) $("settingsLink").title = "Ви як гість — увійдіть в акаунт для налаштувань";
     };
     fit(auth.account());
     if (auth.token()) fit(await auth.refresh());
@@ -2618,8 +2617,7 @@
     const cfg = await wakeBackend();
     if (micMissing) setStatus("Немає доступу до мікрофона", "err");
     if (cfg) {
-      const guest = cfg.guest_allowed && window.EvaAuth.isGuest();
-      if (cfg.login_required && !window.EvaAuth.token() && !guest) { showGate(); return; }
+      if (cfg.login_required && !window.EvaAuth.token()) { showGate(); return; }
       showAccount();
       await loadVoices();
       refreshMe();

@@ -77,9 +77,6 @@ FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS",
 ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
 # Registration (server/accounts.py) takes this code; unset → ACCESS_CODE, the team's code from before accounts.
 INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
-# «Увійти як гість» on the login page: talking to Єва without an account (their conversations stay with the
-# browser). «Знання», the concierge's marks, settings and admin stay the accounts'. GUEST_ACCESS=0 closes it.
-GUEST_ACCESS = os.getenv("GUEST_ACCESS", "1").strip().lower() not in ("0", "false", "no", "off")
 # These emails are admins from registration (besides the first account).
 ADMIN_EMAILS = frozenset(e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip())
 SERVER_STARTED_AT = time.time()
@@ -200,7 +197,7 @@ def _account(auth: AuthInfo) -> Account:
 
 
 def _user(client_id: str | None, auth: AuthInfo) -> WebUser:
-    if _login_required() and not GUEST_ACCESS:
+    if _login_required():
         _account(auth)
     if not client_id or not _CLIENT_ID_RE.match(client_id):
         raise HTTPException(status_code=400, detail="bad_client_id")
@@ -345,8 +342,7 @@ def healthz() -> dict:
 @app.get("/api/config")
 def public_config() -> dict:
     """What the page needs to know before anything else."""
-    return {"login_required": _login_required(), "invite_required": bool(INVITE_CODE or ACCESS_CODE),
-            "guest_allowed": GUEST_ACCESS}
+    return {"login_required": _login_required(), "invite_required": bool(INVITE_CODE or ACCESS_CODE)}
 
 
 # ── accounts (server/accounts.py, web/login.html, web/settings.html) ──
@@ -360,6 +356,11 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: str
     password: str
+
+
+class JoinIn(BaseModel):
+    name: str
+    invite_code: str = ""
 
 
 class PasswordIn(BaseModel):
@@ -407,6 +408,21 @@ def auth_register(body: RegisterIn, x_client_id: str | None = Header(default=Non
     account = _accounts(accounts.store.create, body.email, body.password, body.name, admin_emails=ADMIN_EMAILS)
     logger.info("web.auth.registered account=%s role=%s", account.id, account.role)
     return _logged_in(_accounts(accounts.store.start_session, account), account, x_client_id)
+
+
+@app.post("/api/auth/join")
+def auth_join(body: JoinIn, request: Request, x_client_id: str | None = Header(default=None)) -> dict:
+    """The usual way in: a name and the team's code. The same name opens the same account (a member)."""
+    address = request.client.host if request.client else ""
+    code = INVITE_CODE or ACCESS_CODE
+    if accounts.store._too_many(f"j:{address}"):
+        raise HTTPException(status_code=429, detail="Забагато невдалих спроб. Спробуйте за 15 хвилин.")
+    if code and not hmac.compare_digest(body.invite_code.strip().encode(), code.encode()):
+        accounts.store._fail(f"j:{address}")
+        raise HTTPException(status_code=403, detail="Невірний код запрошення. Попросіть його в адміна команди.")
+    token, account = _accounts(accounts.store.join, body.name)
+    logger.info("web.auth.joined account=%s", account.id)
+    return _logged_in(token, account, x_client_id)
 
 
 @app.post("/api/auth/login")

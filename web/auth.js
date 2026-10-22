@@ -10,7 +10,6 @@
   };
   const TOKEN = "va-auth-token";
   const ACCOUNT = "va-account";
-  const GUEST = "va-guest"; // «Увійти як гість»: talking to Єва without an account
 
   function account() {
     try { return JSON.parse(store.get(ACCOUNT) || "null"); } catch { return null; }
@@ -32,12 +31,9 @@
     save(data) {
       store.set(TOKEN, data.token);
       store.set(ACCOUNT, JSON.stringify(data.account));
-      store.remove(GUEST);
     },
-    isGuest: () => !store.get(TOKEN) && store.get(GUEST) === "1",
-    enterGuest() { store.set(GUEST, "1"); },
     setAccount(a) { store.set(ACCOUNT, JSON.stringify(a)); },
-    clear() { store.remove(TOKEN); store.remove(ACCOUNT); store.remove(GUEST); },
+    clear() { store.remove(TOKEN); store.remove(ACCOUNT); },
     link: withBackend,
     // Not logged in (401): to the login page, then back here.
     toLogin() {

@@ -66,9 +66,12 @@
   // ── Акаунт ──
   function showAccount(a) {
     me = a;
-    $("whoami").textContent = (a.name ? a.name + " · " : "") + a.email;
+    $("whoami").textContent = [a.name, a.email].filter(Boolean).join(" · ");
     $("name").value = a.name || "";
-    $("email").textContent = a.email;
+    // Came in by name and the team's code: the name is the login, no email or password.
+    $("emailLabel").textContent = a.by_name ? "Вхід" : "Email";
+    $("email").textContent = a.by_name ? "за ім'ям і кодом команди — змінене ім'я стане новим для входу" : a.email;
+    $("passwordForm").hidden = Boolean(a.by_name);
     $("since").textContent = fmtDate(a.created_at);
     $("roleBadge").textContent = ROLE[a.role] || a.role;
     $("roleBadge").className = "pill" + (a.role === "admin" ? " accent" : "");
@@ -159,19 +162,23 @@
 
   function person(a) {
     const self = me && a.id === me.id;
-    const role = el("select", { "aria-label": "Роль " + a.email },
-      el("option", { value: "member", selected: a.role === "member" }, "учасник"),
-      el("option", { value: "admin", selected: a.role === "admin" }, "адмін"));
-    role.addEventListener("change", () => patch(a, { role: role.value }, a.email + " тепер " + ROLE[role.value] + "."));
-    const active = el("input", { type: "checkbox", class: "switch", role: "switch", checked: !a.disabled, "aria-label": "Доступ " + a.email });
+    const who = a.name || a.email;
+    // By name: always a member, no password (anyone with the code could type that name).
+    const role = a.by_name
+      ? el("span", { class: "muted small" }, "учасник · вхід за ім'ям")
+      : el("select", { "aria-label": "Роль " + who },
+        el("option", { value: "member", selected: a.role === "member" }, "учасник"),
+        el("option", { value: "admin", selected: a.role === "admin" }, "адмін"));
+    if (!a.by_name) role.addEventListener("change", () => patch(a, { role: role.value }, who + " тепер " + ROLE[role.value] + "."));
+    const active = el("input", { type: "checkbox", class: "switch", role: "switch", checked: !a.disabled, "aria-label": "Доступ " + who });
     active.addEventListener("change", () => {
-      if (!active.checked && !confirm("Вимкнути доступ для " + a.email + "? Людину одразу буде розлогінено.")) { active.checked = true; return; }
+      if (!active.checked && !confirm("Вимкнути доступ для " + who + "? Людину одразу буде розлогінено.")) { active.checked = true; return; }
       patch(a, { disabled: !active.checked }, active.checked ? "Доступ увімкнено." : "Доступ вимкнено.");
     });
-    const reset = el("button", { class: "btn small-btn ghost", type: "button" }, "Тимчасовий пароль");
-    reset.addEventListener("click", () => {
-      const pw = prompt("Новий тимчасовий пароль для " + a.email + " (щонайменше 8 символів). Передайте його людині — вона змінить його в «Налаштуваннях».");
-      if (pw) patch(a, { password: pw }, "Пароль для " + a.email + " змінено.");
+    const reset = !a.by_name && el("button", { class: "btn small-btn ghost", type: "button" }, "Тимчасовий пароль");
+    if (reset) reset.addEventListener("click", () => {
+      const pw = prompt("Новий тимчасовий пароль для " + who + " (щонайменше 8 символів). Передайте його людині — вона змінить його в «Налаштуваннях».");
+      if (pw) patch(a, { password: pw }, "Пароль для " + who + " змінено.");
     });
     return el("article", { class: "set person" + (a.disabled ? " off" : "") },
       el("div", { class: "set-head" },

@@ -43,7 +43,7 @@
           <button class="btn" type="submit">Зберегти</button>
         </div>
         <dl class="kv">
-          <dt>Email</dt><dd id="email">—</dd>
+          <dt id="emailLabel">Email</dt><dd id="email">—</dd>
           <dt>З нами з</dt><dd id="since">—</dd>
         </dl>
         <p id="roleHint" class="hint"></p>
@@ -184,7 +184,7 @@
     <div id="view-people" role="tabpanel" aria-labelledby="tab-people" hidden>
       <section class="card">
         <h2>Код запрошення</h2>
-        <p class="hint">З ним людина реєструється сама на сторінці входу. Змінити код — змінна INVITE_CODE (або ACCESS_CODE) на Render.</p>
+        <p class="hint">З ним людина заходить сама: на сторінці входу — своє ім'я й цей код (так входять учасники; адміни — через email і пароль). Змінити код — змінна INVITE_CODE (або ACCESS_CODE) на Render.</p>
         <div class="row">
           <input id="inviteCode" type="password" readonly aria-label="Код запрошення">
           <button id="inviteShow" class="btn small-btn" type="button">Показати</button>

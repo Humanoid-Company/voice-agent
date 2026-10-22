@@ -1661,7 +1661,7 @@
       $("voice").replaceChildren(
         group("Жіночі", voices.filter((x) => x.feminine && !x.special)),
         group("Чоловічі", voices.filter((x) => !x.feminine && !x.special)),
-        // A character on one of the voices above («Прямолінійний»), kept apart.
+        // Толік (a roast), kept apart.
         ...(voices.some((x) => x.special) ? [group("Особливі", voices.filter((x) => x.special))] : []),
       );
       $("voice").disabled = !voices.length;

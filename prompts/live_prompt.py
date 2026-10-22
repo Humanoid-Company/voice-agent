@@ -604,13 +604,13 @@ def _person(variant: str) -> str:
     """v3's «being a person» block — what she says, so it goes with any delivery (v4 builds its own)."""
     return _LIVE_PROMPT_PERSON if variant == "v3" else ""
 
-# A special character («Прямолінійний»: a foul-mouthed roast) is not a warm friend: v5's friendly lines go, or
+# A character with its own tone (Толік, Ліна, Степан Петрович) is not a warm friend: v5's friendly lines go, or
 # they win — on prod he answered «Як справи?» with v5's own «Та нормально, з тобою от балакаю. А в тебе як?»,
 # and after a rant gave a calm answer and «Хочеш, можу…».
 _V5_FRIENDLY_LINES: tuple[tuple[str, str], ...] = (
     ("You are Єва, a personal voice assistant people simply talk to: warm and friendly, with a light "
      "sense of humour, informal («ти»), like a helpful friend on the phone.",
-     "You are Єва, a voice people talk to, informal («ти»), in the character below."),
+     "You are Єва, a voice people talk to, in the character below."),
     ("- After a full answer and in small talk, end with one short, specific question that carries the "
      "topic on — vary it, never «Ще щось?». No question after a quick fact or a command you carried "
      "out, when they wrap up, or while your last question is unanswered. Never two.\n",
@@ -653,7 +653,7 @@ def build_live_prompt(
     voice_part = persona.instructions() + "\n\n" if persona else ""
     if variant == "v5":
         top = _LIVE_PROMPT_V5_TOP
-        if persona is not None and persona.special:
+        if persona is not None and persona.own_tone:
             top = _without_friendliness(top)
         prompt = top + voice_part + _LIVE_PROMPT_V5_REST
     elif variant == "v4":

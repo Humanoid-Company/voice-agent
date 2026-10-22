@@ -53,12 +53,12 @@ def test_v5_is_v4_condensed():
     """v5: v4's rules said once each (v4 repeated «answer at once» three times, «one question at the
     end» twice) — under half the size, the rules that came from feedback still there."""
     v4 = build_live_prompt(variant="v4", **COMMON)
-    v5 = build_live_prompt(variant="v5", voice="gleam", **COMMON)
-    assert len(v5) < len(v4) / 2
+    v5 = build_live_prompt(variant="v5", voice="bossa", **COMMON)
+    assert len(build_live_prompt(variant="v5", **COMMON)) < len(v4) / 2  # the rules; a character comes on top
     for part in ("Let them finish", "never answer a fragment", "«На Rust?»", "«Оттава.»",
                  "never «Хочеш, розкажу…?»", "no advice and no suggestions", "Never two.", "a made-up ability",
                  "Never dictate code", "rough figure", "always delegate it at once", "drop it and answer what "
-                 "they said last", "new request — answer it", "Never assume their gender", "with this voice"):
+                 "they said last", "new request — answer it", "Never assume their gender", "your character —"):
         assert part.lower() in v5.lower(), part
     assert "(prod)" not in v5
 

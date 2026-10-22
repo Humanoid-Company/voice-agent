@@ -39,7 +39,7 @@ OPENAI_LIVE_PARALLEL_TOOLS: bool = os.getenv("OPENAI_LIVE_PARALLEL_TOOLS", "true
 # by voice on GPT-Live 6.4 s (was up to 38 s). The camera showed no difference either way.
 OPENAI_LIVE_BACKEND_EFFORT: str = os.getenv("OPENAI_LIVE_BACKEND_EFFORT", "low").strip().lower()
 # Gleam: the team's pick by ear on Ukrainian samples.
-OPENAI_LIVE_VOICE: str = os.getenv("OPENAI_LIVE_VOICE", "gleam")
+OPENAI_LIVE_VOICE: str = os.getenv("OPENAI_LIVE_VOICE", "willow")  # Віра; a picker id (voice/options.py)
 OPENAI_LIVE_AUDIO_RATE: int = int(os.getenv("OPENAI_LIVE_AUDIO_RATE", "24000"))
 
 # ── Public web search (tool `web_search`, as in Assistant-agent) ───────────────

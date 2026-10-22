@@ -62,6 +62,7 @@ from voice.options import (
     LANGUAGE_OPTIONS,
     SPEED_OPTIONS,
     STYLE_OPTIONS,
+    DEFAULT_PERSONA,
     VOICE_PERSONAS,
     api_voice,
     delivery_instruction,
@@ -204,8 +205,13 @@ def _user(client_id: str | None, auth: AuthInfo) -> WebUser:
     return users.get(client_id, auth.account.owner if auth.account else None)
 
 
+def _default_voice() -> str:
+    return OPENAI_LIVE_VOICE if OPENAI_LIVE_VOICE in VOICE_PERSONAS else DEFAULT_PERSONA
+
+
 def _user_voice(user: WebUser) -> str:
-    return user.voice or OPENAI_LIVE_VOICE
+    """The character this browser picked; one that is gone (an old plain voice) → the default one."""
+    return user.voice if user.voice in VOICE_PERSONAS else _default_voice()
 
 
 def _knowledge_sets() -> list[dict]:
@@ -645,7 +651,7 @@ def me(
 def voices() -> dict:
     """Voices for the page's picker; the chosen one applies from the next call."""
     return {
-        "default": OPENAI_LIVE_VOICE,
+        "default": _default_voice(),
         "voices": [
             {"id": p.id, "label": p.label, "description": p.description, "feminine": p.feminine,
              "special": p.special, "sample": p.voice}

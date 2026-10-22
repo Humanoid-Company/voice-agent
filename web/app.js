@@ -112,6 +112,8 @@
   let channel = null;
   let sessionVoice = ""; // the voice the current call was opened with
   let mic = null;
+  // «Вимкнути мікрофон»: nothing reaches her — not the call, not the wake phrase, not background listening.
+  let micMuted = false;
   let gate = null;
   let gateStats = null; // ?debug=1: the gate's totals (evaGate())
   let micSender = null; // the current call's mic sender: another mic replaces its track in place
@@ -476,7 +478,8 @@
     const m = eva.mode;
     if (m === "off") return; // stop() sets its own text
     let state;
-    if (m === "connecting") state = ["Підключаюсь…", "busy"];
+    if (micMuted && m !== "connecting" && m !== "switching") state = ["Мікрофон вимкнено — " + callName + " нічого не чує", "wait"];
+    else if (m === "connecting") state = ["Підключаюсь…", "busy"];
     else if (m === "switching") state = ["Перемикаю голос…", "busy"];
     else if (m === "waiting" && eva.ready) state = ["На зв'язку — чекаю «Привіт, " + callName + "»", "wait"];
     else if (m === "waiting") state = eva.wakeSupported
@@ -592,6 +595,10 @@
     $("talk").disabled = false;
     $("resume").hidden = eva.mode !== "waiting";
     $("pause").hidden = eva.mode !== "active";
+    $("micMute").hidden = !on;
+    $("micMute").textContent = micMuted ? "Увімкнути мікрофон" : "Вимкнути мікрофон";
+    $("micMute").setAttribute("aria-pressed", String(micMuted));
+    $("micMute").classList.toggle("danger", micMuted);
     showWakeHint();
     showMeter(); // «Останній дзвінок» once she is off
   }
@@ -1142,7 +1149,8 @@
         gate = newGate;
       }
       const track = gate ? gate.track : mic.getAudioTracks()[0];
-      track.enabled = true;
+      track.enabled = !micMuted;
+      if (micMuted) mic.getAudioTracks().forEach((t) => { t.enabled = false; }); // muted: the gate hears nothing either
       micSender = peer.addTrack(track, mic);
       channel = peer.createDataChannel("oai-events");
       wireCall(peer, channel);
@@ -1285,6 +1293,7 @@
 
   function stop(text = "Не підключено", state = "") {
     devicesAnnounced = false;
+    micMuted = false; // the button hides with the call: the next one starts with the mic on
     if (eva.mode !== "off") postDiag(true);
     holdScreen(false);
     dropStandby();
@@ -1508,6 +1517,7 @@
   // a second pair of ears, as GPT-Live's transcript sometimes drops the name («Дякую»). It stops
   // by itself after a while of silence, so it is restarted.
   function startPhraseListener() {
+    if (micMuted) return; // nothing is heard, the wake phrase neither
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR || !eva.wakeSupported || eva.recognizer) return;
     // iOS: the recogniser takes the mic from the call (and restarts every few seconds), so it runs only
@@ -1583,6 +1593,19 @@
     try { rec.start(...(track ? [track] : [])); } catch {
       try { if (track) rec.start(); else eva.recognizer = null; } catch { eva.recognizer = null; }
     }
+  }
+
+  // The mic tracks (and the gate's, which the call sends) on or off; the wake phrase listener with them.
+  function setMicMuted(muted) {
+    micMuted = muted;
+    const tracks = [...(mic ? mic.getAudioTracks() : []), ...(gate && gate.track ? [gate.track] : [])];
+    tracks.forEach((t) => { t.enabled = !muted; });
+    if (muted) stopPhraseListener();
+    else if (eva.mode !== "off") startPhraseListener();
+    addLine("system", muted ? "Мікрофон вимкнено — " + callName + " нічого не чує, навіть «" + callName + ", скажи»."
+      : "Мікрофон знову увімкнено.");
+    showState();
+    updateButtons();
   }
 
   function stopPhraseListener() {
@@ -1839,7 +1862,8 @@
     s.peer.ontrack = (e) => attachVoice(e.streams[0]);
     try {
       const track = gate ? gate.track : mic.getAudioTracks()[0];
-      track.enabled = true;
+      track.enabled = !micMuted;
+      if (micMuted) mic.getAudioTracks().forEach((t) => { t.enabled = false; }); // muted: the gate hears nothing either
       micSender = s.sender;
       await s.sender.replaceTrack(track);
     } catch { /* closed meanwhile: its close handler takes over */ }
@@ -2416,7 +2440,8 @@
     gate = newGate;
     if (gate) gate.listenTo($("remote").srcObject || null);
     const track = gate ? gate.track : mic.getAudioTracks()[0];
-    track.enabled = true;
+    track.enabled = !micMuted;
+    if (micMuted) mic.getAudioTracks().forEach((t) => { t.enabled = false; }); // muted: the gate hears nothing either
     try { if (micSender) await micSender.replaceTrack(track); } catch { /* call closing */ }
     if (oldGate) oldGate.close();
     old.getTracks().forEach((t) => t.stop());
@@ -2572,6 +2597,7 @@
       primeAudio(); // then, in the same tap, the audio the gate will use
     });
     $("pause").addEventListener("click", pauseEva);
+    $("micMute").addEventListener("click", () => setMicMuted(!micMuted));
     $("resume").addEventListener("click", () => { wakeEva(""); primeAudio(); }); // a closed call reopens here
     $("bgListen").addEventListener("change", toggleBgListen);
     showBgListen();

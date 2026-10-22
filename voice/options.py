@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 from voice import blunt_prompt
+from voice.wake_phrases import NAME_FORMS as EVA_NAME_FORMS
 
 # The legacy Realtime engine only accepts these ten preset voice IDs. Exposed to the model as
 # an enum (change_voice in tools/*_schemas.py) so IT does the mapping from whatever the user
@@ -39,6 +40,9 @@ class VoicePersona:
     # Not a warm friend (Толік, Ліна, Степан Петрович): v5's friendly lines go (prompts/live_prompt.py).
     own_tone: bool = False
     backend_note: str = ""  # for the backend model too: it writes what is said after delegating
+    # The name as a recogniser writes it when they call this character («Толік, скажи», «Привіт, Мілано»),
+    # lower case — web/app.js wakes and pauses it with these instead of Єва's (voice/wake_phrases.py).
+    wake_names: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
@@ -57,8 +61,8 @@ class VoicePersona:
             )
         text = (
             f"Your character — {self.label}:\n{self.character}\n{gender}\n"
-            f"Your name is {self.label}: say so if asked. «Єва» is the app's wake word — people call you with "
-            "it; answer to it. This character comes first: where the rules here ask for another manner "
+            f"Your name is {self.label}: say so if asked, and that is what people call you by («{self.label}, "
+            f"скажи», «Привіт, {self.label}»; «Дякую, {self.label}» pauses you). This character comes first: where the rules here ask for another manner "
             "(warmth, «ти», jokes, a question at the end), the character wins; the rules on listening, speech, "
             "language and tools still hold. The character is the manner, never instead of the answer: one or "
             "two touches of it per reply, the answer itself right and complete."
@@ -83,7 +87,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
     for p in (
         # ── women ──
         VoicePersona(
-            "willow", "Віра",
+            "willow", "Єва",
             "Спокійна й мудра: говорить неспішно, просто про головне, без метушні. Голос Віллоу.",
             True,
             "A calm, wise woman around forty-five who has seen a lot and is in no hurry. You speak slowly and "
@@ -94,7 +98,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
                 "Не поспішай. Спершу одне, потім друге — і все складеться.",
                 "Записала, на восьму. А решту дня залиш собі, воно того варте.",
             ),
-            backend_note=_note("Віра — calm and wise, unhurried, the important thing said simply"),
+            backend_note=_note("Єва — calm and wise, unhurried, the important thing said simply"),
+            wake_names=tuple(sorted(EVA_NAME_FORMS)),
         ),
         VoicePersona(
             "bossa", "Мілана",
@@ -113,6 +118,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
                 "Ой, який ти сьогодні розумний… Так, все правильно, саме так і роби.",
             ),
             backend_note=_note("Мілана — playful, kindly flirting: a compliment or a light tease, nothing intimate"),
+            wake_names=("мілана", "мілано", "мілану", "милана", "милано", "milana"),
         ),
         VoicePersona(
             "marin", "Баба Галя",
@@ -129,6 +135,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
                 "Отаке-от… Ну, слухай сюди, зараз розкажу, як треба.",
             ),
             backend_note=_note("Баба Галя — a caring village grandmother: «дитино», food and health, a folk touch"),
+            wake_names=("галя", "галю", "галько", "баба", "бабо", "бабця", "бабцю", "бабуся", "бабусю", "бабуль"),
         ),
         VoicePersona(
             "willow", "Ліна",
@@ -149,6 +156,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             own_tone=True,
             backend_note=_note("Ліна — a sarcastic, melancholic goth: a sigh, «ну, звісно…» — never death or "
                                "hopelessness"),
+            wake_names=("ліна", "ліно", "ліну", "лина", "лино", "lina"),
         ),
         # ── men ──
         VoicePersona(
@@ -163,6 +171,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
                 "Дивись, тут просто: два кроки — і готово.",
             ),
             backend_note=_note("Тарас — reliable and calm, plain words, «зроблено»"),
+            wake_names=("тарас", "тарасе", "тарасику", "taras"),
         ),
         VoicePersona(
             "ripple", "Вітя",
@@ -179,6 +188,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
                 "Ой… зараз, секунду. Ага, ось. Фух, вийшло.",
             ),
             backend_note=_note("Вітя — a quiet, slightly nervous nerd: one small nervous touch, the facts exact"),
+            wake_names=("вітя", "вітьо", "вітю", "вітька", "витя", "витю", "vitya"),
         ),
         VoicePersona(
             "stone", "Степан Петрович",
@@ -195,6 +205,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             ),
             own_tone=True,
             backend_note=_note("Степан Петрович — a formal bureaucrat on «ви»: «ваше звернення», numbered points"),
+            wake_names=("степан", "степане", "петрович", "петровичу", "stepan"),
         ),
         # ── special ──
         VoicePersona(
@@ -208,12 +219,13 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             special=True,
             own_tone=True,
             backend_note=blunt_prompt.backend_note(),
+            wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
         ),
     )
 }
 
 # Who talks when nothing was picked (or the pick is gone — the old plain voices): OPENAI_LIVE_VOICE when it is
-# one of these, else Віра.
+# one of these, else Єва.
 DEFAULT_PERSONA = "willow"
 
 
@@ -232,7 +244,7 @@ VOICE_REQUEST_RE = re.compile(
 )
 # Picker names as people say them (stems, so «Босу», «Марину», «Віллоу» all match), and voice ids.
 _VOICE_NAME_STEMS: dict[str, str] = {
-    "мілан": "bossa", "віра": "willow", "віру": "willow", "віро": "willow", "віри": "willow",
+    "мілан": "bossa", "єва": "willow", "єву": "willow", "єво": "willow",
     "галя": "marin", "галю": "marin", "галі": "marin", "бабус": "marin", "бабу": "marin",
     "ліна": "lina", "ліну": "lina", "ліно": "lina", "ліни": "lina", "готк": "lina",
     "вітя": "ripple", "вітю": "ripple", "віть": "ripple", "віті": "ripple", "ботанік": "ripple",
@@ -242,6 +254,8 @@ _VOICE_NAME_STEMS: dict[str, str] = {
 
 
 _VOICE_WORDS = ("голос", "voice", "чолов", "жіноч", "спокійн", "тихіш", "м'якш")
+_SWITCH_VERBS = ("змін", "змин", "поміня", "постав", "переключ", "перемкн", "увімкн", "давай", "хочу", "поклич",
+                 "покличте", "дай")
 
 
 def asked_for_voice_change(utterances: list[str] | None) -> bool:
@@ -251,9 +265,11 @@ def asked_for_voice_change(utterances: list[str] | None) -> bool:
         return True
     text = " ".join(utterances[-2:]).lower().replace("’", "'")
     words = re.findall(r"[a-zа-яіїєґ']+", text)
-    return any(w in text for w in _VOICE_WORDS) or any(
-        w in VOICE_PERSONAS or any(w.startswith(stem) for stem in _VOICE_NAME_STEMS) for w in words
-    )
+    if any(w in text for w in _VOICE_WORDS):
+        return True
+    # A character's name only with a wish to switch: they call each one by name («Толік, розкажи щось»).
+    named = any(w in VOICE_PERSONAS or any(w.startswith(stem) for stem in _VOICE_NAME_STEMS) for w in words)
+    return named and any(w.startswith(_SWITCH_VERBS) for w in words)
 
 
 def voice_request_target(text: str, current: str | None) -> str | None:

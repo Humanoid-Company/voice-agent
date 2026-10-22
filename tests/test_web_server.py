@@ -183,7 +183,7 @@ def test_voice_picker_lists_live_voices_and_saves_choice(client):
     data = client.get("/api/voices").json()
     ids = [v["id"] for v in data["voices"]]
     assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt"} == set(ids)
-    assert data["default"] == "willow"  # Віра; OPENAI_LIVE_VOICE=gleam is no character any more
+    assert data["default"] == "willow"  # Єва; OPENAI_LIVE_VOICE=gleam is no character any more
     assert any(v["feminine"] for v in data["voices"]) and not all(v["feminine"] for v in data["voices"])
     assert all(v["label"] and v["description"] for v in data["voices"])
 
@@ -195,7 +195,7 @@ def test_voice_picker_lists_live_voices_and_saves_choice(client):
 
     config = web._session_config(web.users.get(ALICE))
     assert config["audio"]["output"]["voice"] == "willow"
-    assert "Your character — Віра" in config["instructions"] and "Your name is Віра" in config["instructions"]
+    assert "Your character — Єва" in config["instructions"] and "Your name is Єва" in config["instructions"]
     assert "feminine grammatical gender" in config["instructions"]
 
 
@@ -236,7 +236,7 @@ def test_tolik_is_a_character_on_cedar(client):
     assert "VOICE CHARACTER" not in conc["delegation"]["responses"]["instructions"]
     # Others keep their own character and none of his.
     plain = web._session_config(web.users.get("blunt-plain-0123456789a"))
-    assert "з тобою от балакаю" in plain["instructions"]  # Віра, the default: a warm one keeps v5 as it is
+    assert "з тобою от балакаю" in plain["instructions"]  # Єва, the default: a warm one keeps v5 as it is
     assert "You are Толік" not in plain["instructions"] and "Толік" not in plain["delegation"]["responses"]["instructions"]
 
     assert target("зміни голос на Толіка", "willow") == "blunt" and target("зміни голос на хуліган", "willow") == "blunt"
@@ -249,9 +249,20 @@ def test_tolik_is_a_character_on_cedar(client):
     assert ok.ok and other.voice == "blunt"
 
 
+def test_each_character_answers_to_its_own_name(client):
+    """«хай кожен персонаж відкликається на своє імя»: the page wakes and pauses each by its name."""
+    voices = {v["id"]: v for v in client.get("/api/voices").json()["voices"]}
+    assert voices["willow"]["label"] == "Єва" and "єва" in voices["willow"]["wake"]
+    assert {"толік", "толя"} <= set(voices["blunt"]["wake"]) and "мілано" in voices["bossa"]["wake"]
+    assert all(v["wake"] for v in voices.values())
+    tolik = web.users.get("wake-tolik-0123456789a")
+    tolik.voice = "blunt"
+    assert "«Толік, скажи»" in web._session_config(tolik)["instructions"]
+
+
 def test_characters_have_their_tone_and_limits():
     """Мілана flirts lightly, Ліна is gloomy only in manner, Степан Петрович is on «ви»; the gone plain voices
-    fall back to Віра."""
+    fall back to Єва."""
     def cfg(voice):
         user = web.users.get(f"char-{voice}-0123456789abc"[:24])
         user.voice = voice
@@ -264,7 +275,7 @@ def test_characters_have_their_tone_and_limits():
     assert "«ви»" in stepan["instructions"] and "warm and friendly" not in stepan["instructions"]
     assert "VOICE CHARACTER: the voice is Ліна" in lina["delegation"]["responses"]["instructions"]
     gone = cfg("gleam")  # picked before the characters
-    assert gone["audio"]["output"]["voice"] == "willow" and "Your name is Віра" in gone["instructions"]
+    assert gone["audio"]["output"]["voice"] == "willow" and "Your name is Єва" in gone["instructions"]
 
 
 def test_blunt_prompt_takes_the_users_additions(monkeypatch):
@@ -526,6 +537,9 @@ def test_the_language_changes_only_when_asked():
         (["Як справи", "Розкажи щось цікаве"], False),
         (["Давай іншим голосом"], True),
         (["Хочу Мілану"], True),
+        (["Толік, розкажи щось"], False),  # they call each character by name: not a wish to switch
+        (["Мілано, як справи?"], False),
+        (["Поклич Степана Петровича"], True),
         (["зроби чоловічий"], True),
         (["говори спокійніше"], True),
     ],

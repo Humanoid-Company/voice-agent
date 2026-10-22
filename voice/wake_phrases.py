@@ -15,7 +15,7 @@ AGENT_NAME = "Єва"
 
 # Every form of the name an STT may produce, already normalised (see _tokens). Only the forms
 # used to address her: «скажи Єві» / «я скажу Єву» talk ABOUT her and must not wake her.
-_NAME_FORMS = frozenset({
+NAME_FORMS = _NAME_FORMS = frozenset({
     "єва", "єво",
     "ева", "эва", "эво", "ево", "єфа", "ефа",
     "їва", "іва", "йева", "йєва", "єєва",  # Chrome's uk-UA spellings of a quick «Єва»

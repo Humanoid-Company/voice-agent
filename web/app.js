@@ -16,6 +16,7 @@
     store.set("va-client-id", clientId);
   }
   let assistantName = ""; // set when renamed by voice (/api/me); «Єва» otherwise
+  let callName = "Єва"; // the applied character's name: what wakes and pauses it (showVoice)
   // Voice picker: the choice lives here (the server forgets it on restart) and is sent with
   // every new call. Voice is fixed for a Live session, so a change applies from the next call.
   let voices = [];
@@ -387,6 +388,13 @@
   ];
   const EVA_STOP_VERBS = ["дякую", "дякуємо"]; // one pause phrase: «Дякую, Єва»
   const EVA_MAX_GAP = 2;
+  // The names she answers to: the picked character's («Толік, скажи»; /api/voices «wake»), Єва's until known.
+  let wakeNames = EVA_NAME_FORMS;
+  let wakeSizes = [4, 3]; // the name lengths unglue tries
+  function setWakeNames(list) {
+    wakeNames = list && list.length ? new Set(list) : EVA_NAME_FORMS;
+    wakeSizes = [...new Set([...wakeNames].map((n) => n.length))].filter((n) => n >= 3).sort((a, b) => b - a);
+  }
 
   function evaTokens(text) {
     const lowered = String(text || "").toLowerCase().replace(/’/g, "'").replace(/ё/g, "е");
@@ -402,11 +410,11 @@
 
   // «привітєва» / «гейєва» / «євоскажи»: the recogniser glued the name to the verb — split them.
   function unglue(word) {
-    if (word.length <= 4 || EVA_NAME_FORMS.has(word)) return [word];
+    if (word.length <= 4 || wakeNames.has(word)) return [word];
     const verbs = EVA_WAKE_VERBS.concat(EVA_STOP_VERBS);
-    for (const size of [4, 3]) {
-      if (EVA_NAME_FORMS.has(word.slice(-size)) && like(word.slice(0, -size), verbs)) return [word.slice(0, -size), word.slice(-size)];
-      if (EVA_NAME_FORMS.has(word.slice(0, size)) && like(word.slice(size), verbs)) return [word.slice(0, size), word.slice(size)];
+    for (const size of wakeSizes) {
+      if (wakeNames.has(word.slice(-size)) && like(word.slice(0, -size), verbs)) return [word.slice(0, -size), word.slice(-size)];
+      if (wakeNames.has(word.slice(0, size)) && like(word.slice(size), verbs)) return [word.slice(0, size), word.slice(size)];
     }
     return [word];
   }
@@ -428,7 +436,7 @@
 
   function evaPair(words, verbs) {
     for (let i = 0; i < words.length; i++) {
-      if (!EVA_NAME_FORMS.has(words[i])) continue;
+      if (!wakeNames.has(words[i])) continue;
       const lo = Math.max(0, i - EVA_MAX_GAP - 1), hi = Math.min(words.length, i + EVA_MAX_GAP + 2);
       for (let j = lo; j < hi; j++) if (j !== i && like(words[j], verbs)) return [i, j];
     }
@@ -472,7 +480,7 @@
     else if (m === "switching") state = ["Перемикаю голос…", "busy"];
     else if (m === "waiting" && eva.ready) state = ["На зв'язку — чекаю «Привіт, Єва»", "wait"];
     else if (m === "waiting") state = eva.wakeSupported
-      ? [bgListen ? "Пауза — слухаю фоном, чекаю «Єва, скажи»" : "Пауза — чекаю «Єва, скажи»", "wait"]
+      ? [bgListen ? "Пауза — слухаю фоном, чекаю «" + callName + ", скажи»" : "Пауза — чекаю «" + callName + ", скажи»", "wait"]
       : ["Пауза — натисніть «Продовжити»", "wait"];
     else if (barge.audible) state = ["Говорю", "speak"];
     else if (barge.speaking) state = ["Слухаю", "live"];
@@ -584,9 +592,7 @@
     $("talk").disabled = false;
     $("resume").hidden = eva.mode !== "waiting";
     $("pause").hidden = eva.mode !== "active";
-    $("wakeHint").textContent = eva.wakeSupported
-      ? "Покличте Єву — «Єва, скажи», «Привіт, Єва», «Гей, Єва», «Єво, слухай». «Дякую, Єва» — пауза. Браузер попросить доступ до мікрофона."
-      : "Цей браузер не вміє слухати «Єва, скажи» (потрібен Chrome, Edge або Safari) — користуйтеся кнопками «Пауза» / «Продовжити». «Дякую, Єва» працює.";
+    showWakeHint();
     showMeter(); // «Останній дзвінок» once she is off
   }
 
@@ -801,7 +807,7 @@
       ack: "Stop your previous answer immediately. Do not continue or resume it. If the user goes on with a question or request, answer that. If they only told you to stop, say at most one short «Добре.» and wait silently.",
       // Prod: she once said this aloud — «Стоп, слухаю тебе.»
       stop: "Stop speaking immediately. The user is talking. Do not finish or resume your previous sentence, and do not say that you stop or listen — just go silent. Listen and answer what they say.",
-      pause: "The user said «Дякую, Єва»: stop speaking immediately and stay completely silent. Do not reply to it. You will be woken again later — then continue with full memory of this conversation.",
+      pause: "The user said «Дякую» with your name: stop speaking immediately and stay completely silent. Do not reply to it. You will be woken again later — then continue with full memory of this conversation.",
     }[kind];
     try {
       if (channel && channel.readyState === "open") {
@@ -1310,8 +1316,8 @@
     if (announce) {
       addLine("system", eva.wakeSupported
         ? (bgListen
-          ? "Пауза. Єва слухає фоном і запам'ятовує, про що говорять поруч, — зможе нагадати. Скажіть «Єва, скажи», щоб продовжити."
-          : "Пауза. Скажіть «Єва, скажи», щоб продовжити — Єва все пам'ятає.")
+          ? "Пауза. " + callName + " слухає фоном і запам'ятовує, про що говорять поруч, — зможе нагадати. Скажіть «" + callName + ", скажи», щоб продовжити."
+          : "Пауза. Скажіть «" + callName + ", скажи», щоб продовжити — " + callName + " все пам'ятає.")
         : "Пауза. Натисніть «Продовжити» — Єва все пам'ятає.");
     }
     clearTimeout(eva.pauseTimer);
@@ -1363,7 +1369,7 @@
 
   // At a wake: a held piece that shares the request's words is the user's own lead-in — dropped; the
   // rest is kept now, before the digest is read.
-  const contentWords = (text) => evaTokens(text).filter((w) => w.length >= 4 && !EVA_NAME_FORMS.has(w));
+  const contentWords = (text) => evaTokens(text).filter((w) => w.length >= 4 && !wakeNames.has(w));
   function flushOverheard(request) {
     const asked = new Set(contentWords(request));
     const sent = overheardPending.splice(0).map((entry) => {
@@ -1443,7 +1449,7 @@
     if (eva.mode !== "waiting") return;
     clearTimeout(eva.pauseTimer);
     const note = overheardNote(flushOverheard((heard || "") + " " + (rest || ""))); // a promise: never delays the wake
-    if (rest) addLine("user", "Єва, скажи, " + rest);
+    if (rest) addLine("user", callName + ", скажи, " + rest);
     if (pc && channel && channel.readyState === "open") {
       eva.mode = "active";
       if (IOS) { stopPhraseListener(); reviveMic(); } // the recogniser had the mic during the pause
@@ -1458,7 +1464,7 @@
     } else {
       // The pause closed the call: reopen it right away. What they asked goes into the new call's
       // history as their own message — quoted in a commentary, GPT-Live sometimes read it back.
-      start({ userText: rest ? "Єва, скажи, " + rest : "", ask: rest, greet: !rest, heard, note, fresh: true });
+      start({ userText: rest ? callName + ", скажи, " + rest : "", ask: rest, greet: !rest, heard, note, fresh: true });
     }
   }
 
@@ -1484,7 +1490,7 @@
   // text: what to say instead of the wake greeting (START_GREETING when the call was just started).
   function greetIfQuiet(heard = "", note = "", delayMs = 700, text = "") {
     const wokeAt = Date.now();
-    const phrase = heard || "Єва, скажи";
+    const phrase = heard || callName + ", скажи";
     const giveUpAt = wokeAt + 4000;
     const tryGreet = async () => {
       if (eva.mode !== "active") return;
@@ -1550,7 +1556,7 @@
         // Paused, not switched off: what is said nearby is kept for her (voice/background.py).
         // Not a phrase that names her: a wake phrase the recogniser mangled is the user, not background.
         if (bgListen && eva.mode === "waiting" && result.isFinal && !isStop(result[0].transcript)
-            && !evaTokens(result[0].transcript).some((w) => EVA_NAME_FORMS.has(w))) {
+            && !evaTokens(result[0].transcript).some((w) => wakeNames.has(w))) {
           postOverheard(result[0].transcript);
         }
       }
@@ -1558,7 +1564,7 @@
     rec.onerror = (e) => {
       if (["not-allowed", "service-not-allowed", "language-not-supported"].includes(e.error)) {
         eva.wakeSupported = false;
-        addLine("system", "Браузер не дає слухати «Єва, скажи» — натискайте «Продовжити».");
+        addLine("system", "Браузер не дає слухати «" + callName + ", скажи» — натискайте «Продовжити».");
         showState();
         updateButtons();
       } else if (e.error === "network") {
@@ -1635,8 +1641,20 @@
   // ── voice settings ──
   const voiceLabel = (id) => (voices.find((x) => x.id === id) || { label: id }).label;
 
+  // How the applied character is called: its name wakes and pauses it («Толік, скажи», «Дякую, Толік»).
+  function showWakeHint() {
+    const n = callName;
+    $("wakeHint").textContent = eva.wakeSupported
+      ? "Покличте — «" + n + ", скажи», «Привіт, " + n + "», «Гей, " + n + "», «" + n + ", слухай». «Дякую, " + n + "» — пауза. Браузер попросить доступ до мікрофона."
+      : "Цей браузер не вміє слухати «" + n + ", скажи» (потрібен Chrome, Edge або Safari) — користуйтеся кнопками «Пауза» / «Продовжити». «Дякую, " + n + "» працює.";
+  }
+
   // The picker may show a voice that isn't applied yet (to listen to it first).
   function showVoice(keepSelection = false) {
+    const applied = voices.find((x) => x.id === voice);
+    setWakeNames(applied && applied.wake);
+    callName = applied ? applied.label : "Єва";
+    showWakeHint();
     if (!keepSelection) $("voice").value = voice;
     const picked = voices.find((x) => x.id === $("voice").value);
     $("voiceInfo").textContent = picked ? picked.description : "";
@@ -2437,8 +2455,8 @@
 
   function showCamera() {
     $("cameraInfo").textContent = cam
-      ? "Увімкнено: коли попросите «Єва, подивись», вона гляне на кадр. Кадри ніде не зберігаються."
-      : "Попросіть «Єва, подивись» — вона гляне через камеру.";
+      ? "Увімкнено: коли попросите «" + callName + ", подивись», кадр буде перевірено. Кадри ніде не зберігаються."
+      : "Попросіть «" + callName + ", подивись» — погляд через камеру.";
   }
 
   async function startCamera() {

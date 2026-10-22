@@ -654,7 +654,7 @@ def voices() -> dict:
         "default": _default_voice(),
         "voices": [
             {"id": p.id, "label": p.label, "description": p.description, "feminine": p.feminine,
-             "special": p.special, "sample": p.voice}
+             "special": p.special, "sample": p.voice, "wake": list(p.wake_names)}
             for p in VOICE_PERSONAS.values()
         ],
     }

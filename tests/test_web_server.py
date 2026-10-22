@@ -282,6 +282,7 @@ def test_characters_have_their_tone_and_limits():
     assert lesia["audio"]["output"]["voice"] == "gleam" and "a robot cat" in lesia["instructions"]
     assert "щоб тебе качка копнула" in lesia["instructions"] and "never mat" in lesia["instructions"]
     assert "No meowing all the time" in lesia["instructions"] and "курва" not in lesia["instructions"]
+    assert "You also tease the person" in lesia["instructions"] and "never mean" in lesia["instructions"]
     assert "feminine grammatical gender" in lesia["instructions"]
     assert "«Леся, скажи»" in lesia["instructions"] and "Леся" in lesia["delegation"]["responses"]["instructions"]
 

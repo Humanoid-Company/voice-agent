@@ -182,7 +182,7 @@ def test_keeps_itself_awake_only_when_deployed(monkeypatch):
 def test_voice_picker_lists_live_voices_and_saves_choice(client):
     data = client.get("/api/voices").json()
     ids = [v["id"] for v in data["voices"]]
-    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "lesia"} == set(ids)
+    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "lesia", "kit"} == set(ids)
     assert data["default"] == "willow"  # Єва; OPENAI_LIVE_VOICE=gleam is no character any more
     assert any(v["feminine"] for v in data["voices"]) and not all(v["feminine"] for v in data["voices"])
     assert all(v["label"] and v["description"] for v in data["voices"])
@@ -286,6 +286,14 @@ def test_characters_have_their_tone_and_limits():
     # Prod: «А ти як? Живий-цілий?», «Ти що зараз думаєш робити?» every reply — v5's friendly lines are gone for her.
     assert "warm and friendly" not in lesia["instructions"] and "no friendly follow-up questions" in lesia["instructions"]
     assert "feminine grammatical gender" in lesia["instructions"]
+    # The owner's rules: no mat at all; a light «до дупи» now and then, with «вибачте за мій французький» each time.
+    assert "вибачте за мій французький" in lesia["instructions"] and "Never «бля»" in lesia["instructions"]
+    # Кіт — a talking cat for birthdays and parties: a different greeting every time, no mat, apologises.
+    kit = cfg("kit")
+    assert kit["audio"]["output"]["voice"] == "tempo" and "a talking cat" in kit["instructions"]
+    assert "never the same script" in kit["instructions"] and "No mat at all" in kit["instructions"]
+    assert "гони касу" in kit["instructions"] and "masculine grammatical gender" in kit["instructions"]
+    assert "warm and friendly" not in kit["instructions"] and "«Кіт, скажи»" in kit["instructions"]
     assert "«Леся, скажи»" in lesia["instructions"] and "Леся" in lesia["delegation"]["responses"]["instructions"]
 
 
@@ -426,6 +434,7 @@ def test_voice_request_picks_the_voice():
     assert target("зміни голос на Бабу Галю", "willow") == "marin"
     assert target("зміни голос на Ліну", "willow") == "lina"
     assert target("зміни голос на Лесю", "willow") == "lesia"
+    assert target("зміни голос на кота", "willow") == "kit"
     assert all(target("постав жіночий голос", c) != "lesia" for c in ("willow", "bossa", "marin", "lina"))
     assert target("що в мене завтра?", "willow") is None
     assert target("Єва, змини голос на чоловічий", "willow") == "meridian"  # STT spelling

@@ -1679,7 +1679,7 @@
       $("voice").replaceChildren(
         group("Жіночі", voices.filter((x) => x.feminine && !x.special)),
         group("Чоловічі", voices.filter((x) => !x.feminine && !x.special)),
-        // Толік (a roast), kept apart.
+        // Толік (a roast) and Леся (a robot cat), kept apart.
         ...(voices.some((x) => x.special) ? [group("Особливі", voices.filter((x) => x.special))] : []),
       );
       $("voice").disabled = !voices.length;

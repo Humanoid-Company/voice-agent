@@ -182,7 +182,7 @@ def test_keeps_itself_awake_only_when_deployed(monkeypatch):
 def test_voice_picker_lists_live_voices_and_saves_choice(client):
     data = client.get("/api/voices").json()
     ids = [v["id"] for v in data["voices"]]
-    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt"} == set(ids)
+    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "lesia"} == set(ids)
     assert data["default"] == "willow"  # Єва; OPENAI_LIVE_VOICE=gleam is no character any more
     assert any(v["feminine"] for v in data["voices"]) and not all(v["feminine"] for v in data["voices"])
     assert all(v["label"] and v["description"] for v in data["voices"])
@@ -274,8 +274,13 @@ def test_characters_have_their_tone_and_limits():
     assert "warm and friendly" not in lina["instructions"]  # her own tone
     assert "«ви»" in stepan["instructions"] and "warm and friendly" not in stepan["instructions"]
     assert "VOICE CHARACTER: the voice is Ліна" in lina["delegation"]["responses"]["instructions"]
-    gone = cfg("gleam")  # picked before the characters
+    gone = cfg("tempo")  # picked before the characters
     assert gone["audio"]["output"]["voice"] == "willow" and "Your name is Єва" in gone["instructions"]
+    # Леся, a robot cat on Глім's voice: whines, apologises, no mat — a rare «холера» or Polish «курва».
+    lesia = cfg("lesia")
+    assert lesia["audio"]["output"]["voice"] == "gleam" and "a robot cat" in lesia["instructions"]
+    assert "No mat at all" in lesia["instructions"] and "feminine grammatical gender" in lesia["instructions"]
+    assert "«Леся, скажи»" in lesia["instructions"] and "Леся" in lesia["delegation"]["responses"]["instructions"]
 
 
 def test_blunt_prompt_takes_the_users_additions(monkeypatch):
@@ -414,6 +419,8 @@ def test_voice_request_picks_the_voice():
     assert target("переключи голос на Степана", "willow") == "stone"
     assert target("зміни голос на Бабу Галю", "willow") == "marin"
     assert target("зміни голос на Ліну", "willow") == "lina"
+    assert target("зміни голос на Лесю", "willow") == "lesia"
+    assert all(target("постав жіночий голос", c) != "lesia" for c in ("willow", "bossa", "marin", "lina"))
     assert target("що в мене завтра?", "willow") is None
     assert target("Єва, змини голос на чоловічий", "willow") == "meridian"  # STT spelling
     assert target("Єва, зміни голос", "willow") == "bossa"  # bare: just another one

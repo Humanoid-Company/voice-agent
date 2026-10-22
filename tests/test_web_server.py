@@ -277,10 +277,12 @@ def test_characters_have_their_tone_and_limits():
     assert "VOICE CHARACTER: the voice is Ліна" in lina["delegation"]["responses"]["instructions"]
     gone = cfg("tempo")  # picked before the characters
     assert gone["audio"]["output"]["voice"] == "willow" and "Your name is Єва" in gone["instructions"]
-    # Леся, a robot cat on Глім's voice: whines, apologises, no mat — a rare «холера» or Polish «курва».
+    # Леся, a robot cat on Глім's voice: a pessimist who whines; literary curses only, and sorry for them.
     lesia = cfg("lesia")
     assert lesia["audio"]["output"]["voice"] == "gleam" and "a robot cat" in lesia["instructions"]
-    assert "No mat at all" in lesia["instructions"] and "feminine grammatical gender" in lesia["instructions"]
+    assert "щоб тебе качка копнула" in lesia["instructions"] and "never mat" in lesia["instructions"]
+    assert "No meowing all the time" in lesia["instructions"] and "курва" not in lesia["instructions"]
+    assert "feminine grammatical gender" in lesia["instructions"]
     assert "«Леся, скажи»" in lesia["instructions"] and "Леся" in lesia["delegation"]["responses"]["instructions"]
 
 

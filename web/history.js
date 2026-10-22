@@ -55,7 +55,7 @@
 
   async function load(attempt = 0) {
     if (!clientId) {
-      $("list").replaceChildren(el("p", { class: "muted empty" }, "У цьому браузері ще не було розмов з Євою."));
+      $("list").replaceChildren(el("p", { class: "muted empty" }, "У цьому браузері ще не було розмов."));
       return;
     }
     let data;
@@ -80,7 +80,7 @@
   function render(list) {
     $("count").textContent = list.length ? String(list.length) : "";
     if (!list.length) {
-      $("list").replaceChildren(el("p", { class: "muted empty" }, "Збережених розмов ще немає. Поговоріть з Євою — розмова з'явиться тут."));
+      $("list").replaceChildren(el("p", { class: "muted empty" }, "Збережених розмов ще немає. Поговоріть з помічником — розмова з'явиться тут."));
       return;
     }
     $("list").replaceChildren(...list.map((c) => {
@@ -139,7 +139,7 @@
   }
 
   async function copy(turns, btn) {
-    const text = turns.map((t) => (t.role === "user" ? "Ви" : "Єва") + ": " + t.text).join("\n\n");
+    const text = turns.map((t) => (t.role === "user" ? "Ви" : "Помічник") + ": " + t.text).join("\n\n");
     let ok = false;
     try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
     btn.textContent = ok ? "Скопійовано ✓" : "Не вдалося";
@@ -147,7 +147,7 @@
   }
 
   async function remove(c) {
-    const extra = c.id === current ? " Це поточна розмова — Єва її теж забуде." : "";
+    const extra = c.id === current ? " Це поточна розмова — помічник її теж забуде." : "";
     if (!confirm("Видалити розмову «" + (c.title || "без слів") + "»?" + extra + " Відновити не можна.")) return;
     try {
       await api("/api/conversations/" + encodeURIComponent(c.id), { method: "DELETE" });

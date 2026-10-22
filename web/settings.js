@@ -77,7 +77,7 @@
     $("roleBadge").className = "pill" + (a.role === "admin" ? " accent" : "");
     $("roleHint").textContent = a.role === "admin"
       ? "Ви адмін: керуєте людьми, бачите логи й витрати, скидаєте відмітки консьєржа."
-      : "Ви учасник: говорите з Євою, бачите свою історію й керуєте «Знаннями». Логи, витрати й людей бачить адмін.";
+      : "Ви учасник: говорите з помічниками, бачите свою історію й керуєте «Знаннями». Логи, витрати й людей бачить адмін.";
     for (const node of document.querySelectorAll(".admin-only")) node.hidden = a.role !== "admin";
     $("tab-people").hidden = a.role !== "admin";
   }

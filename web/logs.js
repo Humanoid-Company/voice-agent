@@ -118,7 +118,7 @@
       case "user":
         cls = "k-user"; body = [el("span", { class: "who" }, e.via === "wake" ? "ви (пробудження)" : "ви"), e.text]; break;
       case "eva":
-        cls = "k-eva"; body = [el("span", { class: "who" }, "Єва"), e.text]; break;
+        cls = "k-eva"; body = [el("span", { class: "who" }, "Помічник"), e.text]; break;
       case "tool_call":
         cls = "k-tool";
         body = [el("span", { class: "who" }, "виклик"), el("strong", {}, e.name),

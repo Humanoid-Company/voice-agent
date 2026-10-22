@@ -232,7 +232,8 @@ def test_tolik_is_a_character_on_cedar(client):
     assert "end with one short, specific question" not in config["instructions"]
     assert "VOICE CHARACTER: the voice is Толік" in config["delegation"]["responses"]["instructions"]
     conc = web._session_config(user, concierge=True)
-    assert conc["audio"]["output"]["voice"] == "cedar" and "You are Толік" not in conc["instructions"]
+    assert conc["audio"]["output"]["voice"] == "cedar" and "courtyard hooligan" not in conc["instructions"]
+    assert "You are Толік, the concierge" in conc["instructions"]  # his name at the door, not his roast
     assert "VOICE CHARACTER" not in conc["delegation"]["responses"]["instructions"]
     # Others keep their own character and none of his.
     plain = web._session_config(web.users.get("blunt-plain-0123456789a"))

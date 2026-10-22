@@ -57,7 +57,7 @@
       noMicReady = true;
       const chromeLike = IOS && ["chrome-ios", "firefox-ios", "edge"].includes(BROWSER);
       $("noMicTitle").textContent = chromeLike ? "Цей браузер на iPhone не дає сайтам мікрофон" : "Мікрофон у цьому браузері недоступний";
-      $("noMicText").textContent = chromeLike ? "Відкрийте цю сторінку в Safari — там Єва працює." : noMicReason();
+      $("noMicText").textContent = chromeLike ? "Відкрийте цю сторінку в Safari — там усе працює." : noMicReason();
       $("noMicIos").hidden = !chromeLike;
       $("openSafari").hidden = !(IOS && window.isSecureContext);
       $("openSafari").href = "x-safari-" + location.href;
@@ -77,7 +77,7 @@
     // Chrome (and Firefox, Edge) on an iPhone is WebKit inside another app, and it may give pages no mic
     // (prod: Chrome on an iPhone); Safari does.
     if (BROWSER === "chrome-ios" || BROWSER === "firefox-ios" || (IOS && BROWSER === "edge")) {
-      return "На iPhone цей браузер не дає сторінці мікрофон. Відкрийте її в Safari — там Єва працює. " +
+      return "На iPhone цей браузер не дає сторінці мікрофон. Відкрийте її в Safari — там усе працює. " +
         "(Якщо потрібен саме цей браузер: оновіть iOS і браузер та перевірте «Параметри» → браузер → «Мікрофон».)";
     }
     return IOS
@@ -478,7 +478,7 @@
     let state;
     if (m === "connecting") state = ["Підключаюсь…", "busy"];
     else if (m === "switching") state = ["Перемикаю голос…", "busy"];
-    else if (m === "waiting" && eva.ready) state = ["На зв'язку — чекаю «Привіт, Єва»", "wait"];
+    else if (m === "waiting" && eva.ready) state = ["На зв'язку — чекаю «Привіт, " + callName + "»", "wait"];
     else if (m === "waiting") state = eva.wakeSupported
       ? [bgListen ? "Пауза — слухаю фоном, чекаю «" + callName + ", скажи»" : "Пауза — чекаю «" + callName + ", скажи»", "wait"]
       : ["Пауза — натисніть «Продовжити»", "wait"];
@@ -515,8 +515,8 @@
   function showCheckQuestion() {
     $("checkQuestion").checked = checkQuestion;
     $("checkQuestionInfo").textContent = checkQuestion
-      ? "Після імені Єва питає щось із запису гостя (посаду, хобі…)."
-      : "Вимкнено: Єва пускає, щойно знайшла ім'я в списку.";
+      ? "Після імені " + callName + " питає щось із запису гостя (посаду, хобі…)."
+      : "Вимкнено: " + callName + " пускає, щойно ім'я знайдено в списку.";
   }
 
   function setCheckQuestion() {
@@ -576,10 +576,10 @@
       const people = on.reduce((n, s) => n + s.count, 0);
       $("conciergeInfo").classList.toggle("warn-text", !on.length);
       $("conciergeInfo").textContent = on.length
-        ? "Список: " + on.map((s) => "«" + s.name + "»").join(", ") + " — " + people + " записів. Єва вітає людину, питає ім'я, " +
+        ? "Список: " + on.map((s) => "«" + s.name + "»").join(", ") + " — " + people + " записів. " + callName + " вітає людину, питає ім'я, " +
           "звіряє його зі списком (однакові імена — питає прізвище)" +
           (checkQuestion ? " і ставить одне перевірочне питання." : " і пускає, щойно знайшла в списку.")
-        : "Список людей порожній — завантажте його у «Знання» (кнопка вгорі), інакше Єві нема з ким звіряти.";
+        : "Список людей порожній — завантажте його у «Знання» (кнопка вгорі), інакше нема з ким звіряти.";
     } catch { /* asleep: the hint stays */ }
   }
 
@@ -1087,7 +1087,7 @@
     if (!pc || eva.mode !== "active") return;
     idleTimer = setTimeout(() => {
       if (eva.mode !== "active") return;
-      addLine("system", "Тиша вже " + Math.round(IDLE_LIMIT_MS / 1000) + " с — ставлю Єву на паузу, щоб не витрачати хвилини. Вона все пам'ятає.");
+      addLine("system", "Тиша вже " + Math.round(IDLE_LIMIT_MS / 1000) + " с — ставлю на паузу, щоб не витрачати хвилини. " + callName + " все пам'ятає.");
       pauseEva();
     }, IDLE_LIMIT_MS);
   }
@@ -1279,7 +1279,7 @@
   let otherMics = 0; // mics besides the one in use (listDevices)
   function btMicTip(input) {
     if (IOS || ANDROID || !BT_MIC.test(input || "") || !otherMics) return "";
-    return "Мікрофон Bluetooth-навушників передає звук гірше, і Єва може погано вас чути. Оберіть у «Пристроях» " +
+    return "Мікрофон Bluetooth-навушників передає звук гірше, і " + callName + " може погано вас чути. Оберіть у «Пристроях» " +
       "вбудований мікрофон — її голос лишиться в навушниках.";
   }
 
@@ -1305,7 +1305,7 @@
   // ready: the call was just started — she is on and waits to be greeted, not paused.
   function enterPause(announce, ready = false) {
     eva.mode = "waiting";
-    if (ready && !eva.ready) addLine("system", "Єва на зв'язку. Скажіть «Привіт, Єва» — і говоріть.");
+    if (ready && !eva.ready) addLine("system", callName + " на зв'язку. Скажіть «Привіт, " + callName + "» — і говоріть.");
     eva.ready = ready; // kept across a reconnect during the wait (voice switch): no second line
     eva.recentUser = "";
     eva.thinking = false;
@@ -1318,7 +1318,7 @@
         ? (bgListen
           ? "Пауза. " + callName + " слухає фоном і запам'ятовує, про що говорять поруч, — зможе нагадати. Скажіть «" + callName + ", скажи», щоб продовжити."
           : "Пауза. Скажіть «" + callName + ", скажи», щоб продовжити — " + callName + " все пам'ятає.")
-        : "Пауза. Натисніть «Продовжити» — Єва все пам'ятає.");
+        : "Пауза. Натисніть «Продовжити» — " + callName + " все пам'ятає.");
     }
     clearTimeout(eva.pauseTimer);
     schedulePauseClose(Date.now());
@@ -1398,8 +1398,8 @@
   function showBgListen() {
     $("bgListen").checked = bgListen;
     $("bgListenInfo").textContent = bgListen
-      ? "Увімкнено: Єва запам'ятовує, про що говорять поруч, і може нагадати."
-      : "Вимкнено: на паузі Єва нічого не запам'ятовує.";
+      ? "Увімкнено: " + callName + " запам'ятовує, про що говорять поруч, і може нагадати."
+      : "Вимкнено: на паузі " + callName + " нічого не запам'ятовує.";
   }
 
   function toggleBgListen() {
@@ -1410,8 +1410,8 @@
     // Turned off: forget what was already heard, it must not reach her.
     if (!bgListen) fetch(BACKEND + "/api/overheard", { method: "DELETE", headers: headers() }).catch(() => {});
     addLine("system", bgListen
-      ? "На паузі Єва слухатиме фоном і запам'ятовуватиме, про що говорять поруч."
-      : "Фонове слухання вимкнено: на паузі Єва нічого не запам'ятовує.");
+      ? "На паузі " + callName + " слухатиме фоном і запам'ятовуватиме, про що говорять поруч."
+      : "Фонове слухання вимкнено: на паузі " + callName + " нічого не запам'ятовує.");
   }
 
   // The model was muted and never heard the phrase: hand it what followed «Єва, скажи», together
@@ -1618,7 +1618,7 @@
     // The server's cap (10 min a session) closed it: a talk still going on carries on in a new session with
     // the whole conversation, silently; a call nobody talks in ends here.
     if (me && me.expired && !wasPaused && Date.now() - eva.lastActiveAt < IDLE_LIMIT_MS) {
-      addLine("system", "Нова сесія (обмеження — 10 хв на сесію). Єва все пам'ятає, говоріть далі.");
+      addLine("system", "Нова сесія (обмеження — 10 хв на сесію). " + callName + " все пам'ятає, говоріть далі.");
       eva.mode = "switching";
       await start({ switched: true });
       return;
@@ -1654,7 +1654,11 @@
     const applied = voices.find((x) => x.id === voice);
     setWakeNames(applied && applied.wake);
     callName = applied ? applied.label : "Єва";
+    store.set("va-call-name", callName);
     showWakeHint();
+    if (voices.length) { // loaded: the hints that name the character follow it
+      showBgListen(); showVoiceNow(); showCamera(); showCheckQuestion(); showState();
+    }
     if (!keepSelection) $("voice").value = voice;
     const picked = voices.find((x) => x.id === $("voice").value);
     $("voiceInfo").textContent = picked ? picked.description : "";
@@ -1703,7 +1707,7 @@
     if (eva.mode === "active") {
       const later = !voiceNow && answering();
       addLine("system", later
-        ? "Голос зміниться на «" + voiceLabel(id) + "», щойно Єва договорить."
+        ? "Персонаж зміниться на «" + voiceLabel(id) + "», щойно договорить поточну відповідь."
         : "Голос змінено на «" + voiceLabel(id) + "».");
       switchVoiceFast(later);
     } else if (eva.mode === "waiting") {
@@ -1870,8 +1874,8 @@
   function showVoiceNow() {
     $("voiceNow").checked = voiceNow;
     $("voiceNowInfo").textContent = voiceNow
-      ? "Одразу: Єва договорить відповідь уже новим голосом."
-      : "Після відповіді: новий голос — коли Єва договорить.";
+      ? "Одразу: відповідь договорить уже новий персонаж."
+      : "Після відповіді: новий персонаж — коли договорить поточна відповідь.";
   }
 
   function toggleVoiceNow() {
@@ -2087,8 +2091,8 @@
     showGuest(null);
     shownGuest = "";
     addLine("system", mode === "concierge"
-      ? "Наступний гість — Єва привітається і спитає ім'я. Попередня розмова в «Історії»."
-      : "Нова розмова — Єва почне з чистого аркуша. Попередня збережена в «Історії».");
+      ? "Наступний гість — " + callName + " привітається і спитає ім'я. Попередня розмова в «Історії»."
+      : "Нова розмова — з чистого аркуша. Попередня збережена в «Історії».");
     restartSession("connecting", { greet: true });
   }
 
@@ -2107,14 +2111,14 @@
     $("log").querySelector(".empty").remove();
     data.turns.forEach((t) => addLine(t.role, t.text));
     const when = new Date(data.started_at * 1000).toLocaleString("uk-UA", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-    addLine("system", "Розмова від " + when + " — Єва її пам'ятає. «Нова розмова» почне з чистого аркуша.");
+    addLine("system", "Розмова від " + when + " — " + callName + " її пам'ятає. «Нова розмова» почне з чистого аркуша.");
     notes.forEach((n) => $("log").appendChild(n));
     $("log").scrollTop = $("log").scrollHeight;
   }
 
   // «Скопіювати»: the dialogue as plain text, without the page's own notes.
   function conversationText() {
-    const name = assistantName || "Єва";
+    const name = assistantName || callName;
     return [...$("log").querySelectorAll(".msg.user, .msg.assistant")]
       .map((el) => [el.classList.contains("user") ? "Ви" : name, el.textContent.trim()])
       .filter(([, text]) => text)

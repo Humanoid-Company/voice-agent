@@ -773,6 +773,8 @@ def build_concierge_prompt(*, language_name: str, today: str, voice: str | None 
                   if persona.feminine else
                   " Speak about yourself in the masculine grammatical gender («я радий», «я перевірив»).")
     prompt = _CONCIERGE_PROMPT
+    if persona is not None:  # the picked character's name at the door too
+        prompt = prompt.replace("You are Єва, the concierge", f"You are {persona.label}, the concierge", 1)
     if not check_question:
         start = prompt.index("With each person, in this order:\n")
         end = prompt.index("Then wait in silence for the next person")

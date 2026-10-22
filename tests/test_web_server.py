@@ -290,9 +290,9 @@ def test_characters_have_their_tone_and_limits():
     assert "вибачте за мій французький" in lesia["instructions"] and "Never «бля»" in lesia["instructions"]
     # Кіт — a talking cat for birthdays and parties: a different greeting every time, no mat, apologises.
     kit = cfg("kit")
-    assert kit["audio"]["output"]["voice"] == "tempo" and "a talking cat" in kit["instructions"]
+    assert kit["audio"]["output"]["voice"] == "bossa" and "a talking cat" in kit["instructions"]  # a female voice
     assert "never the same script" in kit["instructions"] and "No mat at all" in kit["instructions"]
-    assert "гони касу" in kit["instructions"] and "masculine grammatical gender" in kit["instructions"]
+    assert "гони касу" in kit["instructions"] and "feminine grammatical gender" in kit["instructions"]
     assert "warm and friendly" not in kit["instructions"] and "«Кіт, скажи»" in kit["instructions"]
     assert "«Леся, скажи»" in lesia["instructions"] and "Леся" in lesia["delegation"]["responses"]["instructions"]
 

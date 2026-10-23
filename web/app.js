@@ -114,6 +114,8 @@
   let mic = null;
   // «Вимкнути мікрофон»: nothing reaches her — not the call, not the wake phrase, not background listening.
   let micMuted = false;
+  // «Увійти як гість»: a look around the page only — no call (the server refuses it: guest_view_only).
+  let guestView = false;
   let gate = null;
   let gateStats = null; // ?debug=1: the gate's totals (evaGate())
   let micSender = null; // the current call's mic sender: another mic replaces its track in place
@@ -589,7 +591,7 @@
   function updateButtons() {
     const on = eva.mode !== "off";
     $("nextGuest").hidden = !(on && mode === "concierge");
-    $("talk").textContent = on ? "Завершити" : "Почати розмову";
+    $("talk").textContent = on ? "Завершити" : guestView ? "Увійти, щоб поговорити" : "Почати розмову";
     $("talk").classList.toggle("primary", !on);
     $("talk").classList.toggle("danger", on);
     $("talk").disabled = false;
@@ -1167,6 +1169,10 @@
       if (res.status === 401) {
         showGate();
         throw new Error("Потрібен вхід в акаунт");
+      }
+      if (res.status === 403) {
+        guestView = true;
+        throw new Error("Гість може лише переглядати — увійдіть, щоб поговорити");
       }
       if (!res.ok) throw new Error("Сервер відповів " + res.status);
       const { sdp } = await res.json();
@@ -2591,6 +2597,7 @@
 
   async function init() {
     $("talk").addEventListener("click", () => {
+      if (guestView) { window.EvaAuth.toLogin(); return; } // a guest only looks: talking needs a login
       if (eva.mode !== "off") { stop(); return; }
       if (noMicReason()) { showNoMic(); setStatus("Немає доступу до мікрофона", "err"); postDiag(true); return; }
       meterReset(); // a new call counts from zero
@@ -2668,6 +2675,12 @@
     if (cfg) {
       const guest = cfg.guest_allowed && window.EvaAuth.isGuest();
       if (cfg.login_required && !window.EvaAuth.token() && !guest) { showGate(); return; }
+      guestView = cfg.login_required && !window.EvaAuth.token() && guest;
+      if (guestView) {
+        setStatus("Гостьовий режим — лише перегляд", "wait");
+        addLine("system", "Ви як гість: можна роздивитися персонажів і налаштування. Щоб поговорити, увійдіть — ім'я й код команди.");
+        updateButtons();
+      }
       showAccount();
       await loadVoices();
       refreshMe();

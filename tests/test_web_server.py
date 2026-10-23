@@ -38,15 +38,22 @@ def test_with_a_team_code_only_a_login_gets_in(client, monkeypatch):
     assert ok.status_code == 200
 
 
-def test_a_guest_talks_but_the_team_s_pages_stay_closed(client, monkeypatch):
-    """«Увійти як гість»: no account — the call, the voice, their own conversation; not «Знання», the concierge's
-    marks or settings."""
+def test_a_guest_only_looks_around(client, monkeypatch):
+    """«Увійти як гість»: no account — the page, the voices, their own (empty) conversation; nothing that costs
+    tokens (a call, the pause's digest, what is overheard or seen), and not «Знання», the concierge or settings."""
     monkeypatch.setattr(web, "ACCESS_CODE", "team-secret")
     assert client.get("/api/config").json()["guest_allowed"] is True
     guest = {"X-Client-Id": "guest-browser-0123456789"}
     assert client.get("/api/me", headers=guest).status_code == 200
+    assert client.get("/api/voices").status_code == 200
     assert client.post("/api/voice", json={"voice": "stone"}, headers=guest).status_code == 200
     assert client.get("/api/conversation", headers=guest).status_code == 200
+    # Nothing that reaches OpenAI.
+    assert client.post("/api/session", json={"sdp": "v=0"}, headers=guest).json()["detail"] == "guest_view_only"
+    for path, body in (("/api/overheard/digest", None), ("/api/overheard", {"text": "привіт"}),
+                       ("/api/voice-request", {"text": "зміни голос на Толіка"})):
+        assert client.post(path, json=body, headers=guest).status_code == 403
+    assert client.post("/api/frame", content=b"jpeg", headers=guest).status_code == 403
     assert client.get("/api/knowledge", headers=guest).status_code == 401
     assert client.get("/api/concierge/checkins", headers=guest).status_code == 401
     assert client.get("/api/auth/me", headers=guest).status_code == 401

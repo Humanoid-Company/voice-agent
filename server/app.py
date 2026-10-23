@@ -78,8 +78,8 @@ FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS",
 ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
 # Registration (server/accounts.py) takes this code; unset → ACCESS_CODE, the team's code from before accounts.
 INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
-# «Увійти як гість» on the login page: talking to Єва without an account (their conversations stay with the
-# browser). «Знання», the concierge's marks, settings and admin stay the accounts'. GUEST_ACCESS=0 closes it.
+# «Увійти як гість» on the login page: a look around the page without an account — no call, nothing that costs
+# tokens (_talker). «Знання», the concierge's marks, settings and admin stay the accounts'. GUEST_ACCESS=0 closes it.
 GUEST_ACCESS = os.getenv("GUEST_ACCESS", "1").strip().lower() not in ("0", "false", "no", "off")
 # These emails are admins from registration (besides the first account).
 ADMIN_EMAILS = frozenset(e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip())
@@ -210,6 +210,14 @@ def _user(client_id: str | None, auth: AuthInfo) -> WebUser:
 
 def _default_voice() -> str:
     return OPENAI_LIVE_VOICE if OPENAI_LIVE_VOICE in VOICE_PERSONAS else DEFAULT_PERSONA
+
+
+def _talker(client_id: str | None, auth: AuthInfo) -> WebUser:
+    """Whatever costs tokens (a call, the pause's digest, what is overheard or seen): not for a guest — a guest
+    only looks around the page («для гостя не можна запускати сесії, а тільки переглядати інтерфейс»)."""
+    if _login_required() and auth.account is None:
+        raise HTTPException(status_code=403, detail="guest_view_only")
+    return _user(client_id, auth)
 
 
 def _user_voice(user: WebUser) -> str:
@@ -533,7 +541,7 @@ async def create_session(
     auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """Browser SDP offer in → SDP answer out; tools run here over a sideband."""
-    user = await asyncio.to_thread(_user, x_client_id, auth)  # may restore the conversation from the database
+    user = await asyncio.to_thread(_talker, x_client_id, auth)  # may restore the conversation from the database
     if body.voice and body.voice.strip().lower() in VOICE_PERSONAS:
         user.voice = body.voice.strip().lower()
     if body.speed in SPEED_OPTIONS:
@@ -691,7 +699,7 @@ def voice_request(
 ) -> dict:
     """«Єва, зміни голос на …» heard by the browser's recogniser — faster than the Live transcript.
     The page restarts the call in the new voice when switched is true."""
-    user = _user(x_client_id, auth)
+    user = _talker(x_client_id, auth)
     switched = user.switch_voice_by_request(body.text[:500])
     if switched:
         user.reconnect_pending = False  # the page reconnects itself
@@ -709,7 +717,7 @@ def overheard(
     auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """A phrase the page's recogniser heard while Єва was paused (not addressed to her)."""
-    _user(x_client_id, auth).background.add(body.text[:1000])
+    _talker(x_client_id, auth).background.add(body.text[:1000])
     return {"ok": True}
 
 
@@ -811,7 +819,7 @@ def overheard_digest(
     auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """On wake: the gist of the pause as a commentary for the page to send; kept in the history."""
-    user = _user(x_client_id, auth)
+    user = _talker(x_client_id, auth)
     note = user.background.digest()
     if not note:
         return {"commentary": ""}
@@ -827,7 +835,7 @@ async def camera_frame(
     auth: AuthInfo = Depends(_auth),
 ) -> dict:
     """The page's latest camera frame (raw JPEG body), kept in memory for look_at_camera."""
-    user = await asyncio.to_thread(_user, x_client_id, auth)
+    user = await asyncio.to_thread(_talker, x_client_id, auth)
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_FRAME_BYTES:
         raise HTTPException(status_code=413, detail="frame_too_large")  # before reading it in

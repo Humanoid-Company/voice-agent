@@ -11,6 +11,7 @@ import server.app as web
 from server import checkins, knowledge
 from server.knowledge_import import parse_file
 from tools.executor import ToolExecutionContext
+from tools.live_schemas import LIVE_BACKEND_TOOLS
 
 CSV = "ПІБ;Посада;Тварини\nОлег Петренко;бекенд-розробник;кіт Бублик\nОлег Гнатюк;дизайнер;\n".encode()
 
@@ -263,3 +264,58 @@ def test_without_the_check_question_the_name_on_the_list_lets_them_in():
     user.check_question = True  # back on: the question again
     on = web._session_config(user, concierge=True)
     assert "There is no check question" not in on["instructions"] and "NO check question" not in on["delegation"]["responses"]["instructions"]
+
+
+def test_find_guest_by_first_name_surname_and_full_name_in_any_order():
+    """«Некоректно читає список, шукає переважно за прізвищем»: a full name in one field, the surname first,
+    a patronymic — all find the one person, and «Олег» is never «Олена»."""
+    from server import guests
+    from server.knowledge import Record
+
+    records = [Record("s", t, {}) for t in (
+        "Шаповал Катерина Олексіївна", "Петренко Олег Іванович", "Петренко Олена Іванівна", "Бойко Тарас Петрович")]
+
+    def found(name, surname=""):
+        res = guests.find_guest(name, surname, records)
+        return res.record.title if res.record else res.status
+
+    assert found("Катя") == found("Катерина", "Шаповал") == found("Шаповал Катерина") == "Шаповал Катерина Олексіївна"
+    assert found("Катерина Шаповал Олексіївна") == found("Катерина Олексіївна") == "Шаповал Катерина Олексіївна"
+    assert found("Олег Петренко") == found("Петренко Олег") == found("Олег", "Петренко") == "Петренко Олег Іванович"
+    assert found("Олена Петренко") == found("Олена", "Іванівна") == "Петренко Олена Іванівна"
+    assert found("Олег") == "Петренко Олег Іванович"  # not Олена: «олеа» is no name
+    assert found("Петренко") == "ask_surname"  # two of them: ask, don't pick
+    assert found("Тарас", "Бойка") == "Бойко Тарас Петрович"
+
+
+def test_the_concierge_does_not_promise_what_it_cannot_do_and_has_no_gender():
+    """Feedback: she promised to connect the team and could not; male voices said «розчула»; she ended on her own."""
+    from prompts.live_prompt import build_concierge_prompt
+    from voice.options import VOICE_PERSONAS
+
+    for voice in ("willow", "meridian"):  # a woman's voice and a man's: the same neutral wording
+        for check in (True, False):
+            text = build_concierge_prompt(language_name="українською", today="2026-10-23", voice=voice,
+                                          check_question=check)
+            assert "gender-neutral" in text and "grammatical gender" not in text
+            assert "розчула" not in text.replace("«розчула/розчув»", "")  # only named as a thing to avoid
+            assert "You cannot call, notify or connect anyone" in text
+            assert "someone from the team will come" not in text and "offer to call" not in text
+            assert "never end the conversation" in text.lower() and "продовжуй" in text
+    assert VOICE_PERSONAS["meridian"].label in build_concierge_prompt(language_name="x", today="y", voice="meridian")
+    note = knowledge.concierge_backend_note(True) + knowledge.concierge_backend_note(False)
+    assert "offer to call someone" not in note and note.count("cannot call, notify or connect anyone") == 2
+    desc = next(t for t in LIVE_BACKEND_TOOLS if t["name"] == "end_conversation")["description"]
+    assert "only when the user clearly says goodbye" in desc
+
+
+def test_ліна_мілана_вітя_have_a_role_limits_and_typical_requests():
+    from voice.options import VOICE_PERSONAS
+
+    for key in ("lina", "bossa", "ripple"):
+        text = VOICE_PERSONAS[key].instructions()
+        for part in ("ROLE:", "STYLE:", "DUTIES:", "LIMITS:", "Typical requests", "not a universal assistant"):
+            assert part in text, (key, part)
+    # They have no reminders or calendar: the examples never promise one.
+    assert all("Записала, на" not in t and "нагадування на восьму, так" not in t
+               for t in (VOICE_PERSONAS[k].instructions() for k in ("lina", "bossa")))

@@ -73,7 +73,9 @@ LIVE_BACKEND_TOOLS: list[dict] = [
     ),
     _fn(
         "end_conversation",
-        "End the conversation and return to sleep. Call silently.",
+        "End the conversation and return to sleep. Call silently, and only when the user clearly says goodbye or "
+        "asks to end it — never after finishing a task, a welcome or a refusal, on silence or noise, or because "
+        "they said thanks.",
         {},
     ),
 ]
@@ -123,10 +125,12 @@ FIND_GUEST_TOOL: dict = _fn(
     "find_guest",
     "Concierge: check a name a person gave against the team's guest list. The server matches short forms "
     "(«Катя» → Катерина), case endings and near spellings, and says what to reply: not on the list, ask the "
-    "surname, already registered, or the one person with the fact to ask the check question about.",
+    "surname, already registered, or the one person with the fact to ask the check question about. It "
+    "searches by first name, by surname and by the full name (with the patronymic too), in any order.",
     {
-        "name": {"type": "string", "description": "The first name as heard"},
-        "surname": {"type": "string", "description": "The surname if they said it, else omit"},
+        "name": {"type": "string", "description": "The first name as heard — or the full name as heard, whole, "
+                 "in the order they said it"},
+        "surname": {"type": "string", "description": "The surname (or patronymic) if they said it separately, else omit"},
     },
     required=["name"],
 )

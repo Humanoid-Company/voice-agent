@@ -797,7 +797,13 @@
   }
 
   const HER_PAUSE_MS = 700; // a pause between her sentences: she goes on after it
-  const bargeLevel = () => (barge.stage === "muted" ? 0 : barge.stage === "ducked" ? 0.5 : 1);
+  // At the door (concierge) people talk around her all the time: ducking her at the first sound and muting
+  // her on any 1.5 s of voice cut her words and phrases off («пропускає слова», «обриває фразу»). There she
+  // gives way later and only to clearer speech; the stop word still works at once.
+  const bargeTiming = () => (mode === "concierge"
+    ? { duckAfterMs: 1000, duckLevel: 0.85, stopBySoundMs: 3000, meaningfulWords: 4 }
+    : { duckAfterMs: 400, duckLevel: 0.5, stopBySoundMs: 1500, meaningfulWords: 3 });
+  const bargeLevel = () => (barge.stage === "muted" ? 0 : barge.stage === "ducked" ? bargeTiming().duckLevel : 1);
 
   function bargeReset() {
     bargeClear();
@@ -893,9 +899,10 @@
       if (barge.stage !== "idle" || !barge.audible || herBackchannel()) return;
       diagBargeStart();
       if (Date.now() - barge.speechEndedAt > 1500) barge.heard = "";
+      const timing = bargeTiming();
       barge.timers.push(setTimeout(() => {
-        if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; barge.ducks += 1; setRemoteVolume(0.5); }
-      }, 400));
+        if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; barge.ducks += 1; setRemoteVolume(timing.duckLevel); }
+      }, timing.duckAfterMs));
       // A quiet voice over her on speakers: the gate rightly keeps it below her echo, so its words never
       // reach the model and nothing confirms the barge-in — she went on and the user felt ignored.
       // Someone who keeps talking to her for 1.5 s with none of their own words heard (only her echo,
@@ -903,7 +910,7 @@
       // own words, an «угу» included, are judged by bargeOnWords as before.
       barge.timers.push(setTimeout(() => {
         if (barge.speaking && barge.stage === "ducked" && !ownWords().length) bargeConfirm("stop");
-      }, 1500));
+      }, timing.stopBySoundMs));
     } else {
       barge.speechEndedAt = Date.now();
       diagBargeEnded();
@@ -936,7 +943,7 @@
     const own = ownWords();
     if (own.some((w) => STOP_WORDS.has(w))) { bargeConfirm("ack"); return; }
     const meaningful = own.filter((w) => !BACKCHANNEL.has(w));
-    if (meaningful.length >= 3) bargeConfirm("stop");
+    if (meaningful.length >= bargeTiming().meaningfulWords) bargeConfirm("stop");
   }
 
   // A stop word the user said — not one in her own recent words (the recogniser hears her too).

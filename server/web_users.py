@@ -409,7 +409,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         try:
             records = knowledge.store.enabled_records()[1]
         except knowledge.KnowledgeError as exc:
-            return ToolResult(ok=False, status="error", message=f"{exc} Скажи, що зараз не можеш перевірити список, і поклич когось із команди.")
+            return ToolResult(ok=False, status="error", message=f"{exc} Скажи, що зараз не можеш перевірити список, і порадь звернутися до команди самостійно (покликати когось ти не можеш).")
         found = guests.find_guest(heard, surname, records)
         logger.info("web.concierge.find status=%s", found.status)
         said = (heard + " " + surname).strip()
@@ -417,7 +417,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             return ToolResult(
                 ok=True, status="not_found", data=guests.as_dict(found),
                 message=f"У списку гостей нікого з іменем «{said}» немає (перевірено й короткі форми та схожі написання). "
-                "Ввічливо скажи, що не знаходиш людину з таким ім'ям серед гостей; якщо ти ще не перепитувала — попроси "
+                "Ввічливо скажи, що не знаходиш людину з таким ім'ям серед гостей; якщо ще не перепитували — попроси "
                 "повторити ім'я або назвати прізвище. Якщо й тоді немає — порадь звернутися до того, хто запрошував, або "
                 "до когось із команди. Не пускай і нікого зі списку не називай.",
             )
@@ -430,7 +430,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
                 )
             return ToolResult(
                 ok=True, status="ask_surname", data=guests.as_dict(found),
-                message=f"З цим ім'ям у списку {found.count} людей. Спитай прізвище — нікого не називай.",
+                message=f"З цим ім'ям у списку {found.count} людей. Спитай прізвище (можна й повне ім'я) — нікого не називай.",
             )
         record = found.record
         assert record is not None
@@ -442,7 +442,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             return ToolResult(
                 ok=True, status="already_checked_in", data=guests.as_dict(found),
                 message=f"{record.title} вже відмічений сьогодні о {before['time']} — другий раз пройти не можна. Без "
-                "перевірочного питання: ввічливо скажи, що цю людину вже зареєстровано, і що зараз підійде хтось із команди.",
+                "перевірочного питання: ввічливо скажи, що цю людину вже зареєстровано, і порадь самостійно звернутися до команди (покликати когось ти не можеш).",
             )
         if not user.check_question:  # the name on the list is enough: in and marked, no question
             return _let_in(record.title)
@@ -464,7 +464,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             logger.info("web.concierge.guest verified=False")
             return ToolResult(
                 ok=True, status="not_verified",
-                message="Не підтверджено. Ввічливо скажи, що не вдалося підтвердити, і запропонуй покликати когось із команди.",
+                message="Не підтверджено. Ввічливо скажи, що не вдалося підтвердити, і порадь самостійно звернутися до того, хто запрошував, або до команди (покликати когось ти не можеш).",
             )
         # Only for a person really on the list…
         try:
@@ -505,7 +505,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             return ToolResult(
                 ok=True, status="already_checked_in",
                 message=f"{name} вже відмічений сьогодні о {before['time']} — другий раз пройти не можна. Ввічливо "
-                "скажи, що цю людину вже зареєстровано, і попроси зачекати: зараз підійде хтось із команди. "
+                "скажи, що цю людину вже зареєстровано, і порадь самостійно звернутися до команди (покликати когось ти не можеш). "
                 "Не вітай як гостя.",
             )
         user.guest = {"name": name, "verified": True, "at": time.time()}

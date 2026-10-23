@@ -59,6 +59,17 @@
         <p id="conciergeInfo" class="hint">Помічник вітає людину, питає ім'я, звіряє його зі списком у «Знаннях» (двоє з
           однаковим ім'ям — питає прізвище) і ставить одне перевірочне питання. Потім — «Наступний гість».</p>
       </div>
+      <div class="voice-block">
+        <label class="block-label" for="voice">Персонаж</label>
+        <div class="row voice-pick">
+          <select id="voice" disabled>
+            <option>Завантаження…</option>
+          </select>
+          <button id="voicePreview" class="btn" disabled>▶ Прослухати</button>
+        </div>
+        <p id="voiceInfo" class="hint"></p>
+        <button id="voiceApply" class="btn primary wide" hidden>Застосувати</button>
+      </div>
       <button id="talk" class="btn primary big">Почати розмову</button>
 
       <div class="row">
@@ -108,15 +119,7 @@
     </section>
 
     <section id="voiceCard" class="card">
-      <h2><label for="voice">Персонаж</label></h2>
-      <div class="row voice-pick">
-        <select id="voice" disabled>
-          <option>Завантаження…</option>
-        </select>
-        <button id="voicePreview" class="btn" disabled>▶ Прослухати</button>
-      </div>
-      <p id="voiceInfo" class="hint"></p>
-      <button id="voiceApply" class="btn primary wide" hidden>Застосувати</button>
+      <h2>Звук</h2>
       <div class="settings">
         <div>
           <label for="speed">Темп</label>

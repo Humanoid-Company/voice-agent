@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.knowledge import Record
-from server.names_uk import full_forms, norm
+from server.names_uk import full_forms, is_known_name, norm
 
 
 def _words(text: str) -> list[str]:
@@ -63,16 +63,19 @@ def _close(heard: str, written: str) -> bool:
 
 
 def _case_forms(word: str) -> set[str]:
-    """A short name with a case ending back to its base: «каті», «катю» → «катя»; «олю» → «оля»."""
+    """A short name with a case ending back to its base: «каті», «катю» → «катя»; «олю» → «оля». Only
+    forms that are real names count: «олег» → «олея», «олеа» are not, and «олеа» sounded like «Олена»."""
     forms = {word}
     if len(word) >= 3:
         stem = word[:-1]
-        forms |= {stem + "я", stem + "а"}
+        forms |= {f for f in (stem + "я", stem + "а") if is_known_name(f)}
     return forms
 
 
 def _first_name_match(heard: list[str], title_words: list[str]) -> str | None:
-    """The heard word that is this record's first name (via short forms too), or None."""
+    """The heard word that is a name in this record (via short forms too), or None. A word of the full name
+    counts too, a surname or a patronymic: the title may be «Шаповал Катерина Олексіївна» as well as
+    «Катерина Шаповал»."""
     for h in heard:
         for full in {f for form in _case_forms(h) for f in full_forms(form)}:
             for t in title_words:

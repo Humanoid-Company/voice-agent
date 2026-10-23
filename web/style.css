@@ -121,6 +121,11 @@ h2 label { display: inline; margin: 0; font-weight: inherit; }
 .voice-pick { flex-wrap: nowrap; }
 .voice-pick select { flex: 1 1 0; width: auto; }
 .voice-pick .btn { flex: 0 0 auto; white-space: nowrap; }
+.call .voice-block { margin-top: 12px; }
+.call .voice-block .block-label { display: block; font-weight: 600; margin-bottom: 6px; }
+.call .voice-block .voice-pick { margin-top: 0; }
+.call .voice-block .voice-pick .btn { flex: 0 0 auto; }
+.call .voice-block + .btn.big { margin-top: 12px; }
 .btn.wide { width: 100%; margin-top: 8px; }
 .label-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; }
 .label-row label { margin-bottom: 6px; }

@@ -64,6 +64,11 @@
     if (!$("joinName").value.trim()) { $("joinName").focus(); message("Напишіть, як вас звати.", "err"); return; }
     send("/api/auth/join", { name: $("joinName").value, invite_code: $("joinCode").value }, e.currentTarget);
   });
+  // «Увійти як гість»: no code, no account — just talk.
+  $("guestBtn").addEventListener("click", () => {
+    auth.enterGuest();
+    location.href = auth.link("index.html");
+  });
   $("adminToggle").addEventListener("click", () => {
     showAdmin($("adminBlock").hidden);
     if (!$("adminBlock").hidden) show("login");
@@ -98,5 +103,6 @@
   fetch(BACKEND + "/api/config").then((r) => r.json()).then((cfg) => {
     $("inviteBlock").hidden = !cfg.invite_required;
     $("joinCodeBlock").hidden = !cfg.invite_required;
+    $("guestBlock").hidden = !cfg.guest_allowed;
   }).catch(() => {});
 })();

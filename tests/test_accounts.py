@@ -179,7 +179,7 @@ def test_history_moves_into_the_account_and_follows_to_another_device(client):
 
 def test_without_a_team_code_nobody_needs_to_log_in(client, monkeypatch):
     monkeypatch.setattr(web, "ACCESS_CODE", "")
-    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False}
+    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False, "guest_allowed": True}
     assert client.get("/api/me", headers={"X-Client-Id": LAPTOP}).status_code == 200
     assert register(client, "dev@local.ua", code="").status_code == 200
 

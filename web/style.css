@@ -320,7 +320,9 @@ form.card[hidden], [role="tabpanel"][hidden] { display: none; }
 }
 .wrap.wide { max-width: 1100px; }
 
-/* login.html: «Вхід для адміна» under the name + code form */
+/* login.html: «Увійти як гість» and «Вхід для адміна» under the name + code form */
+.guest-entry { margin-top: 12px; text-align: center; }
+.guest-entry .btn { width: 100%; }
 .admin-entry { margin: 12px 0 0; text-align: center; }
 .link-btn { background: none; border: 0; padding: 4px; color: var(--muted); font: inherit; font-size: 0.9em;
   text-decoration: underline; cursor: pointer; }

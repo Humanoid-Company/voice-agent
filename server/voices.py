@@ -28,7 +28,11 @@ async def _respeecher(cfg: Config, client: httpx.AsyncClient, language: str = "u
     )
     r.raise_for_status()
     return [
-        {"id": v["id"], "label": _label(v.get("full_name") or v["id"], v.get("gender", ""), v.get("accent", ""))}
+        {
+            "id": v["id"],
+            "label": _label(v.get("full_name") or v["id"], v.get("gender", ""), v.get("accent", "")),
+            "sampling": v.get("sampling_params") or {},  # the voice's own defaults: the base of the character's tuning
+        }
         for v in r.json()
         if isinstance(v, dict) and v.get("id")
     ]

@@ -18,11 +18,15 @@ def test_respeecher_voices_use_the_ukrainian_model_and_key_header():
 
     def handler(req):
         seen["url"], seen["key"] = str(req.url), req.headers.get("x-api-key")
-        return httpx.Response(200, json=[{"id": "olesia-conversation", "full_name": "Олеся", "gender": "female", "accent": "ukrainian"}, {"nope": 1}])
+        return httpx.Response(200, json=[{"id": "olesia-conversation", "full_name": "Олеся", "gender": "female", "accent": "ukrainian", "sampling_params": {"temperature": 0.8, "top_p": 0.9}}, {"id": "x", "full_name": "Ікс"}, {"nope": 1}])
 
     out = asyncio.run(voices._respeecher(CFG, client(handler)))
     assert seen == {"url": "https://api.respeecher.com/v1/public/tts/ua-rt/voices", "key": "r"}
-    assert out == [{"id": "olesia-conversation", "label": "Олеся (female, ukrainian)"}]
+    # each voice keeps its own sampling defaults (the base of the character's tuning); none listed is an empty dict
+    assert out == [
+        {"id": "olesia-conversation", "label": "Олеся (female, ukrainian)", "sampling": {"temperature": 0.8, "top_p": 0.9}},
+        {"id": "x", "label": "Ікс", "sampling": {}},
+    ]
 
 
 def test_soniox_voices_come_from_the_configured_model():

@@ -51,7 +51,8 @@ VOICES = {
 }
 
 
-def make(llm=None, provider="respeecher", voice="olesia", language="uk"):
+def make(llm=None, provider="respeecher", voice="olesia", language="uk", tts_cls=None):
+    tts_cls = tts_cls or FakeTTS
     out = {"json": [], "bytes": [], "made": []}
 
     async def sj(m):
@@ -61,7 +62,7 @@ def make(llm=None, provider="respeecher", voice="olesia", language="uk"):
         out["bytes"].append(b)
 
     def factory(p, v, lang):
-        t = FakeTTS(p, v, lang)
+        t = tts_cls(p, v, lang)
         out["made"].append(t)
         return t
 
@@ -69,7 +70,7 @@ def make(llm=None, provider="respeecher", voice="olesia", language="uk"):
         return VOICES.get((p, lang), [])
 
     s = VoiceSession(
-        llm=llm or FakeLLM(), tts=FakeTTS(provider, voice, language), send_json=sj, send_bytes=sb,
+        llm=llm or FakeLLM(), tts=tts_cls(provider, voice, language), send_json=sj, send_bytes=sb,
         cfg=Config(respeecher_api_key="r", soniox_api_key="s"), provider=provider, voice=voice,
         persona=Persona(language=language), tts_factory=factory, voices_for=voices_for,
     )  # fmt: skip

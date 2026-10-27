@@ -74,6 +74,10 @@ class _MuxTTS:
         """Reply -> (generation id, message); (None, ...) when the reply carries no id."""
         raise NotImplementedError
 
+    def set_sampling(self, params: dict) -> bool:
+        """Delivery parameters for the next sentences; False when the provider has none."""
+        return False
+
     # -- public --
     async def connect(self) -> None:
         await self._ensure()
@@ -184,6 +188,7 @@ class RespeecherTTS(_MuxTTS):
         self._model = respeecher_model(cfg, language)
         self.voice = self._voice = voice or cfg.respeecher_voices[0]
         self.sample_rate = cfg.respeecher_sample_rate
+        self._sampling: dict = {}  # only what differs from the voice's own defaults
 
     async def _open(self) -> websockets.ClientConnection:
         url = f"wss://api.respeecher.com/v1/{self._model}/tts/websocket?api_key={self._key}"
@@ -194,9 +199,13 @@ class RespeecherTTS(_MuxTTS):
             "transcript": text,
             "continue": cont,
             "context_id": ctx,
-            "voice": {"id": self._voice, "sampling_params": {}},
+            "voice": {"id": self._voice, "sampling_params": dict(self._sampling)},
             "output_format": {"encoding": "pcm_s16le", "sample_rate": self.sample_rate},
         }
+
+    def set_sampling(self, params: dict) -> bool:
+        self._sampling = dict(params)
+        return True
 
     def _variants(self) -> list:
         # The whole sentence as the last (and only) chunk; then, if Respeecher says «done» with no audio, the

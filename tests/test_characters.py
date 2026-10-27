@@ -56,7 +56,7 @@ def test_the_plain_character_has_no_mask_and_calm_asks_for_calm():
     assert set(EMOTIONS) == {"calm", "normal", "emotional"}
 
 
-NAMED = ("tolik", "kishka", "taras", "milana", "halya", "lina", "vitya", "stepan")
+NAMED = ("tolik", "kishka", "taras")
 
 
 def test_every_named_character_has_three_real_voices_and_the_plain_one_has_none():
@@ -69,12 +69,13 @@ def test_every_named_character_has_three_real_voices_and_the_plain_one_has_none(
     assert {v.voice for v in CHARACTERS["tolik"].voices}.isdisjoint({v.voice for v in CHARACTERS["kishka"].voices})
 
 
-def test_the_ported_and_the_new_characters_are_found_by_name_and_only_by_whole_words():
-    for phrase, key in (("поклич Тараса", "taras"), ("хочу Мілану", "milana"), ("давай бабу Галю", "halya"), ("Ліна", "lina"),
-                        ("поговори як Вітя", "vitya"), ("Степан Петрович", "stepan"), ("давай лавеласа", "taras"),
-                        ("поклич Степана Петровича", "stepan")):  # fmt: skip
+def test_only_the_four_characters_are_left_and_they_are_found_by_whole_words():
+    assert list(CHARACTERS) == ["eva", "tolik", "kishka", "taras"]
+    for phrase, key in (("поклич Тараса", "taras"), ("давай лавеласа", "taras"), ("поклич кішку", "kishka"),
+                        ("Толіка", "tolik"), ("давай знову як Єва", "eva")):  # fmt: skip
         assert find_character(phrase) == key, phrase
-    assert find_character("галявина") is None and find_character("віталій") is None  # not inside another word
+    for phrase in ("галявина", "тарасівка", "поклич Мілану", "давай бабу Галю"):  # not inside a word; the others are gone
+        assert find_character(phrase) is None, phrase
 
 
 def test_taras_is_a_charming_lovelace_with_clear_limits_and_a_mans_grammar():
@@ -88,24 +89,10 @@ def test_taras_is_a_charming_lovelace_with_clear_limits_and_a_mans_grammar():
     assert CHARACTERS["taras"].feminine is False and "лавелас" in CHARACTERS["taras"].description.lower()
 
 
-def test_the_characters_ported_from_eva_keep_their_limits():
-    prompts = {k: character_prompt(CHARACTERS[k]) for k in NAMED}
-    assert "You never flirt with someone who sounds like a child" in prompts["milana"]
-    assert "nothing explicit or intimate" in prompts["milana"] and "You are a woman" in prompts["milana"]
-    assert "never death, self-harm" in prompts["lina"] and "never about the person's looks" in prompts["lina"]
-    assert "a folk tip never replaces real medical advice" in prompts["halya"]
-    assert "Вітя" in prompts["vitya"] and "never panicking about real danger" in prompts["vitya"] and "You are a man" in prompts["vitya"]
-    assert "на «ви»" in prompts["stepan"] or "«ви»" in prompts["stepan"]
-    for key in ("milana", "lina", "vitya"):
-        assert "Typical requests and how you handle them" in prompts[key], key
-    assert all(CHARACTERS[k].feminine for k in ("kishka", "milana", "halya", "lina"))
-    assert not any(CHARACTERS[k].feminine for k in ("tolik", "taras", "vitya", "stepan"))
-
-
 def test_the_menu_offers_only_voices_the_providers_really_have():
     live = [{"id": "respeecher", "label": "Respeecher", "voices": [{"id": v, "label": v} for v in RESPEECHER_UK]}]
     menu = {c["id"]: c for c in characters_payload(live)}
-    assert [c for c in menu] == ["eva", "tolik", "kishka", "taras", "milana", "halya", "lina", "vitya", "stepan"]
+    assert [c for c in menu] == ["eva", "tolik", "kishka", "taras"]
     assert [v["voice"] for v in menu["tolik"]["voices"]] == ["dmytro-conversation", "ihoreo-conversation", "yevhen-audiobook"]
     assert [v["label"] for v in menu["kishka"]["voices"]] == ["Роксолана", "Ксенія", "Олеся"] and menu["eva"]["voices"] == []
     assert "хуліган" in menu["tolik"]["description"]

@@ -73,7 +73,10 @@ async def healthz() -> dict:
 
 @app.get("/api/config")
 async def api_config() -> dict:
-    providers = await tts_providers(cfg)
+    full = await tts_providers(cfg)
+    providers = [  # what the page needs of a voice: its id and its name (the sampling defaults stay on the server)
+        {**p, "voices": [{"id": v["id"], "label": v["label"]} for v in p["voices"]]} for p in full
+    ]
     missing = [] if cfg.openai_api_key else ["OPENAI_API_KEY"]
     return {
         "providers": providers,
@@ -119,6 +122,7 @@ async def ws_call(ws: WebSocket) -> None:
             tts_factory=lambda p, v, lang: make_tts(p, v, cfg, lang),
             voices_for=lambda p, lang: list_voices(cfg, p, lang),
             history=first.get("history"),
+            tune=first.get("tune") is not False,
         )
         try:
             await session.start()

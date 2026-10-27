@@ -27,7 +27,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .characters import CHARACTERS, EMOTIONS, find_character
+from .characters import CHARACTERS, EMOTIONS, find_character, tone_factor
 from .config import Config
 from .interrupt_intent import classify_interjection, strip_echo
 from .llm import TurnContext
@@ -136,6 +136,7 @@ class VoiceSession:
         tts_factory: Callable[[str, str, str], Any] | None = None,
         voices_for: Callable[[str, str], Awaitable[list[dict]]] | None = None,
         history: list[dict] | None = None,
+        tune: bool = True,
     ) -> None:
         self.llm = llm
         self.tts = tts
@@ -143,6 +144,7 @@ class VoiceSession:
         self.provider, self.voice = provider, voice
         self.persona = persona or Persona()
         self._default_name = self.persona.name  # the plain character's name: kept while another character speaks
+        self._tune = tune  # the delivery follows the character and the emotion (the page's switch)
         self._tts_language = self.persona.language  # what the current TTS speaks: changes between sentences
         self._tts_factory = tts_factory
         self._voices_for = voices_for
@@ -202,6 +204,7 @@ class VoiceSession:
             }
         )
         await self._j({"type": "state", "state": "listening"})  # _set_state would skip it: already "listening"
+        await self._retune()
 
     async def close(self) -> None:
         if self._turn and not self._turn.done():
@@ -238,6 +241,9 @@ class VoiceSession:
         elif kind == "voice":
             await self.request_voice(str(msg.get("provider") or self.provider), str(msg.get("voice") or ""))
         elif kind == "style":  # the page's selectors: the character and how emotional the delivery is
+            if "tune" in msg and bool(msg["tune"]) != self._tune:
+                self._tune = bool(msg["tune"])
+                await self._retune()
             if msg.get("character") in CHARACTERS:
                 await self.set_character(str(msg["character"]))
             if msg.get("emotion") in EMOTIONS:
@@ -510,8 +516,10 @@ class VoiceSession:
             self._pending = {**(self._pending or {}), "language": "uk"}
             await self._j({"type": "language", "code": "uk", "recognition": self.persona.recognition})
             extra = " Мова повернулась на українську: цей персонаж говорить лише нею."
-        # The voice stays as it is: it changes only when the user picks one (the menu, «Застосувати», or by name).
+        # The voice stays as it is: it changes only when the user picks one («Застосувати», or by name). Only how
+        # it is delivered follows the character.
         await self._persona_message()
+        await self._retune()
         if not c.character:
             return f"Тепер ти знову просто {c.label}: звичайна приязна помічниця.{extra}"
         return f"Тепер ти {c.label}. Відповідай у цьому образі з наступної фрази, коротко представся ним.{extra}"
@@ -519,7 +527,38 @@ class VoiceSession:
     async def set_emotion(self, level: str) -> str:
         self.persona.emotion = level
         await self._persona_message()
+        await self._retune()
         return f"Манера змінена: {EMOTIONS[level][0].lower()}. Коротко підтвердь і говори так далі."
+
+    async def _base_temperature(self) -> float | None:
+        """The current voice's own temperature, as the provider lists it: the starting point of the tuning."""
+        if self._voices_for is None:
+            return None
+        voices = await self._voices_for(self.provider, self._tts_language)
+        entry = next((v for v in voices if v["id"] == self.voice), None)
+        t = ((entry or {}).get("sampling") or {}).get("temperature")
+        return float(t) if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0 else None
+
+    async def _retune(self) -> None:
+        """The delivery follows the character and the emotion: the voice's own temperature times a factor. The voice
+        itself is never touched. Reports what was done (or why nothing was) to the page, which shows it, because the
+        right factors are found by ear."""
+        setter = getattr(self.tts, "set_sampling", None)
+        report: dict = {"type": "tuning", "active": False, "reason": ""}
+        if not (callable(setter) and setter({})):  # this also resets any earlier tuning
+            report["reason"] = "provider"  # the synthesizer has no such parameters (Soniox): the manner is in the text
+        elif not self._tune:
+            report["reason"] = "off"
+        else:
+            base = await self._base_temperature()
+            if base is None:
+                report["reason"] = "no_base"  # the provider did not list this voice's defaults
+            else:
+                factor = tone_factor(self.persona.character, self.persona.emotion)
+                value = round(base * factor, 3)
+                setter({"temperature": value})
+                report.update(active=True, base=base, factor=factor, value=value)
+        await self._j(report)
 
     # ------------------------------------------------------------------ voice change
 
@@ -604,6 +643,7 @@ class VoiceSession:
             self.provider, self.voice, self._tts_language = provider, voice, language
             self._prewarm_key = None
             await old.close()
+            await self._retune()  # the new voice has its own defaults to start from
             await self._j(
                 {"type": "voice", "provider": provider, "voice": voice, "sample_rate": new.sample_rate, "language": language}
             )

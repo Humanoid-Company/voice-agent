@@ -18,9 +18,10 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import Config
 from .llm import OpenAILLM
+from .persona import SUPPORTED, Persona
 from .session import VoiceSession
 from .tts import TTSError, make_tts
-from .voices import tts_providers
+from .voices import list_voices, tts_providers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -84,10 +85,14 @@ async def ws_call(ws: WebSocket) -> None:
     await ws.accept()
     session: VoiceSession | None = None
     try:
-        # The first message picks the voice: {"type": "start", "provider": "...", "voice": "..."}
+        # The first message picks the voice: {"type": "start", "provider": "...", "voice": "...", "language": "uk"}
         first = json.loads(await ws.receive_text())
+        provider = str(first.get("provider", ""))
+        language = str(first.get("language") or "uk")
+        if language not in SUPPORTED.get(provider, set()):
+            language = "uk"  # a language this provider cannot speak: the default one
         try:
-            tts = make_tts(first.get("provider", ""), first.get("voice", ""), cfg)
+            tts = make_tts(provider, str(first.get("voice", "")), cfg, language)
         except TTSError as e:
             await ws.send_json({"type": "error", "message": str(e)})
             return
@@ -96,6 +101,12 @@ async def ws_call(ws: WebSocket) -> None:
             tts=tts,
             send_json=ws.send_json,
             send_bytes=ws.send_bytes,
+            cfg=cfg,
+            provider=provider,
+            voice=getattr(tts, "voice", ""),
+            persona=Persona(language=language),
+            tts_factory=lambda p, v, lang: make_tts(p, v, cfg, lang),
+            voices_for=lambda p, lang: list_voices(cfg, p, lang),
         )
         try:
             await session.start()

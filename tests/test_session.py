@@ -8,7 +8,7 @@ class FakeLLM:
     def __init__(self, answer="Перше речення тут. Друге речення тут. Третє речення тут."):
         self.answer, self.calls = answer, []
 
-    async def stream(self, history):
+    async def stream(self, history, ctx=None):
         self.calls.append(list(history))
         for word in self.answer.split(" "):
             await asyncio.sleep(0)
@@ -149,7 +149,7 @@ def test_assistants_own_voice_through_mic_is_not_a_turn():
 
 def test_llm_error_reports_and_recovers():
     class Boom(FakeLLM):
-        async def stream(self, history):
+        async def stream(self, history, ctx=None):
             raise RuntimeError("down")
             yield ""
 

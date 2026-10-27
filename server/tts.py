@@ -178,11 +178,11 @@ class RespeecherTTS(_MuxTTS):
     Replies: {type: chunk, data: <base64 pcm>}, {type: done}, {type: error, error}.
     """
 
-    def __init__(self, cfg: Config, voice: str) -> None:
+    def __init__(self, cfg: Config, voice: str, language: str = "uk") -> None:
         super().__init__()
         self._key = cfg.respeecher_api_key
-        self._model = cfg.respeecher_model.strip("/")
-        self._voice = voice or cfg.respeecher_voices[0]
+        self._model = respeecher_model(cfg, language)
+        self.voice = self._voice = voice or cfg.respeecher_voices[0]
         self.sample_rate = cfg.respeecher_sample_rate
 
     async def _open(self) -> websockets.ClientConnection:
@@ -227,10 +227,11 @@ class SonioxTTS(_MuxTTS):
     Replies: {audio: <base64>, audio_end}, {terminated: true}, {error_code, error_message}.
     """
 
-    def __init__(self, cfg: Config, voice: str) -> None:
+    def __init__(self, cfg: Config, voice: str, language: str | None = None) -> None:
         super().__init__()
         self._cfg = cfg
-        self._voice = voice or cfg.soniox_voices[0]
+        self._language = language or cfg.soniox_tts_language
+        self.voice = self._voice = voice or cfg.soniox_voices[0]
         self.sample_rate = cfg.soniox_tts_sample_rate
 
     async def _open(self) -> websockets.ClientConnection:
@@ -248,7 +249,7 @@ class SonioxTTS(_MuxTTS):
             {
                 "stream_id": ctx,
                 "model": self._cfg.soniox_tts_model,
-                "language": self._cfg.soniox_tts_language,
+                "language": self._language,
                 "voice": self._voice,
                 "audio_format": "pcm_s16le",
                 "sample_rate": self.sample_rate,
@@ -270,9 +271,18 @@ class SonioxTTS(_MuxTTS):
         return ctx, None
 
 
-def make_tts(provider: str, voice: str, cfg: Config) -> _MuxTTS:
+def respeecher_model(cfg: Config, language: str) -> str:
+    """Respeecher has one real-time model per language: Ukrainian (the configured one) and English."""
+    if language == "uk":
+        return cfg.respeecher_model.strip("/")
+    if language == "en":
+        return "public/tts/en-rt"
+    raise TTSError(f"Respeecher does not speak '{language}'")
+
+
+def make_tts(provider: str, voice: str, cfg: Config, language: str = "uk") -> _MuxTTS:
     if provider == "respeecher" and cfg.respeecher_api_key:
-        return RespeecherTTS(cfg, voice)
+        return RespeecherTTS(cfg, voice, language)
     if provider == "soniox" and cfg.soniox_api_key:
-        return SonioxTTS(cfg, voice)
+        return SonioxTTS(cfg, voice, language)
     raise TTSError(f"TTS provider '{provider}' is not configured")

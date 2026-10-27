@@ -13,6 +13,13 @@ def _list(name: str, default: str) -> list[str]:
     return [v.strip() for v in os.getenv(name, default).split(",") if v.strip()]
 
 
+def _float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
 def _int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, "") or default)
@@ -39,5 +46,15 @@ class Config:
 
     web_search_api_key: str = field(default_factory=lambda: os.getenv("WEB_SEARCH_API_KEY", ""))
     web_search_timeout_s: float = field(default_factory=lambda: float(_int("WEB_SEARCH_TIMEOUT_S", 9)))
+
+    timezone: str = field(default_factory=lambda: os.getenv("TIMEZONE", "Europe/Kyiv"))
+
+    # For the cost estimate, USD. The LLM prices are per 1M tokens and match gpt-4.1-mini: change them with
+    # OPENAI_MODEL. Respeecher is $2 per 60k characters (a third-party figure); Soniox's TTS price is unknown, so 0.
+    price_llm_in_per_m: float = field(default_factory=lambda: _float("PRICE_LLM_IN_PER_M", 0.40))
+    price_llm_out_per_m: float = field(default_factory=lambda: _float("PRICE_LLM_OUT_PER_M", 1.60))
+    price_respeecher_per_1k_chars: float = field(default_factory=lambda: _float("PRICE_RESPEECHER_PER_1K_CHARS", 0.033))
+    price_soniox_per_1k_chars: float = field(default_factory=lambda: _float("PRICE_SONIOX_PER_1K_CHARS", 0.0))
+    price_search: float = field(default_factory=lambda: _float("PRICE_SEARCH", 0.008))
 
     frontend_origins: list[str] = field(default_factory=lambda: _list("FRONTEND_ORIGINS", ""))

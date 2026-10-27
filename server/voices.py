@@ -8,6 +8,7 @@ import time
 import httpx
 
 from .config import Config
+from .tts import respeecher_model
 
 log = logging.getLogger(__name__)
 
@@ -20,9 +21,9 @@ def _label(name: str, gender: str = "", extra: str = "") -> str:
     return f"{name} ({', '.join(bits)})" if bits else name
 
 
-async def _respeecher(cfg: Config, client: httpx.AsyncClient) -> list[dict]:
+async def _respeecher(cfg: Config, client: httpx.AsyncClient, language: str = "uk") -> list[dict]:
     r = await client.get(
-        f"https://api.respeecher.com/v1/{cfg.respeecher_model.strip('/')}/voices",
+        f"https://api.respeecher.com/v1/{respeecher_model(cfg, language)}/voices",
         headers={"X-API-Key": cfg.respeecher_api_key},
     )
     r.raise_for_status()
@@ -33,7 +34,7 @@ async def _respeecher(cfg: Config, client: httpx.AsyncClient) -> list[dict]:
     ]
 
 
-async def _soniox(cfg: Config, client: httpx.AsyncClient) -> list[dict]:
+async def _soniox(cfg: Config, client: httpx.AsyncClient, language: str = "uk") -> list[dict]:  # noqa: ARG001
     r = await client.get(
         "https://api.soniox.com/v1/tts-models", headers={"Authorization": f"Bearer {cfg.soniox_api_key}"}
     )
@@ -47,20 +48,34 @@ async def _soniox(cfg: Config, client: httpx.AsyncClient) -> list[dict]:
     ]
 
 
-async def _load(provider: str, cfg: Config, fallback: list[str]) -> list[dict]:
-    cached = _cache.get(provider)
+async def _load(provider: str, cfg: Config, fallback: list[str], language: str = "uk") -> list[dict]:
+    # Soniox has one voice list for every language; Respeecher one per language model.
+    key = f"{provider}:{language if provider == 'respeecher' else ''}"
+    cached = _cache.get(key)
     if cached and time.monotonic() - cached[0] < _TTL_S:
         return cached[1]
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
-            voices = await (_respeecher if provider == "respeecher" else _soniox)(cfg, client)
+            voices = await (_respeecher if provider == "respeecher" else _soniox)(cfg, client, language)
     except Exception as e:  # network, auth, or a changed response: the page must still open
         log.warning("%s voices list failed (%s), using the configured ones", provider, type(e).__name__)
         voices = []
     if voices:
-        _cache[provider] = (time.monotonic(), voices)
+        _cache[key] = (time.monotonic(), voices)
         return voices
     return [{"id": v, "label": v} for v in fallback]
+
+
+async def list_voices(cfg: Config, provider: str, language: str = "uk") -> list[dict]:
+    """One provider's voices for a language ([] when the provider is not configured or cannot speak it)."""
+    try:
+        if provider == "respeecher" and cfg.respeecher_api_key:
+            return await _load("respeecher", cfg, cfg.respeecher_voices if language == "uk" else [], language)
+        if provider == "soniox" and cfg.soniox_api_key:
+            return await _load("soniox", cfg, cfg.soniox_voices, language)
+    except Exception:
+        log.exception("voice list for %s/%s failed", provider, language)
+    return []
 
 
 async def tts_providers(cfg: Config) -> list[dict]:

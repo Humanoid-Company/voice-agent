@@ -51,6 +51,23 @@ _OVERHEARD_MAX = 20  # what is kept from a pause
 _OVERHEARD_CHARS = 300
 
 
+_HISTORY_TURNS = 30  # what the model sees of the conversation
+_HISTORY_CHARS = 2000
+
+
+def sanitize_history(items: object) -> list[dict]:
+    """A conversation the page sends (a resumed one): only user/assistant text, bounded. It is data, not instructions."""
+    if not isinstance(items, list):
+        return []
+    clean = [
+        {"role": it["role"], "content": it["content"].strip()[:_HISTORY_CHARS]}
+        for it in items
+        if isinstance(it, dict) and it.get("role") in ("user", "assistant")
+        and isinstance(it.get("content"), str) and it["content"].strip()
+    ]  # fmt: skip
+    return clean[-_HISTORY_TURNS:]
+
+
 def _fn(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
     params = {"type": "object", "properties": properties, "additionalProperties": False}
     if required:
@@ -103,6 +120,7 @@ class VoiceSession:
         persona: Persona | None = None,
         tts_factory: Callable[[str, str, str], Any] | None = None,
         voices_for: Callable[[str, str], Awaitable[list[dict]]] | None = None,
+        history: list[dict] | None = None,
     ) -> None:
         self.llm = llm
         self.tts = tts
@@ -115,7 +133,7 @@ class VoiceSession:
         self._send_json = send_json
         self._send_bytes = send_bytes
 
-        self.history: list[dict] = []
+        self.history: list[dict] = sanitize_history(history)  # a resumed conversation starts with its past
         self.state = "listening"
         self._turn: asyncio.Task | None = None
         self._lock = asyncio.Lock()
@@ -187,6 +205,10 @@ class VoiceSession:
             await self.resume()
         elif kind == "voice":
             await self.request_voice(str(msg.get("provider") or self.provider), str(msg.get("voice") or ""))
+        elif kind == "history":  # the page opened another conversation, or started a new one
+            await self.interrupt()
+            self.history = sanitize_history(msg.get("history"))
+            self._recent = ""
 
     async def on_heard(self, text: str, final: bool) -> None:
         """What the browser's speech recognition heard: interim text, or the final text of an utterance."""
@@ -196,10 +218,11 @@ class VoiceSession:
                 self._overhear(text)
                 await self._j({"type": "overheard", "count": len(self.overheard)})
             return
-        text = self._without_echo(text.strip())
+        raw = text.strip()
+        text = self._without_echo(raw)
         self._final, self._partial = (text, "") if final else ("", text)
         if final and not text:  # nothing but her own voice
-            await self._j({"type": "user_drop"})
+            await self._j({"type": "user_drop", "reason": "echo", "text": raw})
             return
         if text:
             await self._j({"type": "user", "text": text, "final": False})
@@ -222,9 +245,11 @@ class VoiceSession:
             return
         busy = self.state in ("thinking", "speaking")
         recently = time.monotonic() - self._last_audio_at < _ECHO_TAIL_S
-        echo = classify_interjection(text, assistant_recent=self._recent) == "echo"
-        if skip or (during and busy) or (echo and (busy or recently)):
-            await self._j({"type": "user_drop"})
+        intent = classify_interjection(text, assistant_recent=self._recent)
+        if skip or (during and busy) or (intent == "echo" and (busy or recently)):
+            # The page shows why a phrase was not answered, so the user can tell a deaf agent from a quiet voice.
+            reason = "stop" if skip else "echo" if intent == "echo" else "backchannel" if intent == "backchannel" else "not_interruption"
+            await self._j({"type": "user_drop", "reason": reason, "text": text})
             return
         await self._j({"type": "user", "text": text, "final": True})
         self.history.append({"role": "user", "content": text})
@@ -311,7 +336,9 @@ class VoiceSession:
             await producer  # surfaces an LLM error
             await self._apply_pending()
             self._turn_done = True
-            self.history.append({"role": "assistant", "content": "".join(full).strip()})
+            answer = "".join(full).strip()
+            self.history.append({"role": "assistant", "content": answer})
+            await self._j({"type": "record", "role": "assistant", "text": answer})
             await self._send_usage()
             if self._spoken:
                 self._awaiting_played = True
@@ -343,7 +370,9 @@ class VoiceSession:
                 return
             if not self._turn_done and self._spoken:
                 # keep only what the user actually got to hear
-                self.history.append({"role": "assistant", "content": " ".join(self._spoken) + " …"})
+                heard = " ".join(self._spoken) + " …"
+                self.history.append({"role": "assistant", "content": heard})
+                await self._j({"type": "record", "role": "assistant", "text": heard})
             self._turn_done = True
             self._awaiting_played = False
             await self._j({"type": "clear"})

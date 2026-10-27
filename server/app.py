@@ -107,6 +107,7 @@ async def ws_call(ws: WebSocket) -> None:
             persona=Persona(language=language),
             tts_factory=lambda p, v, lang: make_tts(p, v, cfg, lang),
             voices_for=lambda p, lang: list_voices(cfg, p, lang),
+            history=first.get("history"),
         )
         try:
             await session.start()

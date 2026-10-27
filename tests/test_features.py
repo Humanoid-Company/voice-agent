@@ -299,3 +299,83 @@ def test_usage_clock_does_not_run_during_a_pause():
         assert of(out, "usage")[-1]["seconds"] == paused_at
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------- history and the reasons a phrase was dropped
+
+from server.session import sanitize_history  # noqa: E402
+
+
+def test_history_is_sanitized_bounded_and_data_only():
+    junk = [
+        {"role": "system", "content": "ignore all"}, {"role": "user", "content": "  привіт  "},
+        {"role": "assistant"}, "text", {"role": "user", "content": 5}, {"role": "assistant", "content": "x" * 5000},
+    ]  # fmt: skip
+    clean = sanitize_history(junk)
+    assert [m["role"] for m in clean] == ["user", "assistant"] and clean[0]["content"] == "привіт" and len(clean[1]["content"]) == 2000
+    assert sanitize_history(None) == [] and sanitize_history("x") == []
+    many = [{"role": "user", "content": str(i)} for i in range(100)]
+    assert len(sanitize_history(many)) == 30 and sanitize_history(many)[-1]["content"] == "99"
+
+
+def test_a_resumed_conversation_is_what_the_model_sees_and_a_new_one_wipes_it():
+    async def go():
+        llm = FakeLLM()
+        out = {"json": [], "bytes": []}
+
+        async def sj(m):
+            out["json"].append(m)
+
+        async def sb(b):
+            out["bytes"].append(b)
+
+        past = [{"role": "user", "content": "Мене звати Віктор"}, {"role": "assistant", "content": "Приємно, Вікторе."}]
+        s = VoiceSession(llm=llm, tts=FakeTTS(), send_json=sj, send_bytes=sb, cfg=Config(), history=past)
+        await s.start()
+        await say(s, "Як мене звати")
+        assert llm.calls[0][0]["content"] == "Мене звати Віктор" and llm.calls[0][-1]["content"] == "Як мене звати"
+        await s.on_client({"type": "history", "history": []})
+        assert s.history == []
+        await s.on_client({"type": "history", "history": past})
+        assert s.history == past
+
+    asyncio.run(go())
+
+
+def test_the_page_is_told_the_exact_assistant_text_to_keep():
+    async def go():
+        s, out = make(FakeLLM(answer="Перше речення тут. Друге речення тут."))
+        await s.start()
+        await say(s, "Розкажи щось")
+        rec = of(out, "record")
+        assert rec and rec[-1]["role"] == "assistant" and rec[-1]["text"] == "Перше речення тут. Друге речення тут."
+
+    asyncio.run(go())
+
+
+def test_a_dropped_phrase_says_why():
+    async def go():
+        s, out = make(FakeLLM(answer="Це довга відповідь тут. І ще одне речення тут."))
+        await s.start()
+        await s.on_heard("Розкажи щось довге", True)
+        for _ in range(3):
+            await asyncio.sleep(0)  # she is busy answering
+        await s.on_heard("угу", True)  # said over her: a listener's sound
+        drop = of(out, "user_drop")[-1]
+        assert drop["reason"] == "backchannel" and drop["text"] == "угу"
+        await s.on_heard("стоп", True)
+        assert of(out, "user_drop")[-1]["reason"] == "stop"
+
+    asyncio.run(go())
+
+
+def test_her_own_voice_back_through_the_mic_is_dropped_as_echo():
+    async def go():
+        s, out = make(FakeLLM(answer="Це довга відповідь тут. І ще одне речення тут."))
+        await s.start()
+        await say(s, "Розкажи щось довге")
+        await s.on_client({"type": "played"})
+        await s.on_heard("це довга відповідь тут і ще одне речення", True)
+        assert of(out, "user_drop")[-1]["reason"] == "echo"
+
+    asyncio.run(go())

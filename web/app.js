@@ -8,7 +8,7 @@ const WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
 const $ = (id) => document.getElementById(id);
 const el = {
   dot: $("dot"), status: $("status"), problem: $("problem"), provider: $("provider"), voice: $("voice"),
-  talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
+  recog: $("recog"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
 };
 
 const STATES = {
@@ -190,23 +190,55 @@ const REC_LANG = params.get("lang") || "uk-UA";
 
 // Chrome, Edge and Safari recognize in the cloud (Google / Apple) and stream interim text. It ends by
 // itself after a while or a long silence, so it is restarted for as long as the call lasts.
+// Chrome ends an utterance ~1-2 s after the last word. We do not wait for it: text that has not changed for
+// ENDPOINT_MS is the end of the utterance (?endpoint=1200 waits longer, for people who pause a lot). The
+// recognizer is then restarted, which drops the late «final» of the same words.
+const ENDPOINT_MS = Number(params.get("endpoint")) || 800;
+let endpointTimer = null;
+let interimText = "";
+
+function showRecog(text) { el.recog.textContent = text; el.recog.hidden = !text; }
+
+function commitInterim() {
+  const text = interimText;
+  interimText = "";
+  if (!text || !live) return;
+  heard(text, true);
+  try { recognition.abort(); } catch (err) { /* not started */ } // onend restarts it
+}
+
 function startRecognition() {
   recognition = new SpeechRec();
   recognition.lang = REC_LANG;
   recognition.continuous = true;
   recognition.interimResults = true;
+  recognition.onstart = () => showRecog("🎤 Розпізнавання слухає");
   recognition.onresult = (e) => {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
-      if (r.isFinal) heard(r[0].transcript, true);
-      else interim += r[0].transcript;
+      if (r.isFinal) {
+        clearTimeout(endpointTimer);
+        interimText = "";
+        showRecog("🎤 Почув: «" + r[0].transcript.trim().slice(-70) + "»");
+        heard(r[0].transcript, true);
+      } else {
+        interim += r[0].transcript;
+      }
     }
-    if (interim) heard(interim, false);
+    if (interim) {
+      showRecog("🎤 Почув: «" + interim.trim().slice(-70) + "»");
+      heard(interim, false);
+      interimText = interim;
+      clearTimeout(endpointTimer);
+      endpointTimer = setTimeout(commitInterim, ENDPOINT_MS);
+    }
   };
   recognition.onerror = (e) => {
     if (e.error === "not-allowed" || e.error === "service-not-allowed") {
       stop("Немає доступу до мікрофона або розпізнавання мови.");
+    } else if (e.error !== "no-speech" && e.error !== "aborted") {
+      showRecog("🎤 Помилка розпізнавання: " + e.error); // «network»: no route to Google's recognizer
     }
   };
   recognition.onend = () => {
@@ -217,8 +249,11 @@ function startRecognition() {
 }
 
 function stopRecognition() {
+  clearTimeout(endpointTimer);
+  interimText = "";
+  showRecog("");
   if (!recognition) return;
-  recognition.onend = recognition.onerror = recognition.onresult = null;
+  recognition.onend = recognition.onerror = recognition.onresult = recognition.onstart = null;
   try { recognition.abort(); } catch (err) { /* not started */ }
   recognition = null;
 }

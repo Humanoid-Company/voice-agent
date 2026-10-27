@@ -8,11 +8,14 @@ _END = re.compile(r"(?<=[.!?…])[\"»”')\]]*\s+|\n+")
 _MIN_CHARS = 12
 # No terminator for this long: cut at the last comma/space instead of making the user wait.
 _MAX_CHARS = 160
+# The first piece of an answer may end at a comma this far in: the user hears it sooner.
+_FIRST_COMMA_FROM = 24
 
 
 class SentenceSplitter:
     def __init__(self) -> None:
         self._buf = ""
+        self._first = True
 
     def feed(self, delta: str) -> list[str]:
         self._buf += delta
@@ -34,10 +37,15 @@ class SentenceSplitter:
             if len(self._buf[:end].strip()) >= _MIN_CHARS:
                 pos = end
                 break
+        if not pos and self._first:
+            comma = self._buf.find(", ", _FIRST_COMMA_FROM)
+            if comma != -1:
+                pos = comma + 2
         if not pos and len(self._buf) > _MAX_CHARS:
             cut = max(self._buf.rfind(", ", 0, _MAX_CHARS), self._buf.rfind(" ", 0, _MAX_CHARS))
             pos = cut + 1 if cut > 0 else _MAX_CHARS
         if not pos:
             return None
         piece, self._buf = self._buf[:pos].strip(), self._buf[pos:]
+        self._first = False
         return piece or self._take()

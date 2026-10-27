@@ -74,3 +74,34 @@ def test_every_format_silent_is_an_error_that_shows_the_replies():
     with pytest.raises(TTSError) as e:
         run(lambda msgs: [{"type": "flush_done", "note": "x"}, DONE] if msgs[-1]["continue"] is False else [])
     assert "no audio" in str(e.value) and "flush_done" in str(e.value) and "2 request formats" in str(e.value)
+
+
+def test_the_working_format_is_remembered_so_the_failed_one_is_not_retried():
+    tts_ws = {}
+
+    def script(msgs):  # the one-message form is answered with a silent done, the two-message form works
+        if len(msgs) == 1 and msgs[0]["continue"] is False:
+            return [DONE]
+        return [CHUNK, DONE] if len(msgs) == 2 else []
+
+    ws = FakeWS(script)
+
+    class T(RespeecherTTS):
+        async def _open(self):
+            return ws
+
+    tts = T(Config(respeecher_api_key="k"), "v")
+
+    async def go():
+        try:
+            await _collect(tts), await _collect(tts)
+        finally:
+            await tts.close()
+
+    async def _collect(t):
+        return [c async for c in t.synthesize("Привіт.")]
+
+    asyncio.run(go())
+    # first sentence: 1 failed request + 2 messages; second sentence: only the 2 messages
+    assert len(ws.sent) == 1 + 2 + 2
+    del tts_ws

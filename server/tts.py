@@ -56,6 +56,7 @@ class _MuxTTS:
         self._reader: asyncio.Task | None = None
         self._queues: dict[str, asyncio.Queue[_Msg]] = {}
         self._lock = asyncio.Lock()
+        self._best = 0  # the request format that last gave audio: tried first, a failed try costs a round trip
 
     # -- subclass hooks --
     async def _open(self) -> websockets.ClientConnection:
@@ -79,8 +80,9 @@ class _MuxTTS:
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
         tried: list[str] = []
-        for build in self._variants():
-            got_audio = False
+        variants = self._variants()
+        for i in sorted(range(len(variants)), key=lambda i: i != self._best):  # the working one first
+            build, got_audio = variants[i], False
             try:
                 async for chunk in self._generate(build, text):
                     got_audio = True
@@ -90,6 +92,7 @@ class _MuxTTS:
                 log.warning("%s: %s", type(self).__name__, e)
                 continue
             if got_audio:
+                self._best = i
                 return
         raise TTSError(f"{type(self).__name__} returned no audio. Tried {len(tried)} request formats: {tried}")
 

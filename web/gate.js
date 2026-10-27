@@ -1,6 +1,8 @@
-// Echo-aware voice detector, ported from the Eva web client (its noise gate without the audio part).
-// Input 0: the microphone. Input 1: what the assistant is playing. It never touches the sound, it only
-// tells the page two things: when the assistant is audible, and when the person at the microphone speaks.
+// Echo-aware noise gate, ported from the Eva web client.
+// Input 0: the microphone. Input 1: what the assistant is playing (measured only, never passed on).
+// Output: the microphone, 250 ms late, shut while the assistant is audible, so that the speech recognizer fed
+// with it never hears her. It opens only for the person at the microphone. It also tells the page when the
+// assistant is audible and when that person speaks.
 //
 // The assistant's echo in the mic is learned: how loud the mic is per unit of playback while only the
 // assistant talks. High on laptop speakers, near zero in headphones. The user's voice counts as «near» only
@@ -10,6 +12,10 @@ class EchoGate extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.frame = Math.round(sampleRate * 0.02); // judge loudness per 20 ms
+    // 250 ms look-ahead: the gate opens on voiced sound, and a soft start before it («с», «п») must not be lost.
+    this.ring = new Float32Array(Math.round(sampleRate * 0.25));
+    this.pos = 0;
+    this.gain = 0;
     this.sum = 0; this.outSum = 0; this.count = 0;
     this.floor = 0.003; this.open = false; this.loud = 0; this.quietFor = 1;
     this.near = (options.processorOptions || {}).near || 0.06;
@@ -53,17 +59,27 @@ class EchoGate extends AudioWorkletProcessor {
     }
   }
 
-  process(inputs) {
+  process(inputs, outputs) {
     const mic = inputs[0] && inputs[0][0];
     const remote = inputs[1] && inputs[1][0];
-    const n = (mic || remote || []).length;
+    const out = outputs[0] && outputs[0][0];
+    const n = (mic || remote || out || []).length;
     for (let i = 0; i < n; i++) {
-      if (mic) this.sum += mic[i] * mic[i];
+      const x = mic ? mic[i] : 0;
+      this.sum += x * x;
       if (remote) this.outSum += remote[i] * remote[i];
       if (++this.count >= this.frame) {
         this.judge(Math.sqrt(this.sum / this.count), Math.sqrt(this.outSum / this.count));
         this.sum = 0; this.outSum = 0; this.count = 0;
       }
+      const delayed = this.ring[this.pos];
+      this.ring[this.pos] = x;
+      this.pos = (this.pos + 1) % this.ring.length;
+      // Shut while she is silent = −14 dB, not silence: a quiet user below the bar is still heard.
+      // While she talks it shuts fully: her echo must not reach the recognizer.
+      const closed = this.audible ? 0 : 0.2;
+      this.gain += ((this.open ? 1 : closed) - this.gain) * (this.open ? 0.004 : 0.0005);
+      if (out) out[i] = delayed * this.gain;
     }
     return true;
   }

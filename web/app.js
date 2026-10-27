@@ -25,7 +25,8 @@ let ws = null;
 let recognition = null;
 let playCtx = null;
 let playGain = null; // all assistant audio goes through it: barge-in ducks and mutes here
-let gate = null; // echo-aware voice detector (gate.js), optional
+let gate = null; // echo-aware noise gate (gate.js), optional
+let gateTrack = null; // the gate's output: the microphone, shut while she is audible
 let micStream = null;
 let curState = "idle";
 let ttsRate = 24000;
@@ -212,8 +213,9 @@ function startRecognition() {
   recognition.lang = REC_LANG;
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.onstart = () => showRecog("🎤 Розпізнавання слухає");
+  recognition.onstart = () => showRecog(recogMode);
   recognition.onresult = (e) => {
+    lastResultAt = Date.now();
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
@@ -243,9 +245,47 @@ function startRecognition() {
   };
   recognition.onend = () => {
     if (!live) return;
-    setTimeout(() => { try { recognition.start(); } catch (err) { /* already started */ } }, 200);
+    setTimeout(() => beginRecognizer(), 200);
   };
+  beginRecognizer();
+}
+
+// Chrome 139+ takes the audio to recognize as a track: ours is the gate's output, shut while she talks, so the
+// recognizer cannot hear her. Older browsers ignore the argument and listen to the microphone directly, so
+// support is judged by a feature that shipped with it (?gated=0 / ?gated=1 overrides).
+const TRACK_SUPPORT = Boolean(SpeechRec) && "processLocally" in SpeechRec.prototype;
+let useGate = params.get("gated") ? params.get("gated") === "1" : TRACK_SUPPORT;
+let recogMode = "";
+let lastResultAt = 0;
+
+function beginRecognizer() {
+  if (!recognition) return;
+  if (useGate && gateTrack) {
+    try {
+      recognition.start(gateTrack);
+      recogMode = "🎤 Слухаю через шлюз: агент не чує себе";
+      showRecog(recogMode);
+      return;
+    } catch (err) {
+      if (err && err.name === "InvalidStateError") return; // already started
+      useGate = false; // this browser does not take a track: listen directly
+    }
+  }
+  recogMode = "🎤 Слухаю напряму: на колонках можливе ехо агента";
   try { recognition.start(); } catch (err) { /* already started */ }
+  showRecog(recogMode);
+}
+
+// If the gate hears the user (near voice) three times and the recognizer, fed with its sound, returns no text either
+// time, the gated path does not work in this browser: go back to the microphone directly.
+let gateMisses = 0;
+function checkGateWorks(since) {
+  if (!useGate || !live || lastResultAt >= since) { gateMisses = 0; return; }
+  gateMisses += 1;
+  if (gateMisses < 3) return;
+  useGate = false;
+  showRecog("🎤 Шлюз не працює в цьому браузері: слухаю напряму");
+  try { recognition.abort(); } catch (err) { /* not started */ } // onend restarts it, now directly
 }
 
 function stopRecognition() {
@@ -328,6 +368,10 @@ function onGate(sig) {
   }
   barge.speaking = sig.speaking;
   if (sig.speaking) {
+    const since = Date.now();
+    setTimeout(() => checkGateWorks(since), 4000);
+  }
+  if (sig.speaking) {
     if (!barge.audible || barge.stage !== "idle") return;
     barge.timers.push(setTimeout(() => {
       if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; setPlayVolume(DUCK_LEVEL); }
@@ -361,12 +405,14 @@ async function setupGate() {
     node.port.onmessage = (e) => onGate(e.data);
     playCtx.createMediaStreamSource(micStream).connect(node, 0, 0);
     playGain.connect(node, 0, 1);
-    const silent = playCtx.createGain();
-    silent.gain.value = 0; // a node must be connected to run; it outputs nothing anyway
-    node.connect(silent).connect(playCtx.destination);
+    // The gate's sound is never played: it only goes to the speech recognizer, as a track.
+    const dest = playCtx.createMediaStreamDestination();
+    node.connect(dest);
+    gateTrack = dest.stream.getAudioTracks()[0];
     gate = node;
   } catch (e) {
     gate = null; // no gate: the server's checks alone
+    gateTrack = null;
   }
 }
 
@@ -438,6 +484,7 @@ function stop(problem) {
   micStream?.getTracks().forEach((t) => t.stop());
   micStream = null;
   gate = null;
+  gateTrack = null;
   playGain = null;
   playCtx?.close(); playCtx = null;
   userBubble = botBubble = null;

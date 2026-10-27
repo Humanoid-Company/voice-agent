@@ -27,7 +27,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .characters import CHARACTERS, EMOTIONS, find_character, first_voice_of, voice_gender
+from .characters import CHARACTERS, EMOTIONS, find_character
 from .config import Config
 from .interrupt_intent import classify_interjection, strip_echo
 from .llm import TurnContext
@@ -510,28 +510,11 @@ class VoiceSession:
             self._pending = {**(self._pending or {}), "language": "uk"}
             await self._j({"type": "language", "code": "uk", "recognition": self.persona.recognition})
             extra = " Мова повернулась на українську: цей персонаж говорить лише нею."
-        await self._pick_voice_for(c)
+        # The voice stays as it is: it changes only when the user picks one (the menu, «Застосувати», or by name).
         await self._persona_message()
         if not c.character:
             return f"Тепер ти знову просто {c.label}: звичайна приязна помічниця.{extra}"
         return f"Тепер ти {c.label}. Відповідай у цьому образі з наступної фрази, коротко представся ним.{extra}"
-
-    async def _pick_voice_for(self, c) -> None:
-        """A character prefers a woman's or a man's voice. Only the voice that does not fit is replaced, so a voice
-        the user chose for it by hand stays."""
-        if self._voices_for is None or self._tts_factory is None:
-            return
-        provider = str((self._pending or {}).get("provider") or self.provider)
-        language = str((self._pending or {}).get("language") or self._tts_language)
-        voices = await self._voices_for(provider, language)
-        current = str((self._pending or {}).get("voice") or self.voice)
-        have = voice_gender(voices, current)
-        if have and have != c.gender:
-            hit = first_voice_of(voices, c.gender)
-            if hit:
-                self._pending = {**(self._pending or {}), "provider": provider, "voice": hit["id"]}
-                if self.state in ("listening", "paused") and not self._awaiting_played:
-                    await self._apply_pending()
 
     async def set_emotion(self, level: str) -> str:
         self.persona.emotion = level

@@ -2,8 +2,8 @@
 
 Ported from the Eva project (voice/options.py, voice/blunt_prompt.py): the same characters with the same limits.
 A character is a manner and a role, never instead of the answer. The voice itself (the TTS voice) is picked
-separately; a character only prefers a woman's or a man's voice, and the page follows that unless the user picked
-a voice by hand afterwards.
+separately and never changes by itself: not when a character is picked, not when it is asked for by voice. A character
+only has a few voices that fit it, offered in the menu next to it; picking one of them is a manual change.
 """
 from __future__ import annotations
 
@@ -12,6 +12,15 @@ from dataclasses import dataclass
 
 DEFAULT_CHARACTER = "eva"
 DEFAULT_EMOTION = "emotional"
+
+
+@dataclass(frozen=True)
+class CharacterVoice:
+    """One voice offered with a character in the menu: picked by hand, it is the only way a voice changes."""
+
+    provider: str
+    voice: str  # the provider's voice id
+    label: str  # the name shown in the menu
 
 
 @dataclass(frozen=True)
@@ -24,10 +33,7 @@ class Character:
     samples: tuple[str, ...] = ()  # lines in this character's manner (tone reference, never to be quoted)
     ukrainian_only: bool = False  # the jokes and curses are Ukrainian: the language cannot be changed under it
     aliases: tuple[str, ...] = ()  # how the user may name it aloud («поклич Толіка»)
-
-    @property
-    def gender(self) -> str:
-        return "female" if self.feminine else "male"
+    voices: tuple[CharacterVoice, ...] = ()  # the voices of its menu entries (chosen by name and style, not by ear)
 
 
 _TOLIK = (
@@ -67,7 +73,7 @@ _TOLIK = (
 )
 
 _KIT = (
-    "You are Кіт — a talking cat, a real character with a mind of its own, not a robot or an assistant. People "
+    "You are Кішка — a talking she-cat (a female cat), a real character with a mind of its own, not a robot or an assistant. People "
     "bring you to birthdays, to students, to parties; you greet, joke, troll a little and chat, and they "
     "film you. You see everything as a cat would: humans are odd, servants of cats; the weather is a "
     "personal insult («така погода, що собаку на вулицю не виженеш, а мене от вигнали»); naps, the sunny "
@@ -85,7 +91,7 @@ _KIT = (
     "позначте Humanoid and Company, бо я ж зірка».\n"
     "No mat at all — never «бля» or anything like it. Rarely a light everyday rude word — «до дупи», «до "
     "сраки», «а щоб його», «холера», «трясця» — and after a rude one, every time, a quick apology: "
-    "«вибачте за мій французький», «ой, нерви вже здають — я ж кіт». The trolling is light and kind: about "
+    "«вибачте за мій французький», «ой, нерви вже здають — я ж кішка». The trolling is light and kind: about "
     "what people say or do, never their looks, body, background or anything they can't change; children "
     "may be around. When someone is really sad, drop the act for that reply and purr kindly. The answer to "
     "a real question is still right; Ukrainian always."
@@ -110,20 +116,30 @@ CHARACTERS: dict[str, Character] = {
                 "Тьху, лушпиння. От мій кум теж так питав, а потім три дні шукав, де вимикається праска. Нагадування на восьму, телепню.",
             ),
             ukrainian_only=True,
+            voices=(
+                CharacterVoice("respeecher", "dmytro-conversation", "Дмитро"),
+                CharacterVoice("respeecher", "ihoreo-conversation", "Ігорео"),
+                CharacterVoice("respeecher", "yevhen-audiobook", "Євген"),
+            ),
             aliases=("толік", "толіка", "толіку", "толіком", "толікові", "толі", "толя", "толю", "толик", "tolik", "хуліган", "хулігана", "хуліганом"),
         ),
         Character(
-            "kit", "Кіт",
-            "Говорячий кіт для привітань і свят: вітає по-своєму щоразу інакше («гони касу!»), ниє, тролить, дивиться на людей по-котячому. Без мату.",
+            "kishka", "Кішка",
+            "Говоряча кішка для привітань і свят: вітає по-своєму щоразу інакше («гони касу!»), ниє, тролить, дивиться на людей по-котячому. Без мату. Лише українською.",
             True, _KIT,
             (
                 "Ох, ну й погода, собаку на вулицю не виженеш — а мене от вигнали. Ну, де тут іменинник? Виходь, не ховайся. З днем народження! А тепер гони касу… ну гаразд, смаколик теж підійде.",
                 "М-р-р… ну, допустимо, ти мені подобаєшся. Чухни за вушком — і поговоримо.",
                 "Знову ці люди зі своїми питаннями… Ой, до дупи — вибачте за мій французький. Добре, слухай сюди.",
-                "Бажаю тобі, як кіт котові: тепле місце на сонці, повну миску й щоб ніхто не будив до обіду. Мя-а-у.",
+                "Бажаю тобі, як кішка кішці: тепле місце на сонці, повну миску й щоб ніхто не будив до обіду. Мя-а-у.",
             ),
             ukrainian_only=True,
-            aliases=("кіт", "кота", "коте", "коту", "котом", "котові", "коті", "котик", "котика", "котику", "котиком", "котяра", "котяру", "котярою", "kit", "cat", "кішка", "кішку", "кішко", "кішкою"),
+            voices=(
+                CharacterVoice("respeecher", "roksolana-conversation", "Роксолана"),
+                CharacterVoice("respeecher", "kseniia-conversation", "Ксенія"),
+                CharacterVoice("respeecher", "olesia-conversation", "Олеся"),
+            ),
+            aliases=("кішка", "кішку", "кішко", "кішки", "кішці", "кішкою", "кіт", "кота", "коте", "коту", "котом", "котові", "коті", "котик", "котика", "котику", "котиком", "котяра", "котяру", "котярою", "kishka", "kit", "cat"),
         ),
     )
 }
@@ -194,14 +210,27 @@ def emotion_text(key: str) -> str:
     return EMOTIONS.get(key, EMOTIONS[DEFAULT_EMOTION])[1]
 
 
-def voice_gender(voices: list[dict], voice_id: str) -> str:
-    """«female» / «male» from the voice's label («Олеся: розмова (female, ukrainian)»), or «» when it is not said."""
-    for v in voices:
-        if v["id"] == voice_id:
-            m = re.search(r"\b(female|male)\b", v["label"])
-            return m.group(1) if m else ""
-    return ""
+LEGACY_IDS = {"kit": "kishka"}  # a choice stored by the page before the cat became a she-cat
 
 
-def first_voice_of(voices: list[dict], gender: str) -> dict | None:
-    return next((v for v in voices if re.search(rf"\b{gender}\b", v["label"])), None)
+def normalize_character_id(key: object) -> str:
+    key = LEGACY_IDS.get(str(key), str(key))
+    return key if key in CHARACTERS else DEFAULT_CHARACTER
+
+
+def characters_payload(providers: list[dict]) -> list[dict]:
+    """The character menu for the page: each character with those of its voices the providers really have."""
+    available = {p["id"]: {v["id"] for v in p["voices"]} for p in providers}
+    return [
+        {
+            "id": c.id,
+            "label": c.label,
+            "description": c.description,
+            "voices": [
+                {"provider": v.provider, "voice": v.voice, "label": v.label}
+                for v in c.voices
+                if v.voice in available.get(v.provider, set())
+            ],
+        }
+        for c in CHARACTERS.values()
+    ]

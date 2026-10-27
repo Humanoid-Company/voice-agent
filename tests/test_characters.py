@@ -1,34 +1,52 @@
-"""Characters (Толік, Кіт) and the emotion level: the prompt, the voice that fits, the name and the language rules."""
+"""Characters (Толік, Кішка) and the emotion level: the prompt, their voices, the name and the language rules.
+A voice never changes by itself."""
 import asyncio
 
-from server.characters import CHARACTERS, EMOTIONS, character_prompt, find_character, first_voice_of, voice_gender
+from server.characters import (
+    CHARACTERS,
+    EMOTIONS,
+    character_prompt,
+    characters_payload,
+    find_character,
+    normalize_character_id,
+)
 from server.persona import Persona
 from server.prompt import build_system_prompt
-from tests.test_features import VOICES, Config, FakeLLM, FakeTTS, VoiceSession, make, of, say, types  # noqa: F401
+from tests.test_features import FakeLLM, make, of, say
 
-VOICES_G = [
-    {"id": "olesia", "label": "Олеся (female, ukrainian)"},
-    {"id": "taras", "label": "Тарас (male, ukrainian)"},
-    {"id": "plain", "label": "plain"},
-]
+# The Respeecher voices the deployed backend listed on 2026-10-27 (/api/config): the characters' voices must be there.
+RESPEECHER_UK = {
+    "olesia-conversation", "olesia-media", "olesia-announcement", "oleksandr-radio", "oleksandr-commercial",
+    "kseniia-conversation", "roksolana-conversation", "yevhen-commercial", "yevhen-audiobook", "dmytro-conversation",
+    "ihoreo-media", "ihoreo-conversation", "mariia-audiobook",
+}  # fmt: skip
 
 
 def test_a_character_is_found_by_the_way_people_call_it():
     assert find_character("поклич Толіка") == "tolik" and find_character("Толік") == "tolik"
-    assert find_character("хочу поговорити з котом") == "kit" and find_character("котик") == "kit"
+    assert find_character("хочу поговорити з кішкою") == "kishka" and find_character("Кішка") == "kishka"
+    assert find_character("поклич кота") == "kishka" and find_character("котик") == "kishka"  # the old name still works
     assert find_character("давай знову як Єва") == "eva" and find_character("tolik") == "tolik"
     assert find_character("Гарольд") is None and find_character("") is None
 
 
+def test_the_cat_is_a_she_cat_now_and_an_old_stored_choice_follows():
+    assert "kit" not in CHARACTERS and CHARACTERS["kishka"].label == "Кішка" and CHARACTERS["kishka"].feminine
+    assert normalize_character_id("kit") == "kishka" and normalize_character_id("tolik") == "tolik"
+    assert normalize_character_id("<script>") == "eva" and normalize_character_id(None) == "eva"
+
+
 def test_the_prompt_carries_the_character_its_limits_and_the_emotion():
     tolik = build_system_prompt(search=False, persona=Persona(character="tolik", emotion="normal"), now="x")
-    assert "Толік" in tolik and "never\nnationality" not in tolik  # (the limits are one long line, below)
+    assert "Толік" in tolik
     assert "never nationality, religion, gender, sexuality, disability or illness" in tolik  # Eva's limits are kept
     assert "Only real distress drops the act" in tolik and "You are a man" in tolik and "я зрозумів" in tolik
     assert "Манера мовлення" not in tolik  # «normal»: no emotion layer
-    kit = build_system_prompt(search=False, persona=Persona(character="kit"), now="x")
-    assert "No mat at all" in kit and "You are a woman" in kit and "Манера мовлення" in kit  # default: emotional
-    assert "незмінне" in kit  # a named character cannot be renamed
+    kishka = build_system_prompt(search=False, persona=Persona(character="kishka"), now="x")
+    assert "You are Кішка" in kishka and "she-cat" in kishka and "я ж кішка" in kishka and "Кіт" not in kishka
+    assert "No mat at all" in kishka and "You are a woman" in kishka and "я зрозуміла" in kishka
+    assert "Манера мовлення" in kishka  # the default emotion: emotional
+    assert "незмінне" in kishka  # a named character cannot be renamed
 
 
 def test_the_plain_character_has_no_mask_and_calm_asks_for_calm():
@@ -38,75 +56,89 @@ def test_the_plain_character_has_no_mask_and_calm_asks_for_calm():
     assert set(EMOTIONS) == {"calm", "normal", "emotional"}
 
 
-def test_voice_gender_is_read_from_the_label():
-    assert voice_gender(VOICES_G, "olesia") == "female" and voice_gender(VOICES_G, "taras") == "male"
-    assert voice_gender(VOICES_G, "plain") == "" and voice_gender(VOICES_G, "nope") == ""
-    assert first_voice_of(VOICES_G, "male")["id"] == "taras" and first_voice_of(VOICES_G, "female")["id"] == "olesia"
+def test_tolik_and_kishka_have_three_voices_each_and_the_plain_one_has_none():
+    for key in ("tolik", "kishka"):
+        voices = CHARACTERS[key].voices
+        assert len(voices) == 3 and len({v.voice for v in voices}) == 3, key
+        assert {v.provider for v in voices} == {"respeecher"} and {v.voice for v in voices} <= RESPEECHER_UK, key
+        assert all(v.label for v in voices)
+    assert CHARACTERS["eva"].voices == ()
+    assert {v.voice for v in CHARACTERS["tolik"].voices}.isdisjoint({v.voice for v in CHARACTERS["kishka"].voices})
 
 
-# ---------------------------------------------------------------- the session
-
-MALE = {"id": "taras", "label": "Тарас (male)"}
-
-
-def with_male(llm=None, **kw):
-    s, out = make(llm, **kw)
-    voices_for = s._voices_for
-
-    async def voices(p, lang):
-        base = await voices_for(p, lang)
-        return base + ([MALE] if p == "respeecher" and lang == "uk" else [])
-
-    s._voices_for = voices
-    return s, out
+def test_the_menu_offers_only_voices_the_providers_really_have():
+    live = [{"id": "respeecher", "label": "Respeecher", "voices": [{"id": v, "label": v} for v in RESPEECHER_UK]}]
+    menu = {c["id"]: c for c in characters_payload(live)}
+    assert [c for c in menu] == ["eva", "tolik", "kishka"]
+    assert [v["voice"] for v in menu["tolik"]["voices"]] == ["dmytro-conversation", "ihoreo-conversation", "yevhen-audiobook"]
+    assert [v["label"] for v in menu["kishka"]["voices"]] == ["Роксолана", "Ксенія", "Олеся"] and menu["eva"]["voices"] == []
+    assert "хуліган" in menu["tolik"]["description"]
+    fewer = [{"id": "respeecher", "label": "R", "voices": [{"id": "dmytro-conversation", "label": "x"}]}]  # a voice went away
+    assert [v["voice"] for v in {c["id"]: c for c in characters_payload(fewer)}["tolik"]["voices"]] == ["dmytro-conversation"]
+    none = {c["id"]: c for c in characters_payload([])}  # no TTS keys: the characters are still there, without voices
+    assert none["tolik"]["voices"] == [] and none["kishka"]["voices"] == []
+    soniox_only = [{"id": "soniox", "label": "S", "voices": [{"id": "dmytro-conversation", "label": "x"}]}]  # the right id, the wrong provider
+    assert {c["id"]: c for c in characters_payload(soniox_only)}["tolik"]["voices"] == []
 
 
-def test_switching_to_tolik_renames_picks_a_male_voice_and_tells_the_page():
+# ---------------------------------------------------------------- the session: a voice never changes by itself
+
+
+def test_switching_character_by_voice_never_changes_the_voice():
     async def go():
-        s, out = with_male()
+        s, out = make()
+        old_voice, old_tts = s.voice, s.tts
         await s.start()
         result = await s.run_tool("change_character", {"character": "Толіка"})
-        assert "Тепер ти Толік" in result
-        assert s.persona.character == "tolik" and s.persona.name == "Толік"
-        # the voice was a woman's: a man's replaces it, at once (idle)
-        assert s.voice == "taras" and out["made"][-1].voice == "taras"
+        assert "Тепер ти Толік" in result and s.persona.character == "tolik" and s.persona.name == "Толік"
+        assert s.voice == old_voice and s.tts is old_tts and not out["made"] and not of(out, "voice")
         p = of(out, "persona")[-1]
         assert p["character"] == "tolik" and p["name"] == "Толік" and "хуліган" in p["description"]
+        await s.run_tool("change_character", {"character": "кішку"})
+        assert s.persona.character == "kishka" and s.persona.name == "Кішка" and s.tts is old_tts and not out["made"]
 
     asyncio.run(go())
 
 
-def test_a_voice_the_user_picked_that_already_fits_stays():
+def test_the_page_selecting_a_character_does_not_change_the_voice_either():
     async def go():
-        s, out = with_male(provider="respeecher", voice="taras")
+        s, out = make()
+        old_tts = s.tts
         await s.start()
-        await s.run_tool("change_character", {"character": "tolik"})
-        assert s.voice == "taras" and not out["made"]  # already a man's voice: nothing replaced
+        await s.on_client({"type": "style", "character": "tolik", "emotion": "calm"})
+        assert s.persona.character == "tolik" and s.persona.emotion == "calm"
+        assert s.tts is old_tts and not out["made"] and not of(out, "voice")
+        await s.on_client({"type": "style", "character": "<script>", "emotion": "rage"})  # unknown values are ignored
+        assert s.persona.character == "tolik" and s.persona.emotion == "calm"
+        # the voice changes only when it is asked for, as a voice
+        await s.on_client({"type": "voice", "provider": "respeecher", "voice": "kseniia"})
+        assert s.voice == "kseniia" and of(out, "voice")[-1]["voice"] == "kseniia"
 
     asyncio.run(go())
 
 
-def test_back_to_the_plain_character_restores_the_name_and_a_womans_voice():
+def test_back_to_the_plain_character_restores_its_name_and_still_keeps_the_voice():
     async def go():
-        s, out = with_male()
+        s, out = make()
+        old_tts = s.tts
         await s.start()
         await s.run_tool("set_assistant_name", {"name": "Лесі"})
         await s.run_tool("change_character", {"character": "tolik"})
         assert s.persona.name == "Толік"
         result = await s.run_tool("change_character", {"character": "Єва"})
         assert "знову просто" in result and s.persona.name == "Лесі" and s.persona.character == "eva"
-        assert voice_gender(await s._voices_for("respeecher", "uk"), s.voice) == "female"
+        assert s.tts is old_tts and not out["made"]
 
     asyncio.run(go())
 
 
 def test_a_character_name_cannot_be_changed_by_voice():
     async def go():
-        s, out = with_male()
+        s, out = make()
         await s.start()
-        await s.run_tool("change_character", {"character": "kit"})
+        await s.run_tool("change_character", {"character": "kishka"})
         result = await s.run_tool("set_assistant_name", {"name": "Барсик"})
-        assert "не можна змінити" in result and s.persona.name == "Кіт"
+        assert "не можна змінити" in result and s.persona.name == "Кішка"
 
     asyncio.run(go())
 
@@ -128,24 +160,10 @@ def test_a_ukrainian_only_character_keeps_the_language_and_pulls_it_back():
 
 def test_unknown_character_and_the_same_one_are_handled():
     async def go():
-        s, out = with_male()
+        s, out = make()
         await s.start()
         assert "немає" in await s.run_tool("change_character", {"character": "Дарт Вейдер"})
         assert "Ти вже Єва" in await s.run_tool("change_character", {"character": "eva"})
-
-    asyncio.run(go())
-
-
-def test_the_pages_selectors_change_the_character_and_the_emotion():
-    async def go():
-        s, out = with_male()
-        await s.start()
-        await s.on_client({"type": "style", "character": "kit", "emotion": "calm"})
-        assert s.persona.character == "kit" and s.persona.emotion == "calm"
-        p = of(out, "persona")[-1]
-        assert p["character"] == "kit" and p["emotion"] == "calm"
-        await s.on_client({"type": "style", "character": "<script>", "emotion": "rage"})  # unknown values are ignored
-        assert s.persona.character == "kit" and s.persona.emotion == "calm"
 
     asyncio.run(go())
 
@@ -169,9 +187,9 @@ def test_emotion_by_voice_changes_the_next_prompt():
 def test_ready_tells_the_page_the_character_and_the_emotion():
     async def go():
         s, out = make()
-        s.persona.character, s.persona.emotion = "kit", "normal"
+        s.persona.character, s.persona.emotion = "kishka", "normal"
         await s.start()
         ready = of(out, "ready")[0]
-        assert ready["character"] == "kit" and ready["emotion"] == "normal"
+        assert ready["character"] == "kishka" and ready["emotion"] == "normal"
 
     asyncio.run(go())

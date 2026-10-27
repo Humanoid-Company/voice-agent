@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .characters import CHARACTERS, DEFAULT_CHARACTER, DEFAULT_EMOTION, EMOTIONS
+from .characters import CHARACTERS, DEFAULT_EMOTION, EMOTIONS, characters_payload, normalize_character_id
 from .config import Config
 from .llm import OpenAILLM
 from .persona import SUPPORTED, Persona
@@ -77,6 +77,7 @@ async def api_config() -> dict:
     missing = [] if cfg.openai_api_key else ["OPENAI_API_KEY"]
     return {
         "providers": providers,
+        "characters": characters_payload(providers),
         "missing": missing + ([] if providers else ["RESPEECHER_API_KEY or SONIOX_API_KEY"]),
     }
 
@@ -90,7 +91,7 @@ async def ws_call(ws: WebSocket) -> None:
         first = json.loads(await ws.receive_text())
         provider = str(first.get("provider", ""))
         language = str(first.get("language") or "uk")
-        character = first.get("character") if first.get("character") in CHARACTERS else DEFAULT_CHARACTER
+        character = normalize_character_id(first.get("character"))
         emotion = first.get("emotion") if first.get("emotion") in EMOTIONS else DEFAULT_EMOTION
         if CHARACTERS[character].ukrainian_only:
             language = "uk"  # its jokes and curses are Ukrainian

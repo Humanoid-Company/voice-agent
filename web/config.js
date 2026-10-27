@@ -2,5 +2,5 @@
 // Empty = the page and the backend are served from one origin (local run).
 // For a one-off test you can also open the page with ?backend=https://your-service.onrender.com
 window.APP_CONFIG = {
-  BACKEND_URL: "",
+  BACKEND_URL: "https://diff-voice-agent-backend.onrender.com",
 };

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Голосовий агент</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Голосовий агент</h1>
+    <p class="sub">Слухає розпізнавання Google у браузері, думає GPT, говорить Respeecher або Soniox. Можна перебивати.</p>
+
+    <section class="card">
+      <div class="status-line">
+        <span id="dot" class="dot" aria-hidden="true"></span>
+        <span id="status">Не підключено</span>
+      </div>
+
+      <p id="problem" class="hint err-text" hidden></p>
+
+      <div class="settings">
+        <div>
+          <label for="provider">Голос: провайдер</label>
+          <select id="provider" disabled><option>Завантаження…</option></select>
+        </div>
+        <div>
+          <label for="voice">Голос</label>
+          <select id="voice" disabled></select>
+        </div>
+      </div>
+      <div id="codeRow" class="row" hidden>
+        <input id="code" type="password" placeholder="Код доступу" autocomplete="off">
+      </div>
+
+      <button id="talk" class="btn primary big" disabled>Почати розмову</button>
+      <div class="row">
+        <button id="interrupt" class="btn ghost" hidden>Перебити</button>
+      </div>
+      <p class="hint">Провайдера й голос можна змінити лише до початку розмови. Для перебивання скажіть «стоп», «зачекай»
+        або просто почніть свою репліку. «Угу» й «ага» агента не зупиняють. Працює в Chrome, Edge і Safari. Навушники зменшують ехо.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Розмова</h2>
+        <button id="clear" class="btn ghost small-btn">Очистити</button>
+      </div>
+      <div id="log" class="log" aria-live="polite">
+        <p class="muted empty">Тут з'являтиметься текст розмови.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,30 @@
+[project]
+name = "diff-voice-agent"
+version = "0.1.0"
+description = "Voice agent: browser (Google) speech recognition -> OpenAI LLM -> Respeecher/Soniox TTS, with barge-in. Web page + FastAPI backend."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "openai>=1.50",
+    "python-dotenv>=1.0",
+    "websockets>=14",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

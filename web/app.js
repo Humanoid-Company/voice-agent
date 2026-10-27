@@ -24,6 +24,10 @@ let providers = [];
 let ws = null;
 let recognition = null;
 let playCtx = null;
+let playGain = null; // all assistant audio goes through it: barge-in ducks and mutes here
+let gate = null; // echo-aware voice detector (gate.js), optional
+let micStream = null;
+let curState = "idle";
 let ttsRate = 24000;
 let live = false; // a call is active
 let ready = false; // the server has connected to TTS: only then do we send what we heard
@@ -65,6 +69,7 @@ async function init() {
 function showProblem(text) { el.problem.textContent = text; el.problem.hidden = !text; }
 
 function setState(name) {
+  curState = name;
   const [cls, text] = STATES[name] || STATES.idle;
   el.dot.className = "dot " + cls;
   el.status.textContent = text;
@@ -97,6 +102,7 @@ function onUser(text, final) {
 function onUserDrop() { userBubble?.remove(); userBubble = null; }
 
 function onAssistantDelta(text) {
+  barge.recent = (barge.recent + text).slice(-300);
   if (!botBubble) botBubble = lastBot = bubble("assistant", "");
   botBubble.textContent += text;
   el.log.scrollTop = el.log.scrollHeight;
@@ -128,7 +134,7 @@ function playChunk(data) {
   buf.copyToChannel(f32, 0);
   const src = playCtx.createBufferSource();
   src.buffer = buf;
-  src.connect(playCtx.destination);
+  src.connect(playGain);
   // A small head start for the first chunk of a turn, so a late next chunk does not click.
   if (sources.size === 0) nextTime = Math.max(nextTime, playCtx.currentTime + 0.1);
   const at = Math.max(playCtx.currentTime + 0.02, nextTime);
@@ -195,7 +201,114 @@ function stopRecognition() {
 
 function heard(text, final) {
   text = text.trim();
-  if (text && ready) send({ type: "heard", text, final });
+  if (!text || !ready || !passesGate(text, final)) return;
+  barge.last = text;
+  send({ type: "heard", text, final });
+}
+
+// ---------------------------------------------------------------- not hearing herself, barge-in
+//
+// The browser's speech recognition hears the speakers too, and we cannot filter its audio. So the gate
+// (gate.js) judges the *sound* and this code decides which *words* count:
+//  - while the assistant is busy, text reaches the server only when the person at the mic is speaking
+//    (loudly enough over her echo), or it is a stop word she did not say herself;
+//  - two stages, like Eva: their voice over hers ducks her volume, a stop (or real words, judged by the
+//    server) cuts her off, a short sound just restores the volume.
+// Without AudioWorklet there is no gate: everything is sent and the server's text checks are the only guard.
+
+const STOP_WORDS = new Set(["стоп", "зачекай", "почекай", "стривай", "досить", "stop", "wait"]);
+const DUCK_AFTER_MS = 400;
+const STOP_BY_SOUND_MS = 1500;
+const DUCK_LEVEL = 0.5;
+const NEAR_WINDOW_MS = 1200; // transcripts lag behind the sound
+const NEAR_WINDOW_FINAL_MS = 2500; // a final result lags more, and losing it loses the whole turn
+const AFTER_AUDIO_MS = 1500; // her echo tail
+
+const barge = {
+  audible: false, audibleEndedAt: 0, speaking: false, speechEndedAt: 0,
+  stage: "idle", timers: [], recent: "", last: "",
+};
+
+const words = (text) => text.toLowerCase().replace(/[ʼ’`]/g, "'").split(/[^а-яіїєґa-z'-]+/i).filter(Boolean);
+
+function setPlayVolume(level) {
+  if (playGain) playGain.gain.setTargetAtTime(level, playCtx.currentTime, 0.02); // a ramp, not a click
+}
+
+function bargeReset() {
+  barge.timers.forEach(clearTimeout);
+  barge.timers = [];
+  barge.stage = "idle";
+  barge.last = "";
+  setPlayVolume(1);
+}
+
+// Words of the user: what she herself said lately is her echo, stop words included.
+function ownWords(text) {
+  const echo = new Set(words(barge.recent));
+  return words(text).filter((w) => !echo.has(w));
+}
+
+function guarded() {
+  if (!gate) return false;
+  return barge.audible || curState === "thinking" || curState === "speaking"
+    || Date.now() - barge.audibleEndedAt < AFTER_AUDIO_MS;
+}
+
+function passesGate(text, final) {
+  if (!guarded()) return true;
+  if (barge.speaking || Date.now() - barge.speechEndedAt < (final ? NEAR_WINDOW_FINAL_MS : NEAR_WINDOW_MS)) return true;
+  return ownWords(text).some((w) => STOP_WORDS.has(w)); // a quiet «стоп» over loud speakers
+}
+
+function onGate(sig) {
+  if ("audible" in sig) {
+    if (barge.audible && !sig.audible) barge.audibleEndedAt = Date.now();
+    barge.audible = sig.audible;
+    return;
+  }
+  barge.speaking = sig.speaking;
+  if (sig.speaking) {
+    if (!barge.audible || barge.stage !== "idle") return;
+    barge.timers.push(setTimeout(() => {
+      if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; setPlayVolume(DUCK_LEVEL); }
+    }, DUCK_AFTER_MS));
+    // They keep talking over her and none of the words that came through are theirs (only her echo, or
+    // nothing): they want the floor.
+    barge.timers.push(setTimeout(() => {
+      if (barge.speaking && barge.stage === "ducked" && !ownWords(barge.last).length) send({ type: "interrupt" });
+    }, STOP_BY_SOUND_MS));
+  } else {
+    barge.speechEndedAt = Date.now();
+    barge.timers.forEach(clearTimeout);
+    barge.timers = [];
+    if (barge.stage === "ducked") {
+      // A short sound: wait briefly for its transcript, else it was a cough, «угу» or her echo.
+      barge.timers.push(setTimeout(() => {
+        if (barge.stage === "ducked" && !barge.speaking) { barge.stage = "idle"; setPlayVolume(1); }
+      }, 400));
+    }
+  }
+}
+
+async function setupGate() {
+  if (!playCtx.audioWorklet || typeof AudioWorkletNode === "undefined") return;
+  try {
+    await playCtx.audioWorklet.addModule("gate.js");
+    const node = new AudioWorkletNode(playCtx, "echo-gate", {
+      numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1],
+      processorOptions: { near: Number(params.get("near")) || 0.06 }, // ?near=0.04 more sensitive, 0.09 less
+    });
+    node.port.onmessage = (e) => onGate(e.data);
+    playCtx.createMediaStreamSource(micStream).connect(node, 0, 0);
+    playGain.connect(node, 0, 1);
+    const silent = playCtx.createGain();
+    silent.gain.value = 0; // a node must be connected to run; it outputs nothing anyway
+    node.connect(silent).connect(playCtx.destination);
+    gate = node;
+  } catch (e) {
+    gate = null; // no gate: the server's checks alone
+  }
 }
 
 // ---------------------------------------------------------------- socket
@@ -207,13 +320,14 @@ function onMessage(ev) {
   const m = JSON.parse(ev.data);
   switch (m.type) {
     case "ready": ttsRate = m.sample_rate; ready = true; break;
-    case "state": setState(m.state); break;
+    case "state": setState(m.state); if (m.state === "listening") bargeReset(); break;
     case "user": onUser(m.text, m.final); break;
     case "user_drop": onUserDrop(); break;
     case "assistant_delta": onAssistantDelta(m.text); break;
     case "turn_end": botBubble = null; turnEnded = true; maybePlayed(); break;
     case "clear":
       stopPlayback();
+      bargeReset();
       (botBubble || lastBot)?.classList.add("cut");
       botBubble = null;
       break;
@@ -228,10 +342,14 @@ async function start() {
   try {
     // Created in the click handler: browsers only allow audio after a user gesture.
     playCtx = new AudioContext();
-    // The browser asks for the microphone itself and recognizes speech with Google, for free.
-    // A throwaway getUserMedia first, so a denied permission is reported clearly.
-    const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
-    probe.getTracks().forEach((t) => t.stop());
+    playGain = playCtx.createGain();
+    playGain.connect(playCtx.destination);
+    // Speech recognition opens the microphone itself (Google, free). This second capture, with the browser's
+    // echo canceller on, only measures levels for the gate, and reports a denied permission clearly.
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
+    await setupGate();
 
     ws = new WebSocket(WS_URL);
     ws.binaryType = "arraybuffer";
@@ -257,6 +375,11 @@ function stop(problem) {
   if (ws) { ws.onclose = null; try { ws.close(); } catch (e) { /* closed */ } ws = null; }
   stopRecognition();
   stopPlayback();
+  bargeReset();
+  micStream?.getTracks().forEach((t) => t.stop());
+  micStream = null;
+  gate = null;
+  playGain = null;
   playCtx?.close(); playCtx = null;
   userBubble = botBubble = null;
   el.talk.textContent = "Почати розмову";

@@ -57,6 +57,7 @@ _WORD_RE = re.compile(r"[\w'’ʼ-]+", re.UNICODE)
 _MAX_BACKCHANNEL_WORDS = 3
 _TAKEOVER_MIN_WORDS = 2
 _ECHO_OVERLAP = 0.6
+_STEM = 5
 
 
 def _words(text: str) -> list[str]:
@@ -74,8 +75,9 @@ def _is_echo(words: list[str], assistant_recent: str) -> bool:
     content = [w for w in words if len(w) >= 3]
     if len(content) < 2 or not assistant_recent:
         return False
-    spoken = set(_words(assistant_recent))
-    overlap = sum(1 for w in content if w in spoken)
+    # By the first letters: the recognizer renders her words with other endings («речення» / «реченні»).
+    spoken = {w[:_STEM] for w in _words(assistant_recent)}
+    overlap = sum(1 for w in content if w[:_STEM] in spoken)
     return overlap / len(content) >= _ECHO_OVERLAP
 
 

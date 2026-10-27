@@ -2,7 +2,7 @@
 
 // Backend: the same origin by default; for a separately hosted page open it with ?backend=https://host
 const params = new URLSearchParams(location.search);
-const BACKEND = (params.get("backend") || location.origin).replace(/\/$/, "");
+const BACKEND = (params.get("backend") || (window.APP_CONFIG && window.APP_CONFIG.BACKEND_URL) || location.origin).replace(/\/$/, "");
 const WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
 
 const $ = (id) => document.getElementById(id);

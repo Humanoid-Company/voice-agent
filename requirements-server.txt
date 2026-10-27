@@ -1,0 +1,6 @@
+# Render: pip install -r requirements-server.txt (same versions as uv.lock)
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+websockets==17.3
+openai==3.39.0
+python-dotenv==1.2.4

@@ -26,6 +26,11 @@ if cfg.frontend_origins:
 WEB = Path(__file__).resolve().parent.parent / "web"
 
 
+@app.get("/healthz")
+async def healthz() -> dict:
+    return {"ok": True}
+
+
 @app.get("/api/config")
 async def api_config() -> dict:
     missing = [] if cfg.openai_api_key else ["OPENAI_API_KEY"]

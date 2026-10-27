@@ -1,0 +1,26 @@
+# Render Blueprint for the backend (server/). Render -> New -> Blueprint -> this repo (branch alternative).
+# Secrets marked sync: false are entered in the Render dashboard, never committed.
+services:
+  - type: web
+    name: diff-voice-agent-backend
+    runtime: python
+    plan: free
+    branch: alternative
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: uvicorn server.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: RESPEECHER_API_KEY # empty = Respeecher is not offered on the page
+        sync: false
+      - key: SONIOX_API_KEY # empty = Soniox is not offered on the page
+        sync: false
+      - key: FRONTEND_ORIGINS # e.g. https://diff-voice-agent.vercel.app (comma-separated)
+        sync: false
+      - key: ACCESS_CODE # set = only people who know it can start a call; empty = anyone with the link (spends your keys)
+        sync: false

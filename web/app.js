@@ -8,7 +8,7 @@ const WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
 const $ = (id) => document.getElementById(id);
 const el = {
   dot: $("dot"), status: $("status"), problem: $("problem"), provider: $("provider"), voice: $("voice"),
-  recog: $("recog"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
+  recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
 };
 
 const STATES = {
@@ -29,6 +29,7 @@ let gate = null; // echo-aware noise gate (gate.js), optional
 let gateTrack = null; // the gate's output: the microphone, shut while she is audible
 let micStream = null;
 let curState = "idle";
+let micMuted = false; // the user turned the microphone off: nothing is heard until they turn it on
 let ttsRate = 24000;
 let live = false; // a call is active
 let ready = false; // the server has connected to TTS: only then do we send what we heard
@@ -244,7 +245,7 @@ function startRecognition() {
     }
   };
   recognition.onend = () => {
-    if (!live) return;
+    if (!live || micMuted) return;
     setTimeout(() => beginRecognizer(), 200);
   };
   beginRecognizer();
@@ -300,7 +301,7 @@ function stopRecognition() {
 
 function heard(text, final) {
   text = text.trim();
-  if (!text || !ready || !passesGate(text, final)) return;
+  if (!text || !ready || micMuted || !passesGate(text, final)) return;
   barge.last = text;
   send({ type: "heard", text, final });
 }
@@ -465,6 +466,7 @@ async function start() {
     startRecognition();
     save("provider", el.provider.value);
     save("voice:" + el.provider.value, el.voice.value);
+    el.micMute.hidden = false;
     el.talk.textContent = "Завершити розмову";
     el.talk.classList.add("danger");
     el.talk.disabled = false;
@@ -488,6 +490,8 @@ function stop(problem) {
   playGain = null;
   playCtx?.close(); playCtx = null;
   userBubble = botBubble = null;
+  setMicMuted(false);
+  el.micMute.hidden = true;
   el.talk.textContent = "Почати розмову";
   el.talk.classList.remove("danger");
   const can = providers.length > 0 && !!SpeechRec;
@@ -499,6 +503,26 @@ function stop(problem) {
 
 el.talk.onclick = () => (live ? stop("") : start());
 el.interrupt.onclick = () => send({ type: "interrupt" });
+
+// Mic off: the gate and the recognizer get silence (the track is disabled, the recognizer is stopped), so the
+// agent hears nothing, her own voice included; she can still finish what she is saying. The conversation stays.
+function setMicMuted(muted) {
+  if (muted === micMuted) return;
+  micMuted = muted;
+  micStream?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
+  el.micMute.textContent = muted ? "Увімкнути мікрофон" : "Вимкнути мікрофон";
+  el.micMute.setAttribute("aria-pressed", String(muted));
+  el.micMute.classList.toggle("primary", muted);
+  if (!live) return;
+  if (muted) {
+    stopRecognition();
+    onUserDrop(); // an unfinished phrase is not sent
+    showRecog("🎤 Мікрофон вимкнено");
+  } else {
+    startRecognition();
+  }
+}
+el.micMute.onclick = () => setMicMuted(!micMuted);
 el.provider.onchange = fillVoices;
 el.clear.onclick = () => {
   el.log.innerHTML = '<p class="muted empty">Тут з\'являтиметься текст розмови.</p>';

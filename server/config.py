@@ -37,6 +37,9 @@ class Config:
     soniox_voices: list[str] = field(default_factory=lambda: _list("SONIOX_VOICES", "Adrian"))
     soniox_tts_sample_rate: int = field(default_factory=lambda: _int("SONIOX_TTS_SAMPLE_RATE", 24000))
 
+    web_search_api_key: str = field(default_factory=lambda: os.getenv("WEB_SEARCH_API_KEY", ""))
+    web_search_timeout_s: float = field(default_factory=lambda: float(_int("WEB_SEARCH_TIMEOUT_S", 9)))
+
     access_code: str = field(default_factory=lambda: os.getenv("ACCESS_CODE", ""))
     frontend_origins: list[str] = field(default_factory=lambda: _list("FRONTEND_ORIGINS", ""))
 

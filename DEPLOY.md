@@ -20,6 +20,7 @@
 | `OPENAI_API_KEY` | ключ OpenAI |
 | `RESPEECHER_API_KEY` | ключ Respeecher; порожній — Respeecher не з'явиться на сторінці |
 | `SONIOX_API_KEY` | ключ Soniox; порожній — Soniox не з'явиться |
+| `WEB_SEARCH_API_KEY` | ключ Tavily для пошуку в інтернеті (той самий, що в Eva); порожній — агент каже, що не знає свіжого |
 | `FRONTEND_ORIGINS` | адреса з Vercel, напр. `https://diff-voice-agent.vercel.app` (кілька — через кому) |
 | `ACCESS_CODE` | код доступу. **Задайте:** без нього будь-хто з посиланням витрачає ваші ключі |
 | `OPENAI_MODEL` | текстова модель OpenAI, за замовчуванням `gpt-4.1-mini` |

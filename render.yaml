@@ -20,6 +20,8 @@ services:
         sync: false
       - key: SONIOX_API_KEY # empty = Soniox is not offered on the page
         sync: false
+      - key: WEB_SEARCH_API_KEY # Tavily; empty = the agent says it has no internet
+        sync: false
       - key: FRONTEND_ORIGINS # e.g. https://diff-voice-agent.vercel.app (comma-separated)
         sync: false
       - key: ACCESS_CODE # set = only people who know it can start a call; empty = anyone with the link (spends your keys)

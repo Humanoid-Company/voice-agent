@@ -31,9 +31,15 @@ class TTSError(RuntimeError):
 
 @dataclass
 class _Msg:
-    kind: Literal["audio", "end", "error"]
+    kind: Literal["audio", "end", "error", "info"]
     audio: bytes = b""
     error: str = ""
+    raw: str = ""  # the provider's reply with long strings (audio) shortened, for error messages
+
+
+def _summary(reply: dict) -> str:
+    short = {k: (f"<{len(v)} chars>" if isinstance(v, str) and len(v) > 60 else v) for k, v in reply.items()}
+    return json.dumps(short, ensure_ascii=False)[:300]
 
 
 class _MuxTTS:
@@ -71,6 +77,8 @@ class _MuxTTS:
         queue: asyncio.Queue[_Msg] = asyncio.Queue()
         self._queues[ctx] = queue
         finished = False
+        got_audio = False
+        seen: list[str] = []  # the provider's replies, to say what went wrong when no audio comes
         try:
             for m in self._start_messages(ctx, text):
                 await ws.send(json.dumps(m))
@@ -79,13 +87,18 @@ class _MuxTTS:
                     msg = await asyncio.wait_for(queue.get(), _CHUNK_TIMEOUT_S)
                 except TimeoutError:
                     raise TTSError("tts timeout") from None
+                if len(seen) < 6 and (msg.kind != "audio" or not got_audio):
+                    seen.append(msg.raw)
                 if msg.kind == "error":
                     finished = True
                     raise TTSError(msg.error)
                 if msg.kind == "end":
                     finished = True
+                    if not got_audio:
+                        raise TTSError(f"{type(self).__name__} returned no audio. Replies: {seen}")
                     return
                 if msg.audio:
+                    got_audio = True
                     yield msg.audio
         finally:
             self._queues.pop(ctx, None)
@@ -115,9 +128,12 @@ class _MuxTTS:
     async def _read(self, ws: websockets.ClientConnection) -> None:
         try:
             async for raw in ws:
-                ctx, msg = self._route(json.loads(raw))
+                reply = json.loads(raw)
+                ctx, msg = self._route(reply)
                 if msg is None:
-                    continue
+                    log.warning("tts: unrecognized reply %s", _summary(reply))
+                    msg = _Msg("info")  # not an error, but shown if the generation ends without audio
+                msg.raw = _summary(reply)
                 if ctx is None and len(self._queues) == 1:
                     ctx = next(iter(self._queues))
                 if ctx in self._queues:

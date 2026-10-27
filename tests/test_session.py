@@ -170,3 +170,18 @@ def test_start_tells_the_page_it_is_listening():
         assert types(out)[:2] == ["ready", "state"] and out["json"][1]["state"] == "listening"
 
     asyncio.run(go())
+
+
+def test_her_echo_glued_to_the_users_words_is_not_sent_to_the_model():
+    async def go():
+        llm = FakeLLM(answer="У мене все добре, дякую, що спитав. А як у тебе справи?")
+        s, out = make(llm)
+        await s.start()
+        await say(s, "Розкажи як справи")
+        await settle(s)
+        await s.on_client({"type": "played"})
+        await s.on_heard("дякую що спитав А як у тебе справи Нормально що порадиш мені зробити", True)
+        await settle(s)
+        assert llm.calls[1][-1] == {"role": "user", "content": "Нормально що порадиш мені зробити"}
+
+    asyncio.run(go())

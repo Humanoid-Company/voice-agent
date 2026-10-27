@@ -110,3 +110,34 @@ def classify_interjection(text: str, *, assistant_recent: str = "") -> Interrupt
     if len(meaningful) >= _TAKEOVER_MIN_WORDS:
         return "takeover"
     return "unclear"
+
+
+_ECHO_RUN = 3  # this many words in a row, in her order, are her voice and not the user's
+
+
+def strip_echo(text: str, assistant_recent: str) -> str:
+    """Cut the stretches of `text` that repeat what the assistant just said, word for word.
+
+    Speech recognition hears the speakers and glues her last words to the user's reply («…дякую що спитав
+    А як у тебе справи» + «Нормально, що порадиш»). Whole-utterance echo checks miss that, as the user's own
+    words dilute the overlap. A run of three or more words that follows her own word order is her; shorter
+    overlaps are left alone, since people do repeat a word or two. Returns `text` itself when nothing matches.
+    """
+    raw = _WORD_RE.findall((text or "").replace("’", "'").replace("ʼ", "'"))  # as said: the model gets these
+    tokens = [w.lower() for w in raw]
+    spoken = [w[:_STEM] for w in _words(assistant_recent)]
+    if len(tokens) < _ECHO_RUN or len(spoken) < _ECHO_RUN:
+        return text
+    runs = {tuple(spoken[i : i + _ECHO_RUN]) for i in range(len(spoken) - _ECHO_RUN + 1)}
+    stems = [w[:_STEM] for w in tokens]
+    echo = [False] * len(tokens)
+    for i in range(len(tokens) - _ECHO_RUN + 1):
+        if tuple(stems[i : i + _ECHO_RUN]) in runs:
+            echo[i : i + _ECHO_RUN] = [True] * _ECHO_RUN
+    if not any(echo):
+        return text
+    # A stray «в» / «а» glued to her words (the recognizer's rendering of her «у») goes with them.
+    for i, t in enumerate(tokens):
+        if not echo[i] and len(t) <= 2 and ((i > 0 and echo[i - 1]) or (i + 1 < len(tokens) and echo[i + 1])):
+            echo[i] = True
+    return " ".join(w for w, e in zip(raw, echo, strict=True) if not e)

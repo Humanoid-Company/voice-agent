@@ -23,12 +23,13 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .interrupt_intent import classify_interjection
+from .interrupt_intent import classify_interjection, strip_echo
 from .sentences import SentenceSplitter
 
 log = logging.getLogger(__name__)
 
 _ECHO_TAIL_S = 3.0  # right after the assistant stopped, its tail may still come back through the mic
+_ECHO_STRIP_S = 8.0  # her last words may be glued to the user's reply for this long after she stopped
 
 
 class VoiceSession:
@@ -90,8 +91,11 @@ class VoiceSession:
 
     async def on_heard(self, text: str, final: bool) -> None:
         """What the browser's speech recognition heard: interim text, or the final text of an utterance."""
-        text = text.strip()
+        text = self._without_echo(text.strip())
         self._final, self._partial = (text, "") if final else ("", text)
+        if final and not text:  # nothing but her own voice
+            await self._j({"type": "user_drop"})
+            return
         if text:
             await self._j({"type": "user", "text": text, "final": False})
             if self.state in ("thinking", "speaking"):
@@ -188,6 +192,12 @@ class VoiceSession:
             await self._set_state("listening")
 
     # ------------------------------------------------------------------ helpers
+
+    def _without_echo(self, text: str) -> str:
+        busy = self.state in ("thinking", "speaking")
+        if text and (busy or time.monotonic() - self._last_audio_at < _ECHO_STRIP_S):
+            return strip_echo(text, self._recent)
+        return text
 
     async def _set_state(self, state: str) -> None:
         if state != self.state:

@@ -35,6 +35,8 @@ _MONTHS = (
 class Persona:
     name: str = DEFAULT_NAME
     language: str = "uk"
+    character: str = "eva"  # server/characters.py: who speaks and how
+    emotion: str = "emotional"  # calm / normal / emotional
 
     @property
     def language_name(self) -> str:

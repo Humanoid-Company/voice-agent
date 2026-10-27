@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .characters import CHARACTERS, DEFAULT_CHARACTER, DEFAULT_EMOTION, EMOTIONS
 from .config import Config
 from .llm import OpenAILLM
 from .persona import SUPPORTED, Persona
@@ -89,6 +90,10 @@ async def ws_call(ws: WebSocket) -> None:
         first = json.loads(await ws.receive_text())
         provider = str(first.get("provider", ""))
         language = str(first.get("language") or "uk")
+        character = first.get("character") if first.get("character") in CHARACTERS else DEFAULT_CHARACTER
+        emotion = first.get("emotion") if first.get("emotion") in EMOTIONS else DEFAULT_EMOTION
+        if CHARACTERS[character].ukrainian_only:
+            language = "uk"  # its jokes and curses are Ukrainian
         if language not in SUPPORTED.get(provider, set()):
             language = "uk"  # a language this provider cannot speak: the default one
         try:
@@ -104,7 +109,12 @@ async def ws_call(ws: WebSocket) -> None:
             cfg=cfg,
             provider=provider,
             voice=getattr(tts, "voice", ""),
-            persona=Persona(language=language),
+            persona=Persona(
+                name=CHARACTERS[character].label if CHARACTERS[character].character else Persona().name,
+                language=language,
+                character=character,
+                emotion=emotion,
+            ),
             tts_factory=lambda p, v, lang: make_tts(p, v, cfg, lang),
             voices_for=lambda p, lang: list_voices(cfg, p, lang),
             history=first.get("history"),

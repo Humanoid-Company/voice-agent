@@ -27,6 +27,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from .characters import CHARACTERS, EMOTIONS, find_character, first_voice_of, voice_gender
 from .config import Config
 from .interrupt_intent import classify_interjection, strip_echo
 from .llm import TurnContext
@@ -99,6 +100,20 @@ TOOLS = [
         ["language"],
     ),
     _fn(
+        "change_character",
+        "Switch to another character when the user asks for it by name («поклич Толіка», «хочу поговорити з котом», "
+        "«давай знову як Єва»). Characters: " + ", ".join(f"{c.label}" for c in CHARACTERS.values()) + ".",
+        {"character": {"type": "string", "description": "The character's name as the user said it"}},
+        ["character"],
+    ),
+    _fn(
+        "change_emotion",
+        "Make the delivery calmer or more emotional when the user asks for it («говори емоційніше», «заспокойся», "
+        "«говори рівніше»).",
+        {"level": {"type": "string", "enum": list(EMOTIONS), "description": "calm, normal or emotional"}},
+        ["level"],
+    ),
+    _fn(
         "end_conversation",
         "End the call when the user says goodbye or asks to finish. Say a short goodbye first.",
         {},
@@ -127,6 +142,7 @@ class VoiceSession:
         self.cfg = cfg or Config()
         self.provider, self.voice = provider, voice
         self.persona = persona or Persona()
+        self._default_name = self.persona.name  # the plain character's name: kept while another character speaks
         self._tts_language = self.persona.language  # what the current TTS speaks: changes between sentences
         self._tts_factory = tts_factory
         self._voices_for = voices_for
@@ -175,6 +191,8 @@ class VoiceSession:
                 "name": self.persona.name,
                 "language": self.persona.language,
                 "recognition": self.persona.recognition,
+                "character": self.persona.character,
+                "emotion": self.persona.emotion,
             }
         )
         await self._j({"type": "state", "state": "listening"})  # _set_state would skip it: already "listening"
@@ -208,6 +226,11 @@ class VoiceSession:
             await self.resume()
         elif kind == "voice":
             await self.request_voice(str(msg.get("provider") or self.provider), str(msg.get("voice") or ""))
+        elif kind == "style":  # the page's selectors: the character and how emotional the delivery is
+            if msg.get("character") in CHARACTERS:
+                await self.set_character(str(msg["character"]))
+            if msg.get("emotion") in EMOTIONS:
+                await self.set_emotion(str(msg["emotion"]))
         elif kind == "history":  # the page opened another conversation, or started a new one
             await self.interrupt(reason="history")
             self.history = sanitize_history(msg.get("history"))
@@ -388,6 +411,16 @@ class VoiceSession:
     async def run_tool(self, name: str, args: dict) -> str:
         if name == "change_voice":
             return await self._tool_change_voice(args)
+        if name == "change_character":
+            key = find_character(str(args.get("character") or ""))
+            if not key:
+                return "Такого персонажа немає. Є: " + ", ".join(c.label for c in CHARACTERS.values()) + "."
+            return await self.set_character(key)
+        if name == "change_emotion":
+            level = str(args.get("level") or "")
+            if level not in EMOTIONS:
+                return "Рівні емоційності: " + ", ".join(EMOTIONS) + "."
+            return await self.set_emotion(level)
         if name == "set_assistant_name":
             return await self._tool_set_name(args)
         if name == "change_language":
@@ -412,17 +445,23 @@ class VoiceSession:
         return f"Голос «{hit['label']}» вмикається. Скажи кілька слів уже ним, коротко підтвердь."
 
     async def _tool_set_name(self, args: dict) -> str:
+        character = CHARACTERS[self.persona.character]
+        if character.character:  # Толік is Толік: only the plain character can be renamed
+            return f"Тебе звати {character.label}, це ім'я персонажа, його не можна змінити. Скажи про це коротко, у своєму образі."
         name = sanitize_name(str(args.get("name") or ""))
         if not name:
             return "Таке ім'я не підходить: потрібне одне-два слова з літер, до 24 символів. Попроси інше."
-        self.persona.name = name
-        await self._j({"type": "persona", "name": name})
+        self.persona.name = self._default_name = name
+        await self._persona_message()
         return f"Тепер тебе звати {name}. Коротко підтвердь."
 
     async def _tool_change_language(self, args: dict) -> str:
         code = find_language(str(args.get("language") or ""))
         if not code:
             return "Такої мови немає. Доступні: " + ", ".join(v[0] for v in LANGUAGES.values()) + "."
+        character = CHARACTERS[self.persona.character]
+        if character.ukrainian_only and code != "uk":
+            return f"{character.label} говорить лише українською: жарти й лайка тут українські. Скажи про це коротко, у своєму образі. Щоб заговорити іншою мовою, треба спершу змінити персонажа."
         if code not in SUPPORTED.get(self.provider, set()):
             have = ", ".join(LANGUAGES[c][0] for c in sorted(SUPPORTED.get(self.provider, set())))
             return f"Цей голос ({self.provider}) говорить лише: {have}. Скажи, що іншою мовою не вмієш."
@@ -430,6 +469,62 @@ class VoiceSession:
         self._pending = {**(self._pending or {}), "language": code}
         await self._j({"type": "language", "code": code, "recognition": self.persona.recognition})
         return f"Мову змінено: {self.persona.language_name}. Далі говори лише нею, коротко підтвердь нею."
+
+    # ------------------------------------------------------------------ character and emotion
+
+    async def _persona_message(self) -> None:
+        c = CHARACTERS[self.persona.character]
+        await self._j(
+            {
+                "type": "persona",
+                "name": self.persona.name,
+                "character": self.persona.character,
+                "emotion": self.persona.emotion,
+                "description": c.description,
+            }
+        )
+
+    async def set_character(self, key: str) -> str:
+        """Another character speaks from the next answer. Returns what the model is told about it."""
+        c = CHARACTERS[key]
+        if key == self.persona.character:
+            return f"Ти вже {c.label}."
+        self.persona.character = key
+        self.persona.name = c.label if c.character else self._default_name
+        extra = ""
+        if c.ukrainian_only and self.persona.language != "uk":
+            # its jokes and curses are Ukrainian: the language goes back to Ukrainian, with the voice and the recognizer
+            self.persona.language = "uk"
+            self._pending = {**(self._pending or {}), "language": "uk"}
+            await self._j({"type": "language", "code": "uk", "recognition": self.persona.recognition})
+            extra = " Мова повернулась на українську: цей персонаж говорить лише нею."
+        await self._pick_voice_for(c)
+        await self._persona_message()
+        if not c.character:
+            return f"Тепер ти знову просто {c.label}: звичайна приязна помічниця.{extra}"
+        return f"Тепер ти {c.label}. Відповідай у цьому образі з наступної фрази, коротко представся ним.{extra}"
+
+    async def _pick_voice_for(self, c) -> None:
+        """A character prefers a woman's or a man's voice. Only the voice that does not fit is replaced, so a voice
+        the user chose for it by hand stays."""
+        if self._voices_for is None or self._tts_factory is None:
+            return
+        provider = str((self._pending or {}).get("provider") or self.provider)
+        language = str((self._pending or {}).get("language") or self._tts_language)
+        voices = await self._voices_for(provider, language)
+        current = str((self._pending or {}).get("voice") or self.voice)
+        have = voice_gender(voices, current)
+        if have and have != c.gender:
+            hit = first_voice_of(voices, c.gender)
+            if hit:
+                self._pending = {**(self._pending or {}), "provider": provider, "voice": hit["id"]}
+                if self.state in ("listening", "paused") and not self._awaiting_played:
+                    await self._apply_pending()
+
+    async def set_emotion(self, level: str) -> str:
+        self.persona.emotion = level
+        await self._persona_message()
+        return f"Манера змінена: {EMOTIONS[level][0].lower()}. Коротко підтвердь і говори так далі."
 
     # ------------------------------------------------------------------ voice change
 

@@ -22,9 +22,8 @@
 | `SONIOX_API_KEY` | ключ Soniox; порожній — Soniox не з'явиться |
 | `WEB_SEARCH_API_KEY` | ключ Tavily для пошуку в інтернеті (той самий, що в Eva); порожній — агент каже, що не знає свіжого |
 | `FRONTEND_ORIGINS` | адреса з Vercel, напр. `https://diff-voice-agent.vercel.app` (кілька — через кому) |
-| `ACCESS_CODE` | код доступу. **Задайте:** без нього будь-хто з посиланням витрачає ваші ключі |
 | `OPENAI_MODEL` | текстова модель OpenAI, за замовчуванням `gpt-4.1-mini` |
-| `RESPEECHER_VOICES`, `SONIOX_VOICES` | голоси через кому, якщо потрібні інші за замовчуванням (див. `.env.example`) |
+| `RESPEECHER_VOICES`, `SONIOX_VOICES` | необов'язково: запасні голоси, якщо API провайдера не віддасть список. Звичайно голоси бекенд бере з API сам |
 
 3. Перевірка: `https://<сервіс>.onrender.com/healthz` → `{"ok":true}`; `/api/config` покаже, які провайдери голосу підхопились і яких ключів бракує.
 

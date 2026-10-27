@@ -40,14 +40,4 @@ class Config:
     web_search_api_key: str = field(default_factory=lambda: os.getenv("WEB_SEARCH_API_KEY", ""))
     web_search_timeout_s: float = field(default_factory=lambda: float(_int("WEB_SEARCH_TIMEOUT_S", 9)))
 
-    access_code: str = field(default_factory=lambda: os.getenv("ACCESS_CODE", ""))
     frontend_origins: list[str] = field(default_factory=lambda: _list("FRONTEND_ORIGINS", ""))
-
-    def tts_providers(self) -> list[dict]:
-        """Providers that have a key — what the page offers in its selector."""
-        out = []
-        if self.respeecher_api_key:
-            out.append({"id": "respeecher", "label": "Respeecher", "voices": self.respeecher_voices})
-        if self.soniox_api_key:
-            out.append({"id": "soniox", "label": "Soniox", "voices": self.soniox_voices})
-        return out

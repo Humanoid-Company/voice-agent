@@ -33,8 +33,3 @@ def test_soniox_wire():
     assert msg.kind == "audio" and msg.audio == pcm
     assert tts._route({"stream_id": "s1", "terminated": True})[1].kind == "end"
     assert tts._route({"stream_id": "s1", "error_code": 400, "error_type": "t", "error_message": "m"})[1].kind == "error"
-
-
-def test_provider_list_depends_on_keys():
-    assert [p["id"] for p in Config(respeecher_api_key="r", soniox_api_key="").tts_providers()] == ["respeecher"]
-    assert [p["id"] for p in Config(respeecher_api_key="", soniox_api_key="s").tts_providers()] == ["soniox"]

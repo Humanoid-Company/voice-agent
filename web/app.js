@@ -8,7 +8,7 @@ const WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
 const $ = (id) => document.getElementById(id);
 const el = {
   dot: $("dot"), status: $("status"), problem: $("problem"), provider: $("provider"), voice: $("voice"),
-  codeRow: $("codeRow"), code: $("code"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
+  talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
 };
 
 const STATES = {
@@ -36,9 +36,9 @@ function load(key) { try { return localStorage.getItem(key); } catch (e) { retur
 function fillVoices() {
   const p = providers.find((x) => x.id === el.provider.value);
   el.voice.innerHTML = "";
-  for (const v of (p ? p.voices : [])) el.voice.add(new Option(v, v));
+  for (const v of (p ? p.voices : [])) el.voice.add(new Option(v.label, v.id));
   const saved = load("voice:" + el.provider.value);
-  if (saved && p && p.voices.includes(saved)) el.voice.value = saved;
+  if (saved && p && p.voices.some((v) => v.id === saved)) el.voice.value = saved;
 }
 
 async function init() {
@@ -47,7 +47,6 @@ async function init() {
   try {
     const cfg = await (await fetch(BACKEND + "/api/config")).json();
     providers = cfg.providers;
-    el.codeRow.hidden = !cfg.needs_code;
     if (cfg.missing.length) showProblem("На сервері не задано: " + cfg.missing.join(", "));
     el.provider.innerHTML = "";
     for (const p of providers) el.provider.add(new Option(p.label, p.id));
@@ -234,8 +233,7 @@ async function start() {
     const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
     probe.getTracks().forEach((t) => t.stop());
 
-    const code = el.code.value ? "?code=" + encodeURIComponent(el.code.value) : "";
-    ws = new WebSocket(WS_URL + code);
+    ws = new WebSocket(WS_URL);
     ws.binaryType = "arraybuffer";
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");

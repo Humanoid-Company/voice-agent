@@ -14,6 +14,7 @@ from .config import Config
 from .llm import OpenAILLM
 from .session import VoiceSession
 from .tts import TTSError, make_tts
+from .voices import tts_providers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -33,19 +34,16 @@ async def healthz() -> dict:
 
 @app.get("/api/config")
 async def api_config() -> dict:
+    providers = await tts_providers(cfg)
     missing = [] if cfg.openai_api_key else ["OPENAI_API_KEY"]
     return {
-        "providers": cfg.tts_providers(),
-        "needs_code": bool(cfg.access_code),
-        "missing": missing + ([] if cfg.tts_providers() else ["RESPEECHER_API_KEY or SONIOX_API_KEY"]),
+        "providers": providers,
+        "missing": missing + ([] if providers else ["RESPEECHER_API_KEY or SONIOX_API_KEY"]),
     }
 
 
 @app.websocket("/ws")
 async def ws_call(ws: WebSocket) -> None:
-    if cfg.access_code and ws.query_params.get("code") != cfg.access_code:
-        await ws.close(code=4401)
-        return
     await ws.accept()
     session: VoiceSession | None = None
     try:

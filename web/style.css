@@ -11,6 +11,7 @@
   --err: #d14343;
   --user: #eef3ff;
   --bot: #f1f2f4;
+  --switch-off: #cfd4dc;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -22,6 +23,7 @@
     --accent: #5b8ef5;
     --user: #1c2742;
     --bot: #1f232b;
+    --switch-off: #3a404c;
   }
 }
 * { box-sizing: border-box; }
@@ -92,3 +94,36 @@ label { display: block; font-weight: 600; margin-bottom: 6px; }
 .msg.assistant.cut::after { content: " …"; color: var(--muted); }
 .msg.system { color: var(--muted); font-size: 0.85rem; align-self: center; background: none; }
 .empty { margin: 0; }
+
+/* pause, switches, meter, devices, usage history */
+.dot.pause { background: var(--warn); }
+.name-line { margin-top: 10px; }
+.meter { margin: 6px 0 0; font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.head-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.label-row { display: flex; justify-content: space-between; align-items: baseline; }
+.label-row label { margin-bottom: 6px; }
+input[type="range"] { padding: 0; border: 0; background: none; accent-color: var(--accent); }
+.setting {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line);
+  font-weight: normal; cursor: pointer;
+}
+.setting-text { display: flex; flex-direction: column; min-width: 0; }
+.setting-title { font-weight: 600; }
+.setting .hint { margin: 2px 0 0; }
+.switch {
+  appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 52px; height: 30px; min-width: 52px;
+  margin: 0; padding: 0; border: 0; border-radius: 999px; background: var(--switch-off); position: relative;
+  cursor: pointer; transition: background 0.2s ease;
+}
+.switch::before {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s ease;
+}
+.switch:checked { background: var(--ok); }
+.switch:checked::before { transform: translateX(22px); }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+summary { cursor: pointer; font-weight: 600; font-size: 1.05rem; }
+.usage-table { margin-top: 10px; font-variant-numeric: tabular-nums; }
+.usage-table .urow { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.usage-table .urow.total { font-weight: 600; border-bottom: 0; }

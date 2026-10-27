@@ -18,9 +18,11 @@
         <span id="dot" class="dot" aria-hidden="true"></span>
         <span id="status">Не підключено</span>
       </div>
+      <p id="meter" class="meter" hidden></p>
 
       <p id="problem" class="hint err-text" hidden></p>
       <p id="recog" class="hint" hidden></p>
+      <p class="hint name-line">Асистент: <strong id="assistantName">Єва</strong>. Голосом можна сказати «тепер тебе звати …», «змін голос на …», «говори англійською», «досить, до побачення».</p>
 
       <div class="settings">
         <div>
@@ -35,21 +37,61 @@
 
       <button id="talk" class="btn primary big" disabled>Почати розмову</button>
       <div class="row">
+        <button id="pause" class="btn ghost" type="button" hidden>Пауза</button>
         <button id="micMute" class="btn ghost" type="button" aria-pressed="false" hidden>Вимкнути мікрофон</button>
-        <button id="interrupt" class="btn ghost" hidden>Перебити</button>
+        <button id="interrupt" class="btn ghost" type="button" hidden>Перебити</button>
       </div>
-      <p class="hint">Провайдера й голос можна змінити лише до початку розмови. Для перебивання скажіть «стоп», «зачекай»
+      <label class="setting" for="bgListen">
+        <span class="setting-text">
+          <span class="setting-title">Слухати фоном на паузі</span>
+          <span class="hint">На паузі агент мовчить, але запам'ятовує, про що говорять поруч, і може потім про це згадати. Вимкнено — на паузі він нічого не слухає.</span>
+        </span>
+        <input id="bgListen" type="checkbox" class="switch" role="switch" checked>
+      </label>
+      <p class="hint">Голос і провайдера можна міняти й посеред розмови. Пауза вмикається сама, якщо ви мовчите 90 с. Для перебивання скажіть «стоп», «зачекай»
         або просто почніть свою репліку. «Угу» й «ага» агента не зупиняють. Працює в Chrome, Edge і Safari. Агент не чує сам себе: звук мікрофона до розпізнавання проходить шлюз, закритий, поки агент говорить; голос поверх нього проходить, лише коли він гучніший за ехо від колонок. Який режим працює, видно в рядку з мікрофоном.</p>
+    </section>
+
+    <section class="card">
+      <h2>Звук і пристрої</h2>
+      <div class="label-row">
+        <label for="volume">Гучність</label>
+        <span id="volumeValue" class="muted small"></span>
+      </div>
+      <input id="volume" type="range" min="0" max="100" step="5" value="100">
+      <div class="settings">
+        <div>
+          <label for="micSelect">Мікрофон</label>
+          <select id="micSelect"><option value="">За замовчуванням</option></select>
+        </div>
+        <div>
+          <label for="speakerSelect">Динамік</label>
+          <select id="speakerSelect"><option value="">За замовчуванням</option></select>
+        </div>
+      </div>
+      <button id="devicesAllow" class="btn small-btn" type="button" hidden>Показати назви пристроїв</button>
+      <p id="devicesInfo" class="hint"></p>
     </section>
 
     <section class="card">
       <div class="card-head">
         <h2>Розмова</h2>
-        <button id="clear" class="btn ghost small-btn">Очистити</button>
+        <div class="head-actions">
+          <button id="copyChat" class="btn ghost small-btn" type="button">Скопіювати</button>
+          <button id="clear" class="btn ghost small-btn" type="button">Очистити</button>
+        </div>
       </div>
       <div id="log" class="log" aria-live="polite">
         <p class="muted empty">Тут з'являтиметься текст розмови.</p>
       </div>
+    </section>
+
+    <section class="card">
+      <details id="usageDetails">
+        <summary>Витрати за 30 днів</summary>
+        <div id="usageTable" class="usage-table"></div>
+        <p class="hint">Орієнтовно, у доларах: токени моделі, символи голосу й пошуки за цінами з налаштувань сервера (ціна Soniox там 0, якщо її не задано). Рахується в цьому браузері й не передається на сервер, тож інші пристрої й браузери тут не враховані.</p>
+      </details>
     </section>
   </main>
 </body>

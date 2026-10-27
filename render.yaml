@@ -22,5 +22,7 @@ services:
         sync: false
       - key: WEB_SEARCH_API_KEY # Tavily; empty = the agent says it has no internet
         sync: false
+      - key: TIMEZONE # for the date and the time of day in the prompt
+        value: Europe/Kyiv
       - key: FRONTEND_ORIGINS # e.g. https://diff-voice-agent.vercel.app (comma-separated)
         sync: false

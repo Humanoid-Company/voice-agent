@@ -9,6 +9,10 @@ const $ = (id) => document.getElementById(id);
 const el = {
   dot: $("dot"), status: $("status"), problem: $("problem"), provider: $("provider"), voice: $("voice"),
   recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
+  pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
+  assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
+  devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
+  usageTable: $("usageTable"), usageDetails: $("usageDetails"),
 };
 
 const STATES = {
@@ -17,6 +21,7 @@ const STATES = {
   listening: ["listen", "Слухаю"],
   thinking: ["think", "Думаю…"],
   speaking: ["speak", "Говорю"],
+  paused: ["pause", "Пауза"],
   error: ["err", "Помилка"],
 };
 
@@ -31,6 +36,10 @@ let micStream = null;
 let curState = "idle";
 let micMuted = false; // the user turned the microphone off: nothing is heard until they turn it on
 let ttsRate = 24000;
+let paused = false; // the user (or silence) paused the call: nobody is addressed
+let lastActivity = Date.now(); // the last time anybody spoke or was spoken to: 90 s of nothing pauses the call
+let recLang = params.get("lang") || "uk-UA"; // speech recognition language: the model can change it
+let micSource = null; // the microphone's node in the gate: replaced when another microphone is picked
 let live = false; // a call is active
 let ready = false; // the server has connected to TTS: only then do we send what we heard
 
@@ -99,7 +108,18 @@ function setState(name) {
   const [cls, text] = STATES[name] || STATES.idle;
   el.dot.className = "dot " + cls;
   el.status.textContent = text;
-  el.interrupt.hidden = !(live && (name === "thinking" || name === "speaking"));
+  if (name === "thinking" || name === "speaking") touch();
+  updateButtons();
+}
+
+function touch() { lastActivity = Date.now(); }
+
+// What the buttons show for the call's state.
+function updateButtons() {
+  el.pause.hidden = el.micMute.hidden = !live;
+  el.pause.textContent = paused ? "Продовжити" : "Пауза";
+  el.pause.classList.toggle("primary", paused);
+  el.interrupt.hidden = !(live && !paused && (curState === "thinking" || curState === "speaking"));
 }
 
 // ---------------------------------------------------------------- log
@@ -188,7 +208,6 @@ function stopPlayback() {
 // ---------------------------------------------------------------- listening (browser speech recognition)
 
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-const REC_LANG = params.get("lang") || "uk-UA";
 
 // Chrome, Edge and Safari recognize in the cloud (Google / Apple) and stream interim text. It ends by
 // itself after a while or a long silence, so it is restarted for as long as the call lasts.
@@ -211,7 +230,7 @@ function commitInterim() {
 
 function startRecognition() {
   recognition = new SpeechRec();
-  recognition.lang = REC_LANG;
+  recognition.lang = recLang;
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.onstart = () => showRecog(recogMode);
@@ -301,7 +320,10 @@ function stopRecognition() {
 
 function heard(text, final) {
   text = text.trim();
-  if (!text || !ready || micMuted || !passesGate(text, final)) return;
+  if (!text || !ready || micMuted) return;
+  if (paused && !final) return; // on pause only whole phrases are kept, the server does it
+  if (!paused && !passesGate(text, final)) return;
+  touch();
   barge.last = text;
   send({ type: "heard", text, final });
 }
@@ -331,8 +353,9 @@ const barge = {
 
 const words = (text) => text.toLowerCase().replace(/[ʼ’`]/g, "'").split(/[^а-яіїєґa-z'-]+/i).filter(Boolean);
 
+// level: barge-in ducking (1 / 0.5) times the user's volume slider.
 function setPlayVolume(level) {
-  if (playGain) playGain.gain.setTargetAtTime(level, playCtx.currentTime, 0.02); // a ramp, not a click
+  if (playGain) playGain.gain.setTargetAtTime(level * volume, playCtx.currentTime, 0.02); // a ramp, not a click
 }
 
 function bargeReset() {
@@ -362,6 +385,8 @@ function passesGate(text, final) {
 }
 
 function onGate(sig) {
+  if (paused) return;
+  if (sig.speaking) touch();
   if ("audible" in sig) {
     if (barge.audible && !sig.audible) barge.audibleEndedAt = Date.now();
     barge.audible = sig.audible;
@@ -404,7 +429,8 @@ async function setupGate() {
       processorOptions: { near: Number(params.get("near")) || 0.06 }, // ?near=0.04 more sensitive, 0.09 less
     });
     node.port.onmessage = (e) => onGate(e.data);
-    playCtx.createMediaStreamSource(micStream).connect(node, 0, 0);
+    micSource = playCtx.createMediaStreamSource(micStream);
+    micSource.connect(node, 0, 0);
     playGain.connect(node, 0, 1);
     // The gate's sound is never played: it only goes to the speech recognizer, as a track.
     const dest = playCtx.createMediaStreamDestination();
@@ -425,8 +451,20 @@ function onMessage(ev) {
   if (typeof ev.data !== "string") { playChunk(ev.data); return; }
   const m = JSON.parse(ev.data);
   switch (m.type) {
-    case "ready": ttsRate = m.sample_rate; ready = true; setState("listening"); break;
+    case "ready":
+      ttsRate = m.sample_rate;
+      ready = true;
+      if (m.name) el.assistantName.textContent = m.name;
+      if (m.recognition) setRecLang(m.recognition);
+      setState("listening");
+      break;
     case "state": setState(m.state); if (m.state === "listening") bargeReset(); break;
+    case "voice": onVoice(m); break;
+    case "language": setRecLang(m.recognition); break;
+    case "persona": el.assistantName.textContent = m.name; break;
+    case "usage": onUsage(m); break;
+    case "overheard": showRecog("🎤 На паузі, запам'ятовую фоном: " + m.count + " реплік"); break;
+    case "end": stop(""); bubble("system", "Розмову завершено."); break;
     case "user": onUser(m.text, m.final); break;
     case "user_drop": onUserDrop(); break;
     case "assistant_delta": onAssistantDelta(m.text); break;
@@ -450,48 +488,56 @@ async function start() {
     playCtx = new AudioContext();
     playGain = playCtx.createGain();
     playGain.connect(playCtx.destination);
+    setPlayVolume(1);
+    applySink();
     // Speech recognition opens the microphone itself (Google, free). This second capture, with the browser's
     // echo canceller on, only measures levels for the gate, and reports a denied permission clearly.
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    });
+    micStream = await getMic();
+    refreshDevices(); // the names are known now
     await setupGate();
 
     ws = new WebSocket(WS_URL);
     ws.binaryType = "arraybuffer";
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
-    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value });
+    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2) });
     live = true;
+    paused = false;
+    usageLast = { seconds: 0, cost: 0 };
+    usageNow = { seconds: 0, cost: 0, at: Date.now(), llm_in: 0, llm_out: 0, tts_chars: 0, searches: 0 };
+    touch();
     startRecognition();
     save("provider", el.provider.value);
     save("voice:" + el.provider.value, el.voice.value);
-    el.micMute.hidden = false;
     el.talk.textContent = "Завершити розмову";
     el.talk.classList.add("danger");
     el.talk.disabled = false;
-    el.provider.disabled = el.voice.disabled = true;
+    updateButtons();
   } catch (e) {
     stop(e.name === "NotAllowedError" ? "Немає доступу до мікрофона." : "Не вдалося почати: " + e.message);
   }
 }
 
 function stop(problem) {
+  if (live) finishUsage(); // the seconds since the last report still count
   live = false;
   ready = false;
+  paused = false;
   if (ws) { ws.onclose = null; try { ws.close(); } catch (e) { /* closed */ } ws = null; }
   stopRecognition();
   stopPlayback();
   bargeReset();
   micStream?.getTracks().forEach((t) => t.stop());
   micStream = null;
+  micSource = null;
   gate = null;
   gateTrack = null;
   playGain = null;
   playCtx?.close(); playCtx = null;
   userBubble = botBubble = null;
   setMicMuted(false);
-  el.micMute.hidden = true;
+  el.meter.hidden = true;
+  updateButtons();
   el.talk.textContent = "Почати розмову";
   el.talk.classList.remove("danger");
   const can = providers.length > 0 && !!SpeechRec;
@@ -523,10 +569,250 @@ function setMicMuted(muted) {
   }
 }
 el.micMute.onclick = () => setMicMuted(!micMuted);
-el.provider.onchange = fillVoices;
 el.clear.onclick = () => {
   el.log.innerHTML = '<p class="muted empty">Тут з\'являтиметься текст розмови.</p>';
   userBubble = botBubble = lastBot = null;
 };
 
+// ---------------------------------------------------------------- the voice, mid-call too
+
+function sendVoice() { send({ type: "voice", provider: el.provider.value, voice: el.voice.value }); }
+
+el.provider.onchange = () => { fillVoices(); if (live) sendVoice(); };
+el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); if (live) sendVoice(); };
+
+// The server changed the voice (the page's selector, or the user asked for it): the selectors follow, and the
+// audio that comes next has the new sample rate.
+function onVoice(m) {
+  ttsRate = m.sample_rate;
+  if (el.provider.value !== m.provider) { el.provider.value = m.provider; fillVoices(); }
+  if (![...el.voice.options].some((o) => o.value === m.voice)) el.voice.add(new Option(m.voice, m.voice));
+  el.voice.value = m.voice;
+  save("provider", m.provider);
+  save("voice:" + m.provider, m.voice);
+}
+
+function setRecLang(code) {
+  if (!code || code === recLang) return;
+  recLang = code;
+  if (recognition) { // it restarts by itself, now in the new language
+    recognition.lang = code;
+    try { recognition.abort(); } catch (err) { /* not started */ }
+  }
+}
+
+// ---------------------------------------------------------------- pause
+
+const IDLE_PAUSE_MS = (((window.APP_CONFIG || {}).IDLE_PAUSE_SECONDS ?? 90)) * 1000;
+
+function setPaused(on, why) {
+  if (!live || on === paused) return;
+  paused = on;
+  if (on) {
+    send({ type: "pause", background: el.bgListen.checked });
+    stopPlayback();
+    bargeReset();
+    onUserDrop();
+    if (why) bubble("system", why);
+    pauseRecognition();
+  } else {
+    send({ type: "resume" });
+    touch();
+    usageNow.at = Date.now();
+    if (!recognition && !micMuted) startRecognition();
+  }
+  updateButtons();
+}
+
+// On pause the recognizer goes on only if the user lets the agent listen in the background.
+function pauseRecognition() {
+  if (!el.bgListen.checked) {
+    stopRecognition();
+    showRecog("🎤 На паузі: нічого не слухаю");
+  } else if (!recognition && !micMuted) {
+    startRecognition();
+  }
+}
+
+el.pause.onclick = () => setPaused(!paused);
+el.bgListen.checked = load("bgListen") !== "0";
+el.bgListen.onchange = () => {
+  save("bgListen", el.bgListen.checked ? "1" : "0");
+  if (!paused) return;
+  send({ type: "pause", background: el.bgListen.checked }); // the server learns the new choice
+  pauseRecognition();
+};
+setInterval(() => {
+  if (!live || !ready || paused || !IDLE_PAUSE_MS || curState !== "listening" || barge.audible || micMuted) return;
+  if (Date.now() - lastActivity > IDLE_PAUSE_MS) {
+    setPaused(true, "Пауза: ніхто не говорив " + Math.round(IDLE_PAUSE_MS / 1000) + " с. Натисніть «Продовжити».");
+  }
+}, 5000);
+
+// ---------------------------------------------------------------- volume
+
+let volume = Math.min(1, Math.max(0, Number(load("volume") ?? 100) / 100));
+el.volume.value = String(Math.round(volume * 100));
+el.volumeValue.textContent = Math.round(volume * 100) + "%";
+el.volume.oninput = () => {
+  volume = Number(el.volume.value) / 100;
+  el.volumeValue.textContent = el.volume.value + "%";
+  save("volume", el.volume.value);
+  setPlayVolume(barge.stage === "ducked" ? DUCK_LEVEL : 1); // at once, mid-sentence too
+};
+
+// ---------------------------------------------------------------- devices
+
+const CAN_PICK_SPEAKER = typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
+
+function getMic() {
+  const id = load("mic");
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+  const ask = (a) => navigator.mediaDevices.getUserMedia({ audio: a });
+  // A microphone that was unplugged since: fall back to the default one instead of failing the call.
+  return id ? ask({ ...audio, deviceId: { exact: id } }).catch(() => ask(audio)) : ask(audio);
+}
+
+function fillDevices(select, list, saved, fallbackLabel) {
+  select.innerHTML = "";
+  select.add(new Option("За замовчуванням", ""));
+  list.forEach((d, i) => { if (d.deviceId && d.deviceId !== "default") select.add(new Option(d.label || fallbackLabel + " " + (i + 1), d.deviceId)); });
+  select.value = [...select.options].some((o) => o.value === saved) ? saved : "";
+}
+
+async function refreshDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const list = await navigator.mediaDevices.enumerateDevices();
+    const named = list.some((d) => d.label);
+    fillDevices(el.micSelect, list.filter((d) => d.kind === "audioinput"), load("mic"), "Мікрофон");
+    fillDevices(el.speakerSelect, list.filter((d) => d.kind === "audiooutput"), load("speaker"), "Динамік");
+    el.speakerSelect.disabled = !CAN_PICK_SPEAKER;
+    el.devicesAllow.hidden = named;
+    el.devicesInfo.textContent = (named ? "" : "Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона. ")
+      + (CAN_PICK_SPEAKER ? "" : "Динамік можна вибрати в Chrome і Edge; в інших браузерах звук іде в системний. ")
+      + "Мікрофон для шлюзу змінюється одразу; у режимі «напряму» розпізнавання слухає мікрофон за замовчуванням.";
+  } catch (err) { /* no device list */ }
+}
+
+function applySink() {
+  if (!CAN_PICK_SPEAKER || !playCtx) return;
+  playCtx.setSinkId(load("speaker") || "").catch(() => { /* the device is gone: the default one plays */ });
+}
+
+async function switchMic() {
+  save("mic", el.micSelect.value);
+  if (!live || !micStream) return;
+  try {
+    const next = await getMic();
+    const old = micStream;
+    micStream = next;
+    next.getAudioTracks().forEach((t) => { t.enabled = !micMuted; });
+    if (gate) {
+      micSource?.disconnect();
+      micSource = playCtx.createMediaStreamSource(next);
+      micSource.connect(gate, 0, 0);
+    }
+    old.getTracks().forEach((t) => t.stop());
+    refreshDevices();
+  } catch (err) {
+    bubble("system", "Не вдалося перемкнути мікрофон: " + err.message);
+  }
+}
+
+el.micSelect.onchange = switchMic;
+el.speakerSelect.onchange = () => { save("speaker", el.speakerSelect.value); applySink(); };
+el.devicesAllow.onclick = async () => {
+  try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); } catch (err) { /* refused */ }
+  refreshDevices();
+};
+if (navigator.mediaDevices) navigator.mediaDevices.addEventListener?.("devicechange", refreshDevices);
+
+// ---------------------------------------------------------------- the meter and the 30-day costs
+
+// What the call costs is counted on the server (tokens, voice characters, searches) and reported after each
+// answer; the seconds tick here. Totals per day are kept in this browser, not on the server.
+let usageLast = { seconds: 0, cost: 0 }; // the last report of the current call, to add only the difference
+let usageNow = { seconds: 0, cost: 0, at: 0, llm_in: 0, llm_out: 0, tts_chars: 0, searches: 0 };
+
+const dayKey = (d = new Date()) => "usage:" + d.toISOString().slice(0, 10);
+
+function addToday(seconds, usd) {
+  if (seconds <= 0 && usd <= 0) return;
+  let day = { sec: 0, usd: 0 };
+  try { day = JSON.parse(load(dayKey())) || day; } catch (err) { /* a new day */ }
+  save(dayKey(), JSON.stringify({ sec: day.sec + Math.max(0, seconds), usd: day.usd + Math.max(0, usd) }));
+  renderUsageTable();
+}
+
+function onUsage(m) {
+  addToday(m.seconds - usageLast.seconds, m.cost - usageLast.cost);
+  usageLast = { seconds: m.seconds, cost: m.cost };
+  usageNow = { ...m, at: Date.now() };
+  renderMeter();
+}
+
+function finishUsage() { // the call ends: the seconds since the last report are still used
+  const seconds = usageNow.seconds + (paused ? 0 : (Date.now() - usageNow.at) / 1000);
+  addToday(seconds - usageLast.seconds, 0);
+}
+
+const fmtTime = (sec) => Math.floor(sec / 60) + ":" + String(Math.floor(sec % 60)).padStart(2, "0");
+const fmtUsd = (usd) => (usd > 0 && usd < 0.01 ? "<$0.01" : "$" + usd.toFixed(2));
+
+function renderMeter() {
+  el.meter.hidden = !live;
+  if (!live) return;
+  const sec = usageNow.seconds + (paused ? 0 : (Date.now() - usageNow.at) / 1000);
+  el.meter.textContent = "⏱ " + fmtTime(sec) + " · ≈ " + fmtUsd(usageNow.cost);
+  el.meter.title = "Токенів моделі: " + usageNow.llm_in + " на вході, " + usageNow.llm_out + " на виході; символів голосу: "
+    + usageNow.tts_chars + "; пошуків: " + usageNow.searches + ". Пауза не рахується.";
+}
+setInterval(renderMeter, 1000);
+
+function renderUsageTable() {
+  const rows = [];
+  let totalSec = 0;
+  let totalUsd = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(Date.now() - i * 86400000);
+    let day = null;
+    try { day = JSON.parse(load(dayKey(d))); } catch (err) { /* none */ }
+    if (!day) continue;
+    totalSec += day.sec;
+    totalUsd += day.usd;
+    rows.push('<div class="urow"><span>' + d.toLocaleDateString("uk-UA") + "</span><span>" + Math.round(day.sec / 60) + " хв · " + fmtUsd(day.usd) + "</span></div>");
+  }
+  el.usageTable.innerHTML = rows.length
+    ? rows.join("") + '<div class="urow total"><span>Разом</span><span>' + Math.round(totalSec / 60) + " хв · " + fmtUsd(totalUsd) + "</span></div>"
+    : '<p class="muted">Поки порожньо: дані з\'являться після першої розмови.</p>';
+}
+
+// ---------------------------------------------------------------- copy the conversation
+
+el.copyChat.onclick = async () => {
+  const name = el.assistantName.textContent;
+  const text = [...el.log.querySelectorAll(".msg")]
+    .filter((m) => !m.classList.contains("partial"))
+    .map((m) => (m.classList.contains("user") ? "Ви: " : m.classList.contains("assistant") ? name + ": " : "") + m.textContent)
+    .join("\n");
+  const old = el.copyChat.textContent;
+  if (!text) { el.copyChat.textContent = "Немає що копіювати"; } else {
+    try {
+      await navigator.clipboard.writeText(text);
+      el.copyChat.textContent = "Скопійовано";
+    } catch (err) { // no clipboard permission (an insecure page, an old browser): the old way
+      const area = document.createElement("textarea");
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      try { document.execCommand("copy"); el.copyChat.textContent = "Скопійовано"; } catch (e2) { el.copyChat.textContent = "Не вдалося"; }
+      area.remove();
+    }
+  }
+  setTimeout(() => { el.copyChat.textContent = old; }, 1800);
+};
+
+refreshDevices();
+renderUsageTable();
 init();

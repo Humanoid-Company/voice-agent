@@ -12,6 +12,7 @@ const el = {
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
   voiceApply: $("voiceApply"), character: $("character"), emotion: $("emotion"), characterInfo: $("characterInfo"),
+  tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
   historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
@@ -53,10 +54,21 @@ let ready = false; // the server has connected to TTS: only then do we send what
 function save(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } }
 function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
+// Any voice can be chosen for any character. The voices that suit the current one are marked with ★ and come first.
+const characterVoices = {}; // character id -> [{ provider, voice, label }] from the server
+
+function recommendedVoices(provider) { // in the character's own order: the first is the best fit
+  return (characterVoices[characterId()] || []).filter((v) => v.provider === provider).map((v) => v.voice);
+}
+
 function fillVoices() {
   const p = providers.find((x) => x.id === el.provider.value);
+  const voices = p ? p.voices : [];
+  const recIds = recommendedVoices(el.provider.value);
+  const rec = recIds.map((id) => voices.find((v) => v.id === id)).filter(Boolean);
   el.voice.innerHTML = "";
-  for (const v of (p ? p.voices : [])) el.voice.add(new Option(v.label, v.id));
+  for (const v of rec) el.voice.add(new Option("★ " + v.label, v.id));
+  for (const v of voices.filter((x) => !recIds.includes(x.id))) el.voice.add(new Option(v.label, v.id));
   const saved = load("voice:" + el.provider.value);
   if (saved && p && p.voices.some((v) => v.id === saved)) el.voice.value = saved;
 }
@@ -520,6 +532,7 @@ function onMessage(ev) {
       showStyle(m.character, m.emotion, m.description);
       break;
     case "usage": onUsage(m); break;
+    case "tuning": showTuning(m); break;
     case "overheard": showRecog("🎤 На паузі, запам'ятовую фоном: " + m.count + " реплік"); break;
     case "end": stop(""); bubble("system", "Розмову завершено."); break;
     case "user": onUser(m.text, m.final); break;
@@ -565,7 +578,7 @@ async function start() {
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: characterId(), emotion: el.emotion.value });
+      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked });
     live = true;
     paused = false;
     activeVoice = { provider: el.provider.value, voice: el.voice.value };
@@ -876,8 +889,8 @@ function resetVoiceApply() {
   el.voiceApply.textContent = "Застосувати голос";
 }
 
-el.provider.onchange = () => { fillVoices(); updateVoiceApply(); syncCharacterEntry(); };
-el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); syncCharacterEntry(); };
+el.provider.onchange = () => { fillVoices(); updateVoiceApply(); };
+el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); };
 function applyVoice() {
   el.voiceApply.hidden = false;
   el.voiceApply.disabled = true;
@@ -900,7 +913,6 @@ function onVoice(m) {
   el.voice.value = m.voice;
   activeVoice = { provider: m.provider, voice: m.voice };
   updateVoiceApply();
-  syncCharacterEntry();
   save("provider", m.provider);
   save("voice:" + m.provider, m.voice);
 }
@@ -916,14 +928,14 @@ function setRecLang(code) {
 
 // ---------------------------------------------------------------- the character and the emotion
 
-// The character is who speaks (its own name and manner); the emotion is how alive the delivery is. The menu is
-// built from the server's list: every character and, for those that have them, their voices. An entry is «id» (the
-// character; the voice stays as it is) or «id|provider|voice» (the character AND that voice). A voice never changes
-// by itself: picking an entry with a voice is the manual change that moves it, right away, mid-call too; a character
-// asked for by voice («поклич Толіка») or picked as «голос лишається» leaves the voice alone.
+// The character is a manner (its own name, how it talks); the emotion is how alive the delivery is. The voice is a
+// separate choice, any voice, and never changes by itself: not with the character, not when the character is asked
+// for by voice («поклич Толіка»). What follows the character and the emotion is only how the same voice is delivered
+// (the «Підлаштовувати звучання» switch), and the voice list marks the voices that suit the character.
 function parseCharacter(value) {
-  const [id, provider, voice] = String(value || "eva").split("|");
-  return { id: id === "kit" ? "kishka" : id, provider, voice }; // «kit»: the cat before she became a she-cat
+  // An old stored choice can be «tolik|respeecher|voice» (when the menu had a voice per entry) or «kit».
+  const id = String(value || "eva").split("|")[0];
+  return { id: id === "kit" ? "kishka" : id };
 }
 
 function characterId() { return parseCharacter(el.character.value).id; }
@@ -937,82 +949,67 @@ function buildCharacterMenu(characters) {
   if (!characters || !characters.length) return;
   el.character.innerHTML = "";
   for (const c of characters) {
-    const entry = (label, value) => { const o = new Option(label, value); o.dataset.desc = c.description; return o; };
-    if (!c.voices.length) { el.character.add(entry(c.label, c.id)); continue; }
-    const group = document.createElement("optgroup");
-    group.label = c.label;
-    group.appendChild(entry(c.label + " (голос лишається)", c.id));
-    for (const v of c.voices) group.appendChild(entry(c.label + " · " + v.label, c.id + "|" + v.provider + "|" + v.voice));
-    el.character.appendChild(group);
+    const option = new Option(c.label, c.id);
+    option.dataset.desc = c.description;
+    el.character.add(option);
+    characterVoices[c.id] = c.voices || [];
   }
-  restoreCharacter();
-}
-
-function restoreCharacter() {
-  const saved = load("character") || "eva";
-  const options = [...el.character.options];
-  const want = options.find((o) => o.value === saved)
-    || options.find((o) => parseCharacter(o.value).id === parseCharacter(saved).id);
-  el.character.value = want ? want.value : "eva";
-  const c = parseCharacter(el.character.value);
-  if (c.voice) setVoiceSelects(c.provider, c.voice);
+  const want = parseCharacter(load("character")).id;
+  el.character.value = [...el.character.options].some((o) => o.value === want) ? want : "eva";
   describeCharacter();
+  fillVoices(); // now the voices that suit the character can be marked
+  const saved = load("voice:" + el.provider.value); // marking reorders the list: keep the user's voice
+  if (saved && [...el.voice.options].some((o) => o.value === saved)) el.voice.value = saved;
 }
 
-function setVoiceSelects(provider, voice) {
-  if (![...el.provider.options].some((o) => o.value === provider)) return false;
-  el.provider.value = provider;
+// The voice list is rebuilt for another character (marks, order), the voice the user has picked stays.
+function refreshVoiceList() {
+  const keep = el.voice.value;
   fillVoices();
-  if (![...el.voice.options].some((o) => o.value === voice)) el.voice.add(new Option(voice, voice));
-  el.voice.value = voice;
-  return true;
-}
-
-// The voice was changed by hand (or by voice): the character entry follows it, so the menu never claims a voice that is
-// not the one speaking: the same character's entry with exactly this voice, or else «голос лишається».
-function syncCharacterEntry() {
-  const c = parseCharacter(el.character.value);
-  const exact = c.id + "|" + el.provider.value + "|" + el.voice.value;
-  const options = [...el.character.options];
-  const want = options.find((o) => o.value === exact) || options.find((o) => o.value === c.id);
-  if (want && want.value !== el.character.value) { el.character.value = want.value; save("character", want.value); describeCharacter(); }
+  if ([...el.voice.options].some((o) => o.value === keep)) el.voice.value = keep;
+  updateVoiceApply();
 }
 
 function selectCharacterId(id) {
-  if (characterId() === id) return; // the entry (and its voice) the user picked stays
-  const options = [...el.character.options];
-  const want = options.find((o) => o.value === id) || options.find((o) => parseCharacter(o.value).id === id);
-  if (want) el.character.value = want.value;
+  if (characterId() === id) return;
+  if ([...el.character.options].some((o) => o.value === id)) el.character.value = id;
+  refreshVoiceList();
 }
 
 function showStyle(character, emotion, description) {
   if (character) selectCharacterId(character);
   if (emotion && el.emotion.value !== emotion) el.emotion.value = emotion;
-  if (character) save("character", el.character.value);
+  if (character) save("character", characterId());
   if (emotion) save("emotion", emotion);
   if (description !== undefined) el.characterInfo.textContent = description; else describeCharacter();
 }
 
-function sendStyle() { send({ type: "style", character: characterId(), emotion: el.emotion.value }); }
+function sendStyle() {
+  send({ type: "style", character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked });
+}
 
-el.character.value = load("character") || "eva";
+// What the server did to the delivery, in words: the right factors are found by ear, so it is shown.
+function showTuning(m) {
+  let text;
+  if (m.active) text = "Звучання під характер: temperature " + m.value + " (власне значення голосу " + m.base + " × " + m.factor + ").";
+  else if (m.reason === "off") text = "Підлаштування звучання вимкнено: голос звучить як за замовчуванням.";
+  else if (m.reason === "provider") text = "Цей синтезатор (Soniox) не має параметрів звучання: характер і емоційність лише в тексті.";
+  else text = "Не вдалося підлаштувати звучання: провайдер не віддав параметри цього голосу.";
+  el.tuningInfo.textContent = text;
+}
+
+el.character.value = parseCharacter(load("character")).id;
 el.emotion.value = load("emotion") || "emotional";
+el.tuneVoice.checked = load("tune") !== "0";
 describeCharacter();
 el.character.onchange = () => {
-  const c = parseCharacter(el.character.value);
-  save("character", el.character.value);
+  save("character", characterId());
   describeCharacter();
-  if (c.voice) { // this entry is a voice too: picking it is the manual change
-    setVoiceSelects(c.provider, c.voice);
-    save("provider", c.provider);
-    save("voice:" + c.provider, c.voice);
-  }
-  if (live) {
-    sendStyle();
-    if (c.voice && (c.provider !== activeVoice.provider || c.voice !== activeVoice.voice)) applyVoice();
-  }
+  refreshVoiceList();
+  if (live) sendStyle();
 };
 el.emotion.onchange = () => { save("emotion", el.emotion.value); if (live) sendStyle(); };
+el.tuneVoice.onchange = () => { save("tune", el.tuneVoice.checked ? "1" : "0"); if (live) sendStyle(); };
 
 // ---------------------------------------------------------------- pause
 

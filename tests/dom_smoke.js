@@ -39,14 +39,20 @@ function URLSearchParams() { this.get = function () { return null; }; }
 var localStorage = { getItem: function (k) { return k in store ? store[k] : null; }, setItem: function (k, v) { store[k] = String(v); } };
 var navigator = { mediaDevices: { enumerateDevices: function () { return Promise.resolve([]); }, addEventListener: function () {} },
   clipboard: { writeText: function () { return Promise.resolve(); } } };
-var fetch = function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ providers: [
-  { id: "soniox", label: "Soniox", voices: [{ id: "Daniel", label: "Daniel (male)" }, { id: "Maya", label: "Maya (female)" }] },
-  { id: "respeecher", label: "Respeecher", voices: ["dmytro-conversation", "ihoreo-conversation", "yevhen-audiobook", "roksolana-conversation", "kseniia-conversation", "olesia-conversation"].map(function (v) { return { id: v, label: v }; }) },
-], characters: [
-  { id: "eva", label: "Єва", description: "Звичайна помічниця", voices: [] },
-  { id: "tolik", label: "Толік", description: "Дворовий хуліган", voices: [["dmytro-conversation", "Дмитро"], ["ihoreo-conversation", "Ігорео"], ["yevhen-audiobook", "Євген"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
-  { id: "kishka", label: "Кішка", description: "Говоряча кішка", voices: [["roksolana-conversation", "Роксолана"], ["kseniia-conversation", "Ксенія"], ["olesia-conversation", "Олеся"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
-], missing: [] }); } }); };
+var CONFIG = {
+  providers: [
+    { id: "soniox", label: "Soniox", voices: [{ id: "Daniel", label: "Daniel (male)" }, { id: "Maya", label: "Maya (female)" }] },
+    { id: "respeecher", label: "Respeecher", voices: ["dmytro-conversation", "ihoreo-conversation", "yevhen-audiobook", "roksolana-conversation", "kseniia-conversation", "olesia-conversation", "oleksandr-radio"].map(function (v) { return { id: v, label: v }; }) },
+  ],
+  characters: [
+    { id: "eva", label: "Єва", description: "Звичайна помічниця", voices: [] },
+    { id: "tolik", label: "Толік", description: "Дворовий хуліган", voices: [["dmytro-conversation", "Дмитро"], ["ihoreo-conversation", "Ігорео"], ["yevhen-audiobook", "Євген"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
+    { id: "kishka", label: "Кішка", description: "Говоряча кішка", voices: [["roksolana-conversation", "Роксолана"], ["kseniia-conversation", "Ксенія"], ["olesia-conversation", "Олеся"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
+    { id: "taras", label: "Тарас", description: "Лавелас", voices: [["oleksandr-radio", "Олександр"], ["yevhen-audiobook", "Євген"], ["dmytro-conversation", "Дмитро"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
+  ],
+  missing: [],
+};
+var fetch = function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve(CONFIG); } }); };
 var timers = [];
 var setTimeout = function (f) { timers.push(f); return timers.length; };
 var setInterval = function () { return 0; };
@@ -317,31 +323,40 @@ check("the server's persona message moves the selectors, the name and the descri
 onMessage({ data: JSON.stringify({ type: "ready", sample_rate: 24000, name: "Толік", character: "tolik", emotion: "normal", recognition: "uk-UA" }) });
 check("ready shows the character the server actually started with", E("character").value === "tolik" && E("emotion").value === "normal");
 
-// ---- the character menu with its voices: a voice never changes by itself
+// ---- the character (a manner); the voice is a separate, free choice and never changes by itself
 var values = E("character").options.map(function (o) { return o.value; });
-var count = function (prefix) { return values.filter(function (v) { return v.indexOf(prefix) === 0; }).length; };
-check("the menu lists each character and the three voices of Толік and Кішка", values.indexOf("eva") >= 0 && values.indexOf("tolik") >= 0 && values.indexOf("kishka") >= 0 && count("tolik|") === 3 && count("kishka|") === 3 && count("eva|") === 0);
-check("the menu entries carry the character's description", E("character").options.filter(function (o) { return o.value === "tolik|respeecher|dmytro-conversation"; })[0].dataset.desc === "Дворовий хуліган");
+check("the menu lists the four characters, plain", JSON.stringify(values) === JSON.stringify(["eva", "tolik", "kishka", "taras"]));
+check("each character carries its description", E("character").options.filter(function (o) { return o.value === "tolik"; })[0].dataset.desc === "Дворовий хуліган");
 live = true; ready = true; paused = false; sent.length = 0;
-activeVoice = { provider: "soniox", voice: "Daniel" };
-E("provider").value = "soniox"; fillVoices(); E("voice").value = "Daniel";
-E("character").value = "tolik"; E("character").onchange();
-check("picking a character without a voice sends only the character: the voice stays", sent.some(function (m) { return m.type === "style" && m.character === "tolik"; }) && !sent.some(function (m) { return m.type === "voice"; }) && E("voice").value === "Daniel");
+E("provider").value = "respeecher"; E("character").value = "tolik"; E("character").onchange();
+var labels = function () { return E("voice").options.map(function (o) { return o.text; }); };
+check("the voices that suit the character come first, marked with a star, the rest unmarked", labels().slice(0, 3).every(function (x) { return x.indexOf("★ ") === 0; }) && labels().slice(3).every(function (x) { return x.indexOf("★") < 0; }) && labels().length === 7);
+E("voice").value = "olesia-conversation"; sent.length = 0;
+E("character").value = "kishka"; E("character").onchange();
+check("another character re-marks the list and keeps the voice the user picked", labels()[0].indexOf("roksolana") >= 0 && E("voice").value === "olesia-conversation" && labels().filter(function (x) { return x.indexOf("★") === 0; }).length === 3);
+check("picking a character sends the character and the tune flag, never a voice", sent.some(function (m) { return m.type === "style" && m.character === "kishka" && m.tune === true; }) && !sent.some(function (m) { return m.type === "voice"; }));
 sent.length = 0;
-E("character").value = "tolik|respeecher|ihoreo-conversation"; E("character").onchange();
-check("an entry with a voice sends the character (its id only) and applies that voice at once", sent.some(function (m) { return m.type === "style" && m.character === "tolik"; }) && sent.some(function (m) { return m.type === "voice" && m.provider === "respeecher" && m.voice === "ihoreo-conversation"; }) && E("provider").value === "respeecher" && E("voice").value === "ihoreo-conversation");
-onMessage({ data: JSON.stringify({ type: "voice", provider: "respeecher", voice: "ihoreo-conversation", sample_rate: 24000, language: "uk" }) });
-check("the confirmed voice keeps its menu entry", E("character").value === "tolik|respeecher|ihoreo-conversation" && activeVoice.voice === "ihoreo-conversation");
-onMessage({ data: JSON.stringify({ type: "persona", name: "Толік", character: "tolik", emotion: "emotional", description: "Дворовий хуліган" }) });
-check("the server naming the same character does not move the entry (the voice)", E("character").value === "tolik|respeecher|ihoreo-conversation");
-E("voice").value = "dmytro-conversation"; E("voice").onchange();
-check("a voice picked by hand that is one of the character's moves the menu to its entry", E("character").value === "tolik|respeecher|dmytro-conversation");
-E("voice").value = "olesia-conversation"; E("voice").onchange();
-check("a voice that is not the character's turns the entry into «голос лишається»", E("character").value === "tolik");
-onMessage({ data: JSON.stringify({ type: "persona", name: "Єва", character: "eva", emotion: "emotional", description: "Звичайна помічниця" }) });
-check("a character asked for by voice shows its plain entry", E("character").value === "eva");
-store["character"] = "kit"; restoreCharacter();
-check("an old stored «kit» becomes Кішка", parseCharacter(E("character").value).id === "kishka");
-store["character"] = "kishka|respeecher|kseniia-conversation"; restoreCharacter();
-check("a stored entry with a voice is restored together with its voice", E("character").value === "kishka|respeecher|kseniia-conversation" && E("voice").value === "kseniia-conversation");
+onMessage({ data: JSON.stringify({ type: "persona", name: "Тарас", character: "taras", emotion: "emotional", description: "Лавелас" }) });
+check("a character asked for by voice moves only the menu, not the voice", E("character").value === "taras" && E("voice").value === "olesia-conversation" && !sent.some(function (m) { return m.type === "voice"; }) && labels()[0].indexOf("oleksandr") >= 0);
+store["character"] = "tolik|respeecher|dmytro-conversation"; buildCharacterMenu(CONFIG.characters);
+check("an old stored entry with a voice is just the character now", E("character").value === "tolik");
+store["character"] = "kit"; buildCharacterMenu(CONFIG.characters);
+check("an old stored «kit» becomes Кішка", E("character").value === "kishka");
+store["character"] = "milana"; buildCharacterMenu(CONFIG.characters);
+check("a removed character falls back to the plain one", E("character").value === "eva");
+
+// ---- the tuning of the delivery: shown in words, switchable
+onMessage({ data: JSON.stringify({ type: "tuning", active: true, reason: "", base: 0.8, factor: 1.1, value: 0.88 }) });
+check("the tuning is shown with its numbers", E("tuningInfo").textContent.indexOf("0.88") >= 0 && E("tuningInfo").textContent.indexOf("0.8") >= 0 && E("tuningInfo").textContent.indexOf("1.1") >= 0);
+onMessage({ data: JSON.stringify({ type: "tuning", active: false, reason: "off" }) });
+check("off is said to be off", E("tuningInfo").textContent.indexOf("вимкнено") >= 0);
+onMessage({ data: JSON.stringify({ type: "tuning", active: false, reason: "provider" }) });
+check("a provider without parameters is named", E("tuningInfo").textContent.indexOf("Soniox") >= 0);
+onMessage({ data: JSON.stringify({ type: "tuning", active: false, reason: "no_base" }) });
+check("missing defaults are said plainly", E("tuningInfo").textContent.indexOf("Не вдалося") >= 0);
+sent.length = 0;
+E("tuneVoice").checked = false; E("tuneVoice").onchange();
+check("the switch is saved and sent", store["tune"] === "0" && sent.some(function (m) { return m.type === "style" && m.tune === false; }));
+E("tuneVoice").checked = true; E("tuneVoice").onchange();
+check("and back on", store["tune"] === "1");
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

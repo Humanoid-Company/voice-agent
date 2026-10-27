@@ -56,7 +56,7 @@
       <button id="voiceApply" class="btn primary wide" type="button" hidden>Застосувати голос</button>
       <div class="settings">
         <div>
-          <label for="character">Персонаж</label>
+          <label for="character">Характер</label>
           <select id="character"><option value="eva">Єва</option></select>
         </div>
         <div>
@@ -69,6 +69,14 @@
         </div>
       </div>
       <p id="characterInfo" class="hint"></p>
+      <label class="setting" for="tuneVoice">
+        <span class="setting-text">
+          <span class="setting-title">Підлаштовувати звучання під характер і емоційність</span>
+          <span class="hint">Голос лишається вашим, який оберете. Змінюється лише подача: той самий голос звучить трохи стриманіше чи жвавіше. Це перше припущення, його підбирають на слух: вимкніть, щоб порівняти.</span>
+        </span>
+        <input id="tuneVoice" type="checkbox" class="switch" role="switch" checked>
+      </label>
+      <p id="tuningInfo" class="hint"></p>
 
       <button id="talk" class="btn primary big" disabled>Почати розмову</button>
       <div class="row">

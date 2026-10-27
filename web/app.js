@@ -214,12 +214,21 @@ const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 // Chrome, Edge and Safari recognize in the cloud (Google / Apple) and stream interim text. It ends by
 // itself after a while or a long silence, so it is restarted for as long as the call lasts.
-// Chrome ends an utterance ~1-2 s after the last word. We do not wait for it: text that has not changed for
-// ENDPOINT_MS is the end of the utterance (?endpoint=1200 waits longer, for people who pause a lot). The
-// recognizer is then restarted, which drops the late «final» of the same words.
-const ENDPOINT_MS = Number(params.get("endpoint")) || 800;
+// Chrome ends an utterance ~1-2 s after the last word. We do not wait for it, but the end of a phrase is not «the text
+// stopped changing»: the transcript lags behind the voice, so a stalled text while the user is still speaking cut
+// phrases in two and she answered half a sentence. The phrase ends when the text has settled AND the user's voice (the
+// gate's `active` flag) has been silent for ENDPOINT_MS (?endpoint=1000 waits longer, for people who pause a lot).
+// Without the gate there is no voice signal, so the text alone must stay unchanged for longer; and a phrase is
+// never held back more than ENDPOINT_MAX_MS (a noisy room keeps the gate «active»). The recognizer is then
+// restarted, which drops the late «final» of the same words.
+const ENDPOINT_MS = Number(params.get("endpoint")) || 700;
+const ENDPOINT_TEXT_MS = 400; // the text must not have changed for this long
+const ENDPOINT_NO_GATE_MS = 1100;
+const ENDPOINT_MAX_MS = 2500;
 let endpointTimer = null;
 let interimText = "";
+let interimChangedAt = 0;
+let lastActiveAt = 0;
 
 function showRecog(text) { el.recog.textContent = text; el.recog.hidden = !text; }
 
@@ -229,6 +238,19 @@ function commitInterim() {
   if (!text || !live) return;
   heard(text, true);
   try { recognition.abort(); } catch (err) { /* not started */ } // onend restarts it
+}
+
+// Is the phrase finished? Called again and again until it is (or the text is gone).
+function checkEndpoint() {
+  if (!interimText || !live) return;
+  const now = Date.now();
+  const settled = now - interimChangedAt;
+  const quiet = gate ? now - lastActiveAt : Infinity;
+  const done = gate
+    ? settled >= ENDPOINT_TEXT_MS && quiet >= ENDPOINT_MS
+    : settled >= ENDPOINT_NO_GATE_MS;
+  if (done || settled >= ENDPOINT_MAX_MS) commitInterim();
+  else endpointTimer = setTimeout(checkEndpoint, 100);
 }
 
 function startRecognition() {
@@ -254,9 +276,10 @@ function startRecognition() {
     if (interim) {
       showRecog("🎤 Почув: «" + interim.trim().slice(-70) + "»");
       heard(interim, false);
+      if (interim !== interimText) interimChangedAt = Date.now();
       interimText = interim;
       clearTimeout(endpointTimer);
-      endpointTimer = setTimeout(commitInterim, ENDPOINT_MS);
+      endpointTimer = setTimeout(checkEndpoint, 100);
     }
   };
   recognition.onerror = (e) => {
@@ -930,6 +953,7 @@ const hearLines = [];
 function onLevels(l) {
   if (!l || !live) return;
   mic = l;
+  if (l.active) lastActiveAt = Date.now();
   bargeFromLevels(l);
   el.levelFill.style.width = Math.min(100, (l.level / LEVEL_FULL) * 100) + "%";
   el.levelNeed.style.left = Math.min(100, (l.need / LEVEL_FULL) * 100) + "%";

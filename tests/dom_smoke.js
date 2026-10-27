@@ -256,4 +256,22 @@ check("and the attempt is recorded", current.events.filter(function (e) { return
 resetBarge(); sources.clear();
 feed([1, 1, 1, 1, 1, 1]);
 check("nothing is ducked or stopped when she is not actually playing", barge.stage === "idle" && soundStops() === 0);
+
+// ---- the end of a phrase: the text has settled AND the user's voice has been silent
+live = true; ready = true; paused = false; micMuted = false; curState = "listening";
+barge.audible = false; barge.speaking = false; barge.audibleEndedAt = 0; barge.speechEndedAt = 0;
+gate = { port: { postMessage: function () {} } };
+function phrase(settledMs, quietMs) { // how long the text has not changed, how long the user has been silent
+  interimText = "привіт як"; interimChangedAt = Date.now() - settledMs; lastActiveAt = Date.now() - quietMs;
+  sent.length = 0; checkEndpoint();
+  return sent.filter(function (m) { return m.type === "heard" && m.final; }).length;
+}
+check("a stalled transcript does not end the phrase while the user is still speaking", phrase(1500, 100) === 0 && interimText === "привіт як");
+check("the phrase ends when the text has settled and the voice has been silent", phrase(1500, 900) === 1 && interimText === "");
+check("a text that is still changing is not finished, even in silence", phrase(100, 2000) === 0);
+check("a noisy room never holds a phrase longer than the cap", phrase(2600, 0) === 1);
+onLevels({ level: 0.05, need: 0.07, audible: false, speaking: false, active: true });
+check("the gate's active flag is the user still sounding", Date.now() - lastActiveAt < 1000);
+gate = null;
+check("without the gate the text alone decides, and after a longer wait", phrase(800, 0) === 0 && phrase(1200, 0) === 1);
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

@@ -80,7 +80,11 @@ class EchoGate extends AudioWorkletProcessor {
     this.peak = Math.max(this.peak, level);
     if (++this.reported >= 5) {
       this.reported = 0;
-      this.port.postMessage({ levels: { level: this.peak, need: nearThreshold, audible, speaking } });
+      // `active`: the user is still sounding (any sound above the room's noise; while she talks her echo is in the
+      // microphone too, so then it is the near-voice flag). The page waits for it to end before it takes the
+      // user's phrase as finished.
+      const active = audible ? speaking : this.peak > Math.max(0.006, this.floor * 3);
+      this.port.postMessage({ levels: { level: this.peak, need: nearThreshold, audible, speaking, active } });
       this.peak = 0;
     }
     // Learn the room's noise only while nobody speaks.

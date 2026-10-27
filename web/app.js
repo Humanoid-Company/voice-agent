@@ -412,16 +412,14 @@ function onGate(sig) {
   }
 }
 
-// Interrupting by voice, judged on a window rather than a stopwatch. The gate reports ten times a second whether
-// the user is louder than the bar while she talks. Speech over a loud voice dips below the bar between words, and
-// a rule of «a whole second without a gap» never fired: an almost continuous voice reset the count again and again.
-// So: of the last second, enough samples with the user over the bar duck her (their voice has reached her) and a few
-// more stop her. The server still decides about the words (stop words, takeover) from the transcript, and refuses
-// a stop by sound when the words were only «угу».
-const VOICED_RATIO = 1.0; // a sample is the user's voice above the bar (it has its own margin over the echo)
+// Interrupting by voice, judged on a window rather than a stopwatch. The gate reports ten times a second whether the
+// user's voice is on (its `speaking` flag: 120 ms of voice over the bar to start, gaps up to 250 ms bridged, so a
+// burst of her echo is not enough and the dips between words do not count against the user). Of the last second,
+// enough samples duck her (their voice has reached her) and a few more stop her. The server still decides about the
+// words (stop words, takeover) from the transcript, and refuses a stop by sound when the words were only «угу».
 const VOICE_WINDOW = 10; // samples: one second
-const DUCK_AT = 2; // 200 ms of voice in the last second duck her
-const STOP_AT = 4; // 400 ms stop her
+const DUCK_AT = 3; // 300 ms of voice in the last second duck her
+const STOP_AT = 5; // 500 ms stop her
 const STOP_RETRY_MS = 1500; // after a stop the server refused (a listener's «угу»), try again no sooner than this
 const voicedWin = [];
 let duckedAt = 0;
@@ -430,7 +428,7 @@ let stopSentAt = 0;
 function bargeFromLevels(l) {
   const herPlaying = l.audible && sources.size > 0; // not her fading tail after a stop, not a paused page
   if (!herPlaying || paused) { voicedWin.length = 0; return; }
-  voicedWin.push(l.level > l.need * VOICED_RATIO ? 1 : 0);
+  voicedWin.push(l.speaking ? 1 : 0);
   if (voicedWin.length > VOICE_WINDOW) voicedWin.shift();
   const voiced = voicedWin.reduce((a, b) => a + b, 0);
   if (barge.stage === "idle") {

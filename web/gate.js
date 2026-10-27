@@ -22,6 +22,7 @@ class EchoGate extends AudioWorkletProcessor {
     this.sens = Math.min(3, Math.max(0, (options.processorOptions || {}).sens ?? 1));
     this.reported = 0;
     this.peak = 0; // the loudest 20 ms frame since the last report
+    this.outEnv = 0; // her output level, held for ~0.3 s: her echo reaches the microphone late
     this.port.onmessage = (e) => {
       if (e.data && "sens" in e.data) this.sens = Math.min(3, Math.max(0, Number(e.data.sens) || 0));
     };
@@ -45,13 +46,17 @@ class EchoGate extends AudioWorkletProcessor {
     if (outLevel > 0.01) this.outQuietFor = 0; else this.outQuietFor += 0.02;
     const audible = this.outQuietFor < 0.3;
     if (audible !== this.audible) { this.audible = audible; this.port.postMessage({ audible }); }
-    const echoLevel = audible ? outLevel * this.echo * ECHO_MARGIN[this.sens] : 0;
+    // The echo comes 100-200 ms after the sound left the speaker. Against her level of this very moment the bar fell
+    // whenever she dipped between words, while the echo of her last loud moment was still arriving: her echo then
+    // passed for the user's voice. So the bar follows a slowly falling peak of her output.
+    this.outEnv = Math.max(outLevel, this.outEnv * 0.96);
+    const echoLevel = audible ? this.outEnv * this.echo * ECHO_MARGIN[this.sens] : 0;
     const headset = this.echo < 0.05;
     // While she talks on speakers keep a fixed bar above the browser canceller's leftovers.
     const threshold = Math.max(audible && !headset ? SPEAKER_BAR[this.sens] : 0.006, this.floor * 3, echoLevel);
     // Learn the echo while the gate is shut (the user isn't talking over the assistant).
-    if (audible && !this.open && outLevel > 0.01) {
-      const ratio = level / outLevel;
+    if (audible && !this.open && this.outEnv > 0.01) {
+      const ratio = level / this.outEnv;
       this.echo += (ratio - this.echo) * (ratio < this.echo ? 0.1 : 0.03);
     }
     if (level > threshold) { this.loud += 1; this.quietFor = 0; }

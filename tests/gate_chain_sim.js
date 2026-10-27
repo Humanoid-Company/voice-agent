@@ -5,11 +5,15 @@ class AudioWorkletProcessor { constructor() { this.port = { postMessage: functio
 function registerProcessor(n, c) { registered = c; }
 load('web/gate.js');
 
-var VOICED_RATIO = 1.0, VOICE_WINDOW = 10, DUCK_AT = 2, STOP_AT = 4; // the same as in web/app.js: tests/test_gate_chain.py checks
+var DELAY_MS = 120;
+var VOICE_WINDOW = 10, DUCK_AT = 3, STOP_AT = 5; // the same as in web/app.js: tests/test_gate_chain.py checks
 
 // One run: she talks the whole time (echo ratio `echoK`, bursts +-`jitter`); the user, if `voice` > 0, starts after
 // 3 s of her talking, speaking with syllable gaps. Returns { stopAfterMs: or -1, duckAfterMs: or -1 }.
-function run(sens, sec, echoK, jitter, voice, seed0) {
+function run(sens, sec, echoK, jitter, voice, seed0, delayMs) {
+  // Real echo is late: the speaker, the air and the sound card add 100-200 ms and a reverberant tail.
+  delayMs = delayMs === undefined ? DELAY_MS : delayMs;
+  var ring = new Float32Array(sampleRate), d1 = Math.round(delayMs / 1000 * sampleRate), d2 = Math.round(delayMs * 2 / 1000 * sampleRate);
   var msgs = [];
   var g = new registered({ processorOptions: { sens: sens } });
   g.port = { postMessage: function (m) { msgs.push(m); } };
@@ -22,17 +26,19 @@ function run(sens, sec, echoK, jitter, voice, seed0) {
     for (var i = 0; i < 128; i++, t++) {
       var a = 0.3 * Math.sin(2 * Math.PI * 220 * t / sampleRate) * (1 + 0.5 * Math.sin(2 * Math.PI * 3 * t / sampleRate));
       rem[i] = a;
+      ring[t % ring.length] = a;
+      var late = delayMs ? ring[(t - d1 + ring.length) % ring.length] + 0.35 * ring[(t - d2 + ring.length) % ring.length] : a;
       // syllables: ~4 per second, each with a short gap between (the envelope falls to 15% of its peak)
       var env = 0.15 + 0.85 * Math.pow(Math.abs(Math.sin(Math.PI * 4 * t / sampleRate)), 1.5);
       var u = b > warm && voice ? voice * env * Math.sin(2 * Math.PI * 150 * t / sampleRate) : 0;
-      mic[i] = echoK * burst * a + u + 0.003 * rnd();
+      mic[i] = echoK * burst * late + u + 0.003 * rnd();
     }
     g.process([[mic], [rem]], [[out]]);
     while (msgs.length) {
       var m = msgs.shift();
       if (!m.levels || b <= warm) continue;
       samples++;
-      win.push(m.levels.level > m.levels.need * VOICED_RATIO ? 1 : 0);
+      win.push(m.levels.speaking ? 1 : 0);
       if (win.length > VOICE_WINDOW) win.shift();
       var v = win.reduce(function (x, y) { return x + y; }, 0);
       var ms = samples * 100;

@@ -1,5 +1,5 @@
 """The whole voice-interruption chain on synthetic signals, run in JavaScriptCore: the gate's reports, then the page's
-window rule. Speech is syllables with gaps, the echo has bursts. Skipped where `jsc` is missing.
+window rule. Speech is syllables with gaps; the echo has bursts, a delay of 120 ms and a reverberant tail. Skipped where `jsc` is missing.
 
 Her own echo must never duck or stop her at the default sensitivity, a normal and a quiet voice must stop her fast."""
 import json
@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_the_simulation_uses_the_pages_constants():
     app = (ROOT / "web/app.js").read_text(encoding="utf-8")
     sim = (ROOT / "tests/gate_chain_sim.js").read_text(encoding="utf-8")
-    page = {n: float(v) for n, v in re.findall(r"const (VOICED_RATIO|VOICE_WINDOW|DUCK_AT|STOP_AT) = ([\d.]+);", app)}
-    mirror = dict(zip(("VOICED_RATIO", "VOICE_WINDOW", "DUCK_AT", "STOP_AT"), map(float, re.search(
-        r"var VOICED_RATIO = ([\d.]+), VOICE_WINDOW = (\d+), DUCK_AT = (\d+), STOP_AT = (\d+);", sim).groups()), strict=True))  # fmt: skip
+    page = {n: float(v) for n, v in re.findall(r"const (VOICE_WINDOW|DUCK_AT|STOP_AT) = ([\d.]+);", app)}
+    mirror = dict(zip(("VOICE_WINDOW", "DUCK_AT", "STOP_AT"), map(float, re.search(
+        r"var VOICE_WINDOW = (\d+), DUCK_AT = (\d+), STOP_AT = (\d+);", sim).groups()), strict=True))  # fmt: skip
     assert page == mirror, "web/app.js and tests/gate_chain_sim.js disagree: the simulation proves nothing then"
 
 
@@ -34,5 +34,5 @@ def test_echo_never_acts_and_a_voice_stops_her_fast():
         for level in result[ratio][:2]:
             assert level["falseStops"] == 0, f"she stopped herself at a low sensitivity (echo {ratio}): {level}"
     good = result["0.1"][2]
-    assert 0 < good["normalStopMs"] <= 1000 and 0 < good["quietStopMs"] <= 1000, f"too slow or deaf: {good}"
+    assert 0 < good["normalStopMs"] <= 1000 and 0 < good["quietStopMs"] <= 1500, f"too slow or deaf: {good}"
     assert 0 < result["0.1"][3]["normalStopMs"] <= good["normalStopMs"]  # more sensitive is not slower

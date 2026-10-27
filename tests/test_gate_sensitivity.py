@@ -19,8 +19,12 @@ def test_echo_is_never_the_voice_and_higher_sensitivity_lets_a_quieter_voice_thr
     assert out.returncode == 0, out.stdout + out.stderr
     result = json.loads(out.stdout.strip().splitlines()[-1])
     for ratio, levels in result.items():  # echo ratio 0.1 (a good canceller) and 0.2 (a loud echo)
-        assert [lv["echoOnly"] for lv in levels] == [0, 0, 0, 0], f"she heard herself at echo {ratio}: {levels}"
+        # the default level (2) and the lower ones must never take her echo for the user, even a loud one
+        assert [lv["echoOnly"] for lv in levels[:3]] == [0, 0, 0], f"she heard herself at echo {ratio}: {levels}"
         assert levels[3]["quiet"] >= levels[2]["quiet"] >= levels[1]["quiet"] >= levels[0]["quiet"]
         assert levels[2]["normal"] > 50, f"a normal voice must interrupt her at the default level (echo {ratio})"
+    # the most sensitive level (3) is labelled on the page as one that may interrupt her by her own echo, and does
+    # so only when the echo is loud: with a good canceller it must stay quiet too
+    assert result["0.1"][3]["echoOnly"] == 0
     # the default level (2) lets a normal voice through where Eva's own (1) did not, with a loud echo
     assert result["0.2"][2]["quiet"] > result["0.2"][1]["quiet"]

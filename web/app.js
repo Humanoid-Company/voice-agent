@@ -343,7 +343,7 @@ function onMessage(ev) {
   if (typeof ev.data !== "string") { playChunk(ev.data); return; }
   const m = JSON.parse(ev.data);
   switch (m.type) {
-    case "ready": ttsRate = m.sample_rate; ready = true; break;
+    case "ready": ttsRate = m.sample_rate; ready = true; setState("listening"); break;
     case "state": setState(m.state); if (m.state === "listening") bargeReset(); break;
     case "user": onUser(m.text, m.final); break;
     case "user_drop": onUserDrop(); break;

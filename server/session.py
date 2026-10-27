@@ -68,7 +68,7 @@ class VoiceSession:
     async def start(self) -> None:
         await self.tts.connect()
         await self._j({"type": "ready", "sample_rate": self.tts.sample_rate})
-        await self._set_state("listening")
+        await self._j({"type": "state", "state": "listening"})  # _set_state would skip it: already "listening"
 
     async def close(self) -> None:
         if self._turn and not self._turn.done():

@@ -161,3 +161,12 @@ def test_llm_error_reports_and_recovers():
         assert "error" in types(out) and s.state == "listening"
 
     asyncio.run(go())
+
+
+def test_start_tells_the_page_it_is_listening():
+    async def go():
+        s, out = make()
+        await s.start()
+        assert types(out)[:2] == ["ready", "state"] and out["json"][1]["state"] == "listening"
+
+    asyncio.run(go())

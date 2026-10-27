@@ -22,6 +22,7 @@
 
       <p id="problem" class="hint err-text" hidden></p>
       <p id="recog" class="hint" hidden></p>
+      <p id="bargeHint" class="hint" hidden></p>
       <p class="hint name-line">Асистент: <strong id="assistantName">Єва</strong>. Голосом можна сказати «тепер тебе звати …», «змін голос на …», «говори англійською», «досить, до побачення».</p>
 
       <div class="settings">
@@ -69,6 +70,14 @@
           <select id="speakerSelect"><option value="">За замовчуванням</option></select>
         </div>
       </div>
+      <label for="bargeSens">Чутливість перебивання голосом</label>
+      <select id="bargeSens">
+        <option value="0">Низька: лише гучний голос</option>
+        <option value="1">Звичайна (як в Eva)</option>
+        <option value="2" selected>Висока: звичайний голос</option>
+        <option value="3">Дуже висока: тихий голос, може перебивати сама себе</option>
+      </select>
+      <p class="hint">Поки агент говорить, ваш голос має бути гучнішим за його ехо в мікрофоні. Не зупиняє, поки він говорить, — підвищіть чутливість; перебиває сам себе — знизьте. Під час його мови видно, наскільки ваш голос близький до порога.</p>
       <button id="devicesAllow" class="btn small-btn" type="button" hidden>Показати назви пристроїв</button>
       <p id="devicesInfo" class="hint"></p>
     </section>

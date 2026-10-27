@@ -100,4 +100,16 @@ setPaused(true);
 check("without background listening the recognizer is stopped on pause", recognition === null && sent.filter(function (m) { return m.type === "pause" && m.background === false; }).length === 1);
 setPaused(false);
 check("resume starts the recognizer again", recognition !== null);
+
+// the voice-interruption sensitivity and the live level line
+var gateMsgs = [];
+gate = { port: { postMessage: function (m) { gateMsgs.push(m); } } };
+check("sensitivity defaults to high", E("bargeSens").value === "2" && bargeSens() === 2);
+E("bargeSens").value = "3"; E("bargeSens").onchange();
+check("sensitivity is saved and sent to the gate", store["bargeSens"] === "3" && gateMsgs.length === 1 && gateMsgs[0].sens === 3);
+live = true; paused = false;
+onGate({ levels: { level: 0.03, need: 0.065 } });
+check("level line shows the voice against the bar", E("bargeHint").hidden === false && E("bargeHint").textContent.indexOf("3.0") >= 0 && E("bargeHint").textContent.indexOf("6.5") >= 0);
+onGate({ levels: null });
+check("level line hides when she is silent", E("bargeHint").hidden === true);
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

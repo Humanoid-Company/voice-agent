@@ -8,9 +8,22 @@
 // assistant talks. High on laptop speakers, near zero in headphones. The user's voice counts as «near» only
 // when it is clearly louder than that expected echo (and than the room's noise), for ~120 ms in a row,
 // so a click, a bang or the assistant's own voice coming back never counts as the user.
+// How easily the user's voice opens the gate while the assistant is audible, per sensitivity level (the page's
+// «Чутливість перебивання»): the margin over the learned echo, the floor of the bar on speakers, and the extra
+// margin the near-voice test wants. 1 is Eva's setting; higher lets a quieter voice through, and with it more of
+// the assistant's own echo bursts (she may cut herself off).
+const ECHO_MARGIN = [3.5, 2.5, 1.9, 1.5];
+const SPEAKER_BAR = [0.06, 0.04, 0.03, 0.02];
+const NEAR_MARGIN = [1.6, 1.3, 1.15, 1.0];
+
 class EchoGate extends AudioWorkletProcessor {
   constructor(options) {
     super();
+    this.sens = Math.min(3, Math.max(0, (options.processorOptions || {}).sens ?? 1));
+    this.reported = 0;
+    this.port.onmessage = (e) => {
+      if (e.data && "sens" in e.data) this.sens = Math.min(3, Math.max(0, Number(e.data.sens) || 0));
+    };
     this.frame = Math.round(sampleRate * 0.02); // judge loudness per 20 ms
     // 250 ms look-ahead: the gate opens on voiced sound, and a soft start before it («с», «п») must not be lost.
     this.ring = new Float32Array(Math.round(sampleRate * 0.25));
@@ -31,10 +44,10 @@ class EchoGate extends AudioWorkletProcessor {
     if (outLevel > 0.01) this.outQuietFor = 0; else this.outQuietFor += 0.02;
     const audible = this.outQuietFor < 0.3;
     if (audible !== this.audible) { this.audible = audible; this.port.postMessage({ audible }); }
-    const echoLevel = audible ? outLevel * this.echo * 2.5 : 0;
+    const echoLevel = audible ? outLevel * this.echo * ECHO_MARGIN[this.sens] : 0;
     const headset = this.echo < 0.05;
     // While she talks on speakers keep a fixed bar above the browser canceller's leftovers.
-    const threshold = Math.max(audible && !headset ? 0.04 : 0.006, this.floor * 3, echoLevel);
+    const threshold = Math.max(audible && !headset ? SPEAKER_BAR[this.sens] : 0.006, this.floor * 3, echoLevel);
     // Learn the echo while the gate is shut (the user isn't talking over the assistant).
     if (audible && !this.open && outLevel > 0.01) {
       const ratio = level / outLevel;
@@ -47,9 +60,18 @@ class EchoGate extends AudioWorkletProcessor {
     if (this.open && !audible && level > threshold * 1.5) this.voice += (level - this.voice) * (this.voice ? 0.02 : 1);
 
     const near = this.voice ? Math.min(this.near, Math.max(0.01, this.voice * 0.5)) : this.near;
-    const nearThreshold = Math.max(audible ? near * 1.3 : near, this.floor * 8, echoLevel * 1.3);
+    const nearMargin = NEAR_MARGIN[this.sens];
+    const nearThreshold = Math.max(audible ? near * nearMargin : near, this.floor * 8, echoLevel * nearMargin);
     if (level > nearThreshold) { this.nearFrames += 1; this.nearQuietFor = 0; }
     else { this.nearQuietFor += 0.02; if (this.nearQuietFor > 0.25) this.nearFrames = 0; }
+    // While she talks, tell the page how loud the user is against what would stop her (a few times a second).
+    if (audible) {
+      if (++this.reported >= 5) { this.reported = 0; this.port.postMessage({ levels: { level, need: nearThreshold } }); }
+    } else if (this.reported !== -1) {
+      this.reported = -1;
+      this.port.postMessage({ levels: null });
+    }
+    if (audible && this.reported < 0) this.reported = 0;
     // Near voice: ~120 ms of loud frames to start (a click/bang is shorter), 250 ms gap to end.
     const speaking = this.speaking ? this.nearQuietFor <= 0.25 : this.nearFrames >= 6;
     if (speaking !== this.speaking) { this.speaking = speaking; this.port.postMessage({ speaking }); }

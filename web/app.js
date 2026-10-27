@@ -11,7 +11,7 @@ const el = {
   recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
-  devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
+  bargeHint: $("bargeHint"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
   usageTable: $("usageTable"), usageDetails: $("usageDetails"),
 };
 
@@ -338,9 +338,10 @@ function heard(text, final) {
 //    server) cuts her off, a short sound just restores the volume.
 // Without AudioWorklet there is no gate: everything is sent and the server's text checks are the only guard.
 
-const STOP_WORDS = new Set(["стоп", "зачекай", "почекай", "стривай", "досить", "stop", "wait"]);
+// The single words that mean «stop» (the server knows more phrases and judges the whole utterance).
+const STOP_WORDS = new Set(["стоп", "стій", "зачекай", "почекай", "чекай", "погоди", "стривай", "тихо", "досить", "перестань", "замовкни", "помовч", "stop", "wait"]);
 const DUCK_AFTER_MS = 400;
-const STOP_BY_SOUND_MS = 1500;
+const STOP_BY_SOUND_MS = 1000;
 const DUCK_LEVEL = 0.5;
 const NEAR_WINDOW_MS = 1200; // transcripts lag behind the sound
 const NEAR_WINDOW_FINAL_MS = 2500; // a final result lags more, and losing it loses the whole turn
@@ -385,6 +386,7 @@ function passesGate(text, final) {
 }
 
 function onGate(sig) {
+  if ("levels" in sig) { showBargeLevels(sig.levels); return; }
   if (paused) return;
   if (sig.speaking) touch();
   if ("audible" in sig) {
@@ -426,7 +428,7 @@ async function setupGate() {
     await playCtx.audioWorklet.addModule("gate.js");
     const node = new AudioWorkletNode(playCtx, "echo-gate", {
       numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1],
-      processorOptions: { near: Number(params.get("near")) || 0.06 }, // ?near=0.04 more sensitive, 0.09 less
+      processorOptions: { near: Number(params.get("near")) || 0.06, sens: bargeSens() }, // ?near=0.04 more sensitive, 0.09 less
     });
     node.port.onmessage = (e) => onGate(e.data);
     micSource = playCtx.createMediaStreamSource(micStream);
@@ -648,6 +650,29 @@ setInterval(() => {
     setPaused(true, "Пауза: ніхто не говорив " + Math.round(IDLE_PAUSE_MS / 1000) + " с. Натисніть «Продовжити».");
   }
 }, 5000);
+
+// ---------------------------------------------------------------- how easily the voice interrupts her
+
+function bargeSens() { return Number(load("bargeSens") ?? 2); }
+
+el.bargeSens.value = String(bargeSens());
+el.bargeSens.onchange = () => {
+  save("bargeSens", el.bargeSens.value);
+  if (gate) gate.port.postMessage({ sens: Number(el.bargeSens.value) }); // at once, mid-sentence too
+};
+
+// While she talks: how loud the user is against what the gate wants to take it for the user (not her echo).
+let lastLevelsAt = 0;
+function showBargeLevels(levels) {
+  if (!levels || !live || paused) { el.bargeHint.hidden = true; return; }
+  if (Date.now() - lastLevelsAt < 200) return;
+  lastLevelsAt = Date.now();
+  const have = levels.level * 100;
+  const need = levels.need * 100;
+  el.bargeHint.hidden = false;
+  el.bargeHint.textContent = "Перебивання голосом: ваш голос " + have.toFixed(1) + ", потрібно більше " + need.toFixed(1)
+    + (have > need ? " — зупиняю" : "");
+}
 
 // ---------------------------------------------------------------- volume
 

@@ -351,8 +351,6 @@ function heard(text, final) {
 
 // The single words that mean «stop» (the server knows more phrases and judges the whole utterance).
 const STOP_WORDS = new Set(["стоп", "стій", "зачекай", "почекай", "чекай", "погоди", "стривай", "тихо", "досить", "перестань", "замовкни", "помовч", "stop", "wait"]);
-const DUCK_AFTER_MS = 400;
-const STOP_BY_SOUND_MS = 1000;
 const DUCK_LEVEL = 0.5;
 const NEAR_WINDOW_MS = 1200; // transcripts lag behind the sound
 const NEAR_WINDOW_FINAL_MS = 2500; // a final result lags more, and losing it loses the whole turn
@@ -409,27 +407,44 @@ function onGate(sig) {
   if (sig.speaking) {
     const since = Date.now();
     setTimeout(() => checkGateWorks(since), 4000);
-  }
-  if (sig.speaking) {
-    if (!barge.audible || barge.stage !== "idle") return;
-    barge.timers.push(setTimeout(() => {
-      if (barge.speaking && barge.stage === "idle") { barge.stage = "ducked"; setPlayVolume(DUCK_LEVEL); }
-    }, DUCK_AFTER_MS));
-    // They keep talking over her and none of the words that came through are theirs (only her echo, or
-    // nothing): they want the floor.
-    barge.timers.push(setTimeout(() => {
-      if (barge.speaking && barge.stage === "ducked" && !ownWords(barge.last).length) send({ type: "interrupt", by: "sound" });
-    }, STOP_BY_SOUND_MS));
   } else {
     barge.speechEndedAt = Date.now();
-    barge.timers.forEach(clearTimeout);
-    barge.timers = [];
-    if (barge.stage === "ducked") {
-      // A short sound: wait briefly for its transcript, else it was a cough, «угу» or her echo.
-      barge.timers.push(setTimeout(() => {
-        if (barge.stage === "ducked" && !barge.speaking) { barge.stage = "idle"; setPlayVolume(1); logEvent("attempt", ""); }
-      }, 400));
-    }
+  }
+}
+
+// Interrupting by voice, judged on a window rather than a stopwatch. The gate reports ten times a second whether
+// the user is louder than the bar while she talks. Speech over a loud voice dips below the bar between words, and
+// a rule of «a whole second without a gap» never fired: an almost continuous voice reset the count again and again.
+// So: of the last second, enough samples with the user over the bar duck her (their voice has reached her) and a few
+// more stop her. The server still decides about the words (stop words, takeover) from the transcript, and refuses
+// a stop by sound when the words were only «угу».
+const VOICED_RATIO = 1.0; // a sample is the user's voice above the bar (it has its own margin over the echo)
+const VOICE_WINDOW = 10; // samples: one second
+const DUCK_AT = 2; // 200 ms of voice in the last second duck her
+const STOP_AT = 4; // 400 ms stop her
+const STOP_RETRY_MS = 1500; // after a stop the server refused (a listener's «угу»), try again no sooner than this
+const voicedWin = [];
+let duckedAt = 0;
+let stopSentAt = 0;
+
+function bargeFromLevels(l) {
+  const herPlaying = l.audible && sources.size > 0; // not her fading tail after a stop, not a paused page
+  if (!herPlaying || paused) { voicedWin.length = 0; return; }
+  voicedWin.push(l.level > l.need * VOICED_RATIO ? 1 : 0);
+  if (voicedWin.length > VOICE_WINDOW) voicedWin.shift();
+  const voiced = voicedWin.reduce((a, b) => a + b, 0);
+  if (barge.stage === "idle") {
+    if (voiced >= DUCK_AT) { barge.stage = "ducked"; duckedAt = Date.now(); setPlayVolume(DUCK_LEVEL); }
+    return;
+  }
+  if (voiced >= STOP_AT && Date.now() - stopSentAt > STOP_RETRY_MS) {
+    stopSentAt = Date.now();
+    send({ type: "interrupt", by: "sound", text: barge.last });
+  } else if (voicedWin.length >= STOP_AT && voicedWin.slice(-STOP_AT).every((v) => v === 0) && Date.now() - duckedAt > 600) {
+    // A short sound: a cough, «угу» or her echo. She gets her volume back; the record keeps the attempt.
+    barge.stage = "idle";
+    setPlayVolume(1);
+    logEvent("attempt", "");
   }
 }
 
@@ -917,6 +932,7 @@ const hearLines = [];
 function onLevels(l) {
   if (!l || !live) return;
   mic = l;
+  bargeFromLevels(l);
   el.levelFill.style.width = Math.min(100, (l.level / LEVEL_FULL) * 100) + "%";
   el.levelNeed.style.left = Math.min(100, (l.need / LEVEL_FULL) * 100) + "%";
   el.levelNeed.hidden = !l.audible;

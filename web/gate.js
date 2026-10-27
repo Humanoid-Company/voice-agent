@@ -21,6 +21,7 @@ class EchoGate extends AudioWorkletProcessor {
     super();
     this.sens = Math.min(3, Math.max(0, (options.processorOptions || {}).sens ?? 1));
     this.reported = 0;
+    this.peak = 0; // the loudest 20 ms frame since the last report
     this.port.onmessage = (e) => {
       if (e.data && "sens" in e.data) this.sens = Math.min(3, Math.max(0, Number(e.data.sens) || 0));
     };
@@ -69,9 +70,13 @@ class EchoGate extends AudioWorkletProcessor {
     if (speaking !== this.speaking) { this.speaking = speaking; this.port.postMessage({ speaking }); }
     // Ten times a second: how loud the microphone is and what it takes to count as the user. The page shows it,
     // so that «the microphone is silent», «too quiet against her echo» and «all fine» can be told apart.
+    // The loudest frame of the 100 ms, not the last one: speech is syllables with gaps, and the last frame is
+    // often in a gap.
+    this.peak = Math.max(this.peak, level);
     if (++this.reported >= 5) {
       this.reported = 0;
-      this.port.postMessage({ levels: { level, need: nearThreshold, audible, speaking } });
+      this.port.postMessage({ levels: { level: this.peak, need: nearThreshold, audible, speaking } });
+      this.peak = 0;
     }
     // Learn the room's noise only while nobody speaks.
     if (!this.open && !audible) {

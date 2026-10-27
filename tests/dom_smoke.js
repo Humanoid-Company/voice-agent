@@ -217,4 +217,43 @@ check("the timeline says how the user interrupted and what did not work", timeli
 check("the stats count the user's tries", E("historyStats").textContent.indexOf("перебивань: 2") >= 0);
 E("historyBack").onclick();
 check("«До списку» returns to the list", viewing === null && E("historyList").hidden === false && E("historyView").hidden === true);
+
+// ---- interrupting by voice: a window, not a stopwatch
+var herSource = {}; sources.add(herSource);
+live = true; paused = false; ready = true;
+function resetBarge() { voicedWin.length = 0; barge.stage = "idle"; stopSentAt = 0; sent.length = 0; setPlayVolume(1); }
+function feed(pattern, level) { // 1 = the user is over the bar, 0 = under it (the bar is 0.065)
+  pattern.forEach(function (v) { onLevels({ level: v ? (level || 0.09) : 0.02, need: 0.065, audible: true, speaking: !!v }); });
+}
+var soundStops = function () { return sent.filter(function (m) { return m.type === "interrupt" && m.by === "sound"; }).length; };
+
+resetBarge(); barge.last = "скриня була";
+feed([1, 1]);
+check("200 ms of the user's voice duck her", barge.stage === "ducked");
+feed([1, 1]);
+check("400 ms of voice stop her, and the words that came with it go along", soundStops() === 1 && sent.filter(function (m) { return m.by === "sound"; })[0].text === "скриня була");
+
+resetBarge();
+feed([1, 0, 1, 1, 0, 1]);
+check("a voice that dips below the bar between words still stops her (the old stopwatch never fired)", soundStops() === 1);
+
+resetBarge();
+feed([1, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+check("a few scattered blips are not an interruption", soundStops() === 0);
+
+resetBarge();
+for (var q = 0; q < 30; q++) onLevels({ level: 0.03, need: 0.065, audible: true, speaking: false });
+check("her own echo, under the bar, never ducks or stops her", barge.stage === "idle" && soundStops() === 0);
+
+resetBarge(); feed([1, 1, 1, 1, 1, 1, 1, 1]);
+check("a stop is sent once, not at every sample (the server may refuse it)", soundStops() === 1);
+
+resetBarge(); var attemptsBefore = current ? current.events.filter(function (e) { return e.k === "attempt"; }).length : 0;
+feed([1, 1]); duckedAt = Date.now() - 1000; feed([0, 0, 0, 0]);
+check("a short sound gives her volume back after 400 ms of quiet", barge.stage === "idle" && soundStops() === 0);
+check("and the attempt is recorded", current.events.filter(function (e) { return e.k === "attempt"; }).length === attemptsBefore + 1);
+
+resetBarge(); sources.clear();
+feed([1, 1, 1, 1, 1, 1]);
+check("nothing is ducked or stopped when she is not actually playing", barge.stage === "idle" && soundStops() === 0);
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

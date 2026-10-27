@@ -417,3 +417,17 @@ def test_pause_and_history_reset_say_so_when_they_cut_the_answer():
         assert of(out, "clear")[-1]["reason"] == "pause"
 
     asyncio.run(go())
+
+
+def test_a_stop_by_sound_is_refused_when_the_words_were_only_a_listeners_sound():
+    async def go():
+        for text, stops in (("угу", False), ("ага", False), ("", True), ("скриня була", True)):
+            s, out = make(FakeLLM(answer="Це довга відповідь тут. І ще одне речення тут."))
+            await s.start()
+            await s.on_heard("Розкажи щось довге", True)
+            for _ in range(3):
+                await asyncio.sleep(0)
+            await s.on_client({"type": "interrupt", "by": "sound", "text": text})
+            assert bool(of(out, "clear")) == stops, (text, types(out))
+
+    asyncio.run(go())

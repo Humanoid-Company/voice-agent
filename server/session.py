@@ -193,6 +193,8 @@ class VoiceSession:
         elif kind == "interrupt":
             self._end_requested = False  # the user took the floor
             by = str(msg.get("by"))
+            if by == "sound" and classify_interjection(str(msg.get("text") or ""), assistant_recent=self._recent) in ("backchannel", "echo"):
+                return  # a listener's «угу» or her own echo, not the user taking the floor, however long it sounded
             await self.interrupt(reason=by if by in ("button", "sound") else "button")
         elif kind == "played" and self._awaiting_played:
             self._awaiting_played = False

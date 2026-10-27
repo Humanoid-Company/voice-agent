@@ -155,6 +155,12 @@ class VoiceSession:
         self._lock = asyncio.Lock()
         self._tts_lock = asyncio.Lock()
         self._pending: dict | None = None  # voice / provider / language to apply between two sentences
+        # A new voice is connected in the background as soon as it is asked for, so that the swap between two
+        # sentences is instant and the answer goes on without a pause.
+        self._prepared: tuple[tuple[str, str, str], Any] | None = None
+        self._prewarm_task: asyncio.Task | None = None
+        self._prewarm_key: tuple[str, str, str] | None = None
+        self._bg: set[asyncio.Task] = set()
 
         # the utterance the user is speaking right now
         self._final = ""
@@ -200,6 +206,11 @@ class VoiceSession:
     async def close(self) -> None:
         if self._turn and not self._turn.done():
             self._turn.cancel()
+        for task in list(self._bg):
+            task.cancel()
+        if self._prepared:
+            await self._prepared[1].close()
+            self._prepared = None
         await self.tts.close()
 
     # ------------------------------------------------------------------ input
@@ -442,6 +453,7 @@ class VoiceSession:
             names = ", ".join(v["label"].split(" (")[0] for v in voices[:12])
             return f"Такого голосу немає. Є, наприклад: {names}."
         self._pending = {**(self._pending or {}), "provider": provider, "voice": hit["id"]}
+        await self._start_prewarm()
         return f"Голос «{hit['label']}» вмикається. Скажи кілька слів уже ним, коротко підтвердь."
 
     async def _tool_set_name(self, args: dict) -> str:
@@ -529,34 +541,85 @@ class VoiceSession:
     # ------------------------------------------------------------------ voice change
 
     async def request_voice(self, provider: str, voice: str) -> None:
-        """The page's selectors: applied at once when idle, else between two sentences."""
+        """The page's «Застосувати»: at once when idle; during an answer the new voice is connected in the background
+        and takes over at the next sentence, the answer goes on in it."""
         self._pending = {**(self._pending or {}), "provider": provider, "voice": voice}
         if self.state in ("listening", "paused") and not self._awaiting_played:
             await self._apply_pending()
+        else:
+            await self._start_prewarm()
+
+    async def _resolve_pending(self, pending: dict) -> tuple[str, str, str]:
+        provider = str(pending.get("provider") or self.provider)
+        language = str(pending.get("language") or self._tts_language)
+        voice = str(pending.get("voice") or self.voice)
+        if self._voices_for:
+            voices = await self._voices_for(provider, language)
+            if voices and voice not in {v["id"] for v in voices}:
+                voice = voices[0]["id"]  # e.g. another language model: its own voices
+        return provider, voice, language
+
+    async def _start_prewarm(self) -> None:
+        if self._tts_factory is None or not self._pending:
+            return
+        key = await self._resolve_pending(self._pending)
+        if key == (self.provider, self.voice, self._tts_language) or key == self._prewarm_key:
+            return
+        if self._prewarm_task and not self._prewarm_task.done():
+            self._prewarm_task.cancel()  # the user picked another voice meanwhile
+        self._prewarm_key = key
+        self._prewarm_task = self._spawn(self._prewarm(key))
+
+    async def _prewarm(self, key: tuple[str, str, str]) -> None:
+        tts = None
+        try:
+            tts = self._tts_factory(*key)  # type: ignore[misc]
+            await tts.connect()
+        except asyncio.CancelledError:
+            if tts is not None:
+                await tts.close()
+            raise
+        except Exception:
+            log.warning("voice prewarm failed: the swap will try again", exc_info=True)
+            return
+        if self._prepared:
+            await self._prepared[1].close()
+        self._prepared = (key, tts)
+
+    def _spawn(self, coro) -> asyncio.Task:
+        task = asyncio.ensure_future(coro)
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+        return task
 
     async def _apply_pending(self) -> None:
         async with self._tts_lock:
             pending, self._pending = self._pending, None
             if not pending or self._tts_factory is None:
                 return
-            provider = str(pending.get("provider") or self.provider)
-            language = str(pending.get("language") or self._tts_language)
-            voice = str(pending.get("voice") or self.voice)
-            if self._voices_for:
-                voices = await self._voices_for(provider, language)
-                if voices and voice not in {v["id"] for v in voices}:
-                    voice = voices[0]["id"]  # e.g. another language model: its own voices
-            if (provider, voice, language) == (self.provider, self.voice, self._tts_language):
+            key = await self._resolve_pending(pending)
+            if key == (self.provider, self.voice, self._tts_language):
                 return
+            if self._prewarm_task and not self._prewarm_task.done() and self._prewarm_key == key:
+                await asyncio.shield(self._prewarm_task)  # nearly there: waiting is shorter than starting again
+            new = None
+            if self._prepared and self._prepared[0] == key:
+                new, self._prepared = self._prepared[1], None
+            elif self._prepared:  # a voice nobody wants any more
+                await self._prepared[1].close()
+                self._prepared = None
             try:
-                new = self._tts_factory(provider, voice, language)
-                await new.connect()
+                if new is None:
+                    new = self._tts_factory(*key)
+                    await new.connect()
             except Exception as e:
                 log.exception("voice change failed")
                 await self._j({"type": "error", "message": f"Не вдалося змінити голос: {e}"})
                 return
+            provider, voice, language = key
             old, self.tts = self.tts, new
             self.provider, self.voice, self._tts_language = provider, voice, language
+            self._prewarm_key = None
             await old.close()
             await self._j(
                 {"type": "voice", "provider": provider, "voice": voice, "sample_rate": new.sample_rate, "language": language}

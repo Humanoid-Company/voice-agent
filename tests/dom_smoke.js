@@ -83,8 +83,19 @@ setPaused(false);
 check("resume is sent", sent.some(function (m) { return m.type === "resume"; }) && paused === false);
 
 // the voice selector sends a change mid-call
+check("with the selection equal to the active voice there is nothing to apply", E("voiceApply").hidden === true);
+sent.length = 0;
 E("provider").value = "soniox"; E("voice").value = "Daniel"; E("voice").onchange();
-check("selector change mid-call is sent", sent.some(function (m) { return m.type === "voice" && m.voice === "Daniel"; }));
+check("picking a voice mid-call does not change it yet, it offers «Застосувати»", E("voiceApply").hidden === false && !sent.some(function (m) { return m.type === "voice"; }));
+E("voiceApply").onclick();
+check("«Застосувати» sends the chosen voice and waits for the answer", sent.some(function (m) { return m.type === "voice" && m.voice === "Daniel" && m.provider === "soniox"; }) && E("voiceApply").disabled === true && E("voiceApply").textContent === "Застосовую…");
+onMessage({ data: JSON.stringify({ type: "voice", provider: "soniox", voice: "Daniel", sample_rate: 24000, language: "uk" }) });
+check("the server's confirmation makes it the active voice and hides the button", activeVoice.voice === "Daniel" && E("voiceApply").hidden === true && E("voiceApply").disabled === false);
+E("voice").value = "Maya"; E("voice").onchange(); E("voiceApply").onclick();
+onMessage({ data: JSON.stringify({ type: "error", message: "Не вдалося змінити голос: x" }) });
+check("a failed change brings the button back", E("voiceApply").disabled === false && E("voiceApply").textContent === "Застосувати голос" && E("voiceApply").hidden === false);
+E("voice").value = "Daniel"; E("voice").onchange();
+check("choosing the active voice again hides the button", E("voiceApply").hidden === true);
 
 // the server ends the call
 onMessage({ data: JSON.stringify({ type: "end" }) });

@@ -166,3 +166,5 @@ summary { cursor: pointer; font-weight: 600; font-size: 1.05rem; }
 .timeline .trow .x { min-width: 0; }
 .timeline .trow.dim { color: var(--muted); }
 .timeline .trow.warn { color: var(--warn); }
+
+.btn.wide { width: 100%; margin-top: 10px; }

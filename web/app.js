@@ -11,7 +11,7 @@ const el = {
   recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), newChat: $("newChat"),
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
-  character: $("character"), emotion: $("emotion"), characterInfo: $("characterInfo"),
+  voiceApply: $("voiceApply"), character: $("character"), emotion: $("emotion"), characterInfo: $("characterInfo"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
   historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
@@ -44,6 +44,7 @@ let paused = false; // the user (or silence) paused the call: nobody is addresse
 let lastActivity = Date.now(); // the last time anybody spoke or was spoken to: 90 s of nothing pauses the call
 let recLang = params.get("lang") || "uk-UA"; // speech recognition language: the model can change it
 let micSource = null; // the microphone's node in the gate: replaced when another microphone is picked
+let activeVoice = { provider: "", voice: "" }; // the voice that is speaking now (what «Застосувати» compares with)
 let live = false; // a call is active
 let ready = false; // the server has connected to TTS: only then do we send what we heard
 
@@ -124,6 +125,7 @@ function updateButtons() {
   el.pause.textContent = paused ? "Продовжити" : "Пауза";
   el.pause.classList.toggle("primary", paused);
   el.interrupt.hidden = !(live && !paused && (curState === "thinking" || curState === "speaking"));
+  updateVoiceApply();
 }
 
 // ---------------------------------------------------------------- log
@@ -536,7 +538,7 @@ function onMessage(ev) {
       (botBubble || lastBot)?.classList.add("cut");
       botBubble = null;
       break;
-    case "error": showProblem(m.message); bubble("system", m.message); break;
+    case "error": showProblem(m.message); bubble("system", m.message); resetVoiceApply(); break;
   }
 }
 
@@ -565,6 +567,7 @@ async function start() {
       character: el.character.value, emotion: el.emotion.value });
     live = true;
     paused = false;
+    activeVoice = { provider: el.provider.value, voice: el.voice.value };
     renderHearing();
     usageLast = { seconds: 0, cost: 0 };
     usageNow = { seconds: 0, cost: 0, at: Date.now(), llm_in: 0, llm_out: 0, tts_chars: 0, searches: 0 };
@@ -856,8 +859,33 @@ document.querySelectorAll("[data-close]").forEach((b) => {
 
 function sendVoice() { send({ type: "voice", provider: el.provider.value, voice: el.voice.value }); }
 
-el.provider.onchange = () => { fillVoices(); if (live) sendVoice(); };
-el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); if (live) sendVoice(); };
+// Picking a voice mid-call only prepares the change: «Застосувати голос» makes it. The server connects the new
+// voice at once and swaps it in at the next sentence, so the answer goes on in the new voice without a pause.
+let applyTimer = null;
+
+function updateVoiceApply() {
+  const differs = live && (el.provider.value !== activeVoice.provider || el.voice.value !== activeVoice.voice);
+  el.voiceApply.hidden = !differs;
+  if (!differs) resetVoiceApply();
+}
+
+function resetVoiceApply() {
+  clearTimeout(applyTimer);
+  el.voiceApply.disabled = false;
+  el.voiceApply.textContent = "Застосувати голос";
+}
+
+el.provider.onchange = () => { fillVoices(); updateVoiceApply(); };
+el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); };
+el.voiceApply.onclick = () => {
+  el.voiceApply.disabled = true;
+  el.voiceApply.textContent = "Застосовую…";
+  save("provider", el.provider.value);
+  save("voice:" + el.provider.value, el.voice.value);
+  sendVoice();
+  clearTimeout(applyTimer);
+  applyTimer = setTimeout(resetVoiceApply, 8000); // no answer: the button comes back, the user can try again
+};
 
 // The server changed the voice (the page's selector, or the user asked for it): the selectors follow, and the
 // audio that comes next has the new sample rate.
@@ -866,6 +894,8 @@ function onVoice(m) {
   if (el.provider.value !== m.provider) { el.provider.value = m.provider; fillVoices(); }
   if (![...el.voice.options].some((o) => o.value === m.voice)) el.voice.add(new Option(m.voice, m.voice));
   el.voice.value = m.voice;
+  activeVoice = { provider: m.provider, voice: m.voice };
+  updateVoiceApply();
   save("provider", m.provider);
   save("voice:" + m.provider, m.voice);
 }

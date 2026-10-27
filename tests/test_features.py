@@ -431,3 +431,104 @@ def test_a_stop_by_sound_is_refused_when_the_words_were_only_a_listeners_sound()
             assert bool(of(out, "clear")) == stops, (text, types(out))
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------- «Застосувати»: a new voice in the middle of an answer
+
+class GatedLLM(FakeLLM):
+    """One sentence at once, the second only after `release`: the answer is under way when the user picks a voice."""
+
+    def __init__(self):
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def stream(self, history, ctx=None):
+        yield "Перше речення тут. "
+        await self.release.wait()
+        yield "Друге речення тут."
+
+
+async def _busy_session(llm, **kw):
+    s, out = make(llm, **kw)
+    old = s.tts
+    await s.start()
+    await s.on_heard("Розкажи щось", True)
+    for _ in range(30):
+        await asyncio.sleep(0)  # the first sentence has been spoken, the LLM waits
+    assert old.said == ["Перше речення тут."] and s.state == "speaking"
+    return s, out, old
+
+
+def test_a_voice_applied_mid_answer_is_connected_at_once_and_takes_over_at_the_next_sentence():
+    async def go():
+        llm = GatedLLM()
+        s, out, old = await _busy_session(llm)
+        await s.on_client({"type": "voice", "provider": "soniox", "voice": "Daniel"})
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(out["made"]) == 1  # connected in the background right away
+        assert s.tts is old  # but not swapped in the middle of a sentence
+        llm.release.set()
+        await asyncio.gather(s._turn)
+        assert len(out["made"]) == 1 and s.tts is out["made"][0]  # the prepared one was used, none made again
+        assert out["made"][0].said == ["Друге речення тут."] and old.said == ["Перше речення тут."]  # the answer went on in it
+        assert old.closed and of(out, "voice")[-1]["voice"] == "Daniel" and s.voice == "Daniel"
+
+    asyncio.run(go())
+
+
+def test_if_the_background_connection_fails_the_swap_tries_again_and_reports():
+    async def go():
+        llm = GatedLLM()
+        s, out, old = await _busy_session(llm)
+        calls = []
+
+        def broken(p, v, lang):
+            calls.append(v)
+            raise RuntimeError("no key")
+
+        s._tts_factory = broken
+        await s.on_client({"type": "voice", "provider": "soniox", "voice": "Daniel"})
+        for _ in range(5):
+            await asyncio.sleep(0)
+        llm.release.set()
+        await asyncio.gather(s._turn)
+        assert len(calls) == 2  # the warm-up, then the swap itself
+        assert "error" in types(out) and s.tts is old and old.said == ["Перше речення тут.", "Друге речення тут."]
+
+    asyncio.run(go())
+
+
+def test_two_voices_picked_in_a_row_leave_only_the_last_one_connected():
+    async def go():
+        llm = GatedLLM()
+        s, out, old = await _busy_session(llm)
+        await s.on_client({"type": "voice", "provider": "soniox", "voice": "Daniel"})
+        await s.on_client({"type": "voice", "provider": "respeecher", "voice": "kseniia"})
+        for _ in range(5):
+            await asyncio.sleep(0)
+        llm.release.set()
+        await asyncio.gather(s._turn)
+        assert s.voice == "kseniia" and s.provider == "respeecher" and s.tts.voice == "kseniia"
+        assert all(t.closed for t in out["made"] if t is not s.tts)  # nothing left open
+        assert s.tts.said == ["Друге речення тут."]
+
+    asyncio.run(go())
+
+
+def test_an_idle_session_applies_a_picked_voice_at_once_and_closing_leaves_nothing_open():
+    async def go():
+        s, out = make()
+        await s.start()
+        await s.on_client({"type": "voice", "provider": "soniox", "voice": "Daniel"})
+        assert s.voice == "Daniel" and of(out, "voice")
+        # a prepared voice nobody used is closed with the session
+        llm = GatedLLM()
+        s2, out2, old2 = await _busy_session(llm)
+        await s2.on_client({"type": "voice", "provider": "soniox", "voice": "Daniel"})
+        for _ in range(5):
+            await asyncio.sleep(0)
+        await s2.close()
+        assert out2["made"][0].closed and old2.closed
+
+    asyncio.run(go())

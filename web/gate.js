@@ -64,17 +64,15 @@ class EchoGate extends AudioWorkletProcessor {
     const nearThreshold = Math.max(audible ? near * nearMargin : near, this.floor * 8, echoLevel * nearMargin);
     if (level > nearThreshold) { this.nearFrames += 1; this.nearQuietFor = 0; }
     else { this.nearQuietFor += 0.02; if (this.nearQuietFor > 0.25) this.nearFrames = 0; }
-    // While she talks, tell the page how loud the user is against what would stop her (a few times a second).
-    if (audible) {
-      if (++this.reported >= 5) { this.reported = 0; this.port.postMessage({ levels: { level, need: nearThreshold } }); }
-    } else if (this.reported !== -1) {
-      this.reported = -1;
-      this.port.postMessage({ levels: null });
-    }
-    if (audible && this.reported < 0) this.reported = 0;
     // Near voice: ~120 ms of loud frames to start (a click/bang is shorter), 250 ms gap to end.
     const speaking = this.speaking ? this.nearQuietFor <= 0.25 : this.nearFrames >= 6;
     if (speaking !== this.speaking) { this.speaking = speaking; this.port.postMessage({ speaking }); }
+    // Ten times a second: how loud the microphone is and what it takes to count as the user. The page shows it,
+    // so that «the microphone is silent», «too quiet against her echo» and «all fine» can be told apart.
+    if (++this.reported >= 5) {
+      this.reported = 0;
+      this.port.postMessage({ levels: { level, need: nearThreshold, audible, speaking } });
+    }
     // Learn the room's noise only while nobody speaks.
     if (!this.open && !audible) {
       this.floor = level < this.floor ? this.floor * 0.7 + level * 0.3 : this.floor + (level - this.floor) * 0.01;

@@ -107,9 +107,50 @@ gate = { port: { postMessage: function (m) { gateMsgs.push(m); } } };
 check("sensitivity defaults to high", E("bargeSens").value === "2" && bargeSens() === 2);
 E("bargeSens").value = "3"; E("bargeSens").onchange();
 check("sensitivity is saved and sent to the gate", store["bargeSens"] === "3" && gateMsgs.length === 1 && gateMsgs[0].sens === 3);
-live = true; paused = false;
-onGate({ levels: { level: 0.03, need: 0.065 } });
-check("level line shows the voice against the bar", E("bargeHint").hidden === false && E("bargeHint").textContent.indexOf("3.0") >= 0 && E("bargeHint").textContent.indexOf("6.5") >= 0);
-onGate({ levels: null });
-check("level line hides when she is silent", E("bargeHint").hidden === true);
+live = true; paused = false; micMuted = false;
+gate = { port: { postMessage: function () {} } };
+
+// what the microphone hears: the four cases the user has to tell apart
+onGate({ levels: { level: 0.03, need: 0.065, audible: true, speaking: false } });
+check("quiet voice against her echo is explained", E("hearingStatus").textContent.indexOf("тихіший за ехо") >= 0 && E("hearingStatus").textContent.indexOf("6.5") >= 0 && E("levelNeed").hidden === false);
+onGate({ levels: { level: 0.12, need: 0.065, audible: true, speaking: true } });
+check("a loud voice over her says she should stop", E("hearingStatus").textContent.indexOf("голосніший за ехо") >= 0);
+onGate({ levels: { level: 0.05, need: 0.07, audible: false, speaking: true } });
+check("voice while she is silent is heard", E("hearingStatus").textContent.indexOf("Чую ваш голос") >= 0 && E("levelNeed").hidden === true);
+onGate({ levels: { level: 0, need: 0.07, audible: false, speaking: false } });
+deadSince = Date.now() - 5000; renderHearing();
+check("a dead microphone is blamed on the microphone", E("hearingStatus").textContent.indexOf("не передає звук") >= 0);
+deadSince = 0; micMuted = true; renderHearing();
+check("a muted microphone is said to be muted", E("hearingStatus").textContent.indexOf("вимкнено") >= 0);
+micMuted = false;
+
+// the log of what was recognized and dropped
+heard("привіт", true);
+check("a recognized phrase is logged", hearLines[0].text.indexOf("розпізнано й передано: «привіт»") >= 0);
+gate = { port: { postMessage: function () {} } }; barge.audible = true; barge.speaking = false; barge.speechEndedAt = 0;
+heard("це шум поруч", true);
+check("a phrase that is not the user's voice is logged as dropped", hearLines[0].bad === true && hearLines[0].text.indexOf("не передано") >= 0);
+barge.audible = false;
+onMessage({ data: JSON.stringify({ type: "user_drop", reason: "echo", text: "привіт світе" }) });
+check("the server's reason for a drop is shown", hearLines[0].text.indexOf("ехо") >= 0 && hearLines[0].text.indexOf("привіт світе") >= 0);
+
+// conversation history
+sent.length = 0;
+newConversation();
+check("a new conversation has no current one and tells the server", current === null && sent.some(function (m) { return m.type === "history" && m.history.length === 0; }));
+onMessage({ data: JSON.stringify({ type: "user", text: "Мене звати Віктор", final: true }) });
+onMessage({ data: JSON.stringify({ type: "record", role: "assistant", text: "Приємно, Вікторе." }) });
+check("the conversation is kept in the browser", current && current.msgs.length === 2 && current.title === "Мене звати Віктор" && JSON.parse(store["convs"]).length === 1);
+check("the server is given the past on the next call", JSON.stringify(historyForServer()) === JSON.stringify([{ role: "user", content: "Мене звати Віктор" }, { role: "assistant", content: "Приємно, Вікторе." }]));
+var firstId = current.id;
+newConversation();
+onMessage({ data: JSON.stringify({ type: "user", text: "Інша розмова", final: true }) });
+check("a new conversation is a separate entry", convs.length === 2 && current.id !== firstId && historyForServer().length === 1);
+sent.length = 0;
+openConversation(firstId);
+check("opening an old conversation restores it and tells the server", current.id === firstId && sent.some(function (m) { return m.type === "history" && m.history.length === 2; }) && store["convCurrent"] === firstId);
+deleteConversation(firstId);
+check("deleting the current conversation clears it", current === null && convs.length === 1 && JSON.parse(store["convs"]).length === 1);
+E("historyList").children = []; renderHistory();
+check("the history list has a row per conversation", E("historyList").children.length === 1);
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

@@ -127,3 +127,22 @@ summary { cursor: pointer; font-weight: 600; font-size: 1.05rem; }
 .usage-table { margin-top: 10px; font-variant-numeric: tabular-nums; }
 .usage-table .urow { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .usage-table .urow.total { font-weight: 600; border-bottom: 0; }
+
+/* what the microphone hears, the conversation history */
+.hearing { margin-top: 10px; }
+.levelbar { position: relative; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.levelfill { height: 100%; width: 0; background: var(--ok); transition: width 0.1s linear; }
+.levelneed { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--err); }
+.hearing details { margin-top: 6px; }
+.hearing summary { font-size: 0.85rem; font-weight: 400; color: var(--muted); }
+.hearlog { max-height: 180px; overflow-y: auto; font-size: 0.85rem; margin-top: 6px; }
+.hearlog .hrow { padding: 3px 0; border-bottom: 1px solid var(--line); word-wrap: break-word; }
+.hearlog .hrow .t { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.hearlog .hrow.bad { color: var(--warn); }
+.history-list { display: flex; flex-direction: column; gap: 6px; }
+.history-list .hitem { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.history-list .hitem.current { border-color: var(--accent); }
+.history-list .htext { min-width: 0; }
+.history-list .htitle { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-list .hmeta { font-size: 0.8rem; color: var(--muted); }
+.history-list .hbtns { display: flex; gap: 6px; flex: 0 0 auto; }

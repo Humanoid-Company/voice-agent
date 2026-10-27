@@ -8,10 +8,11 @@ const WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
 const $ = (id) => document.getElementById(id);
 const el = {
   dot: $("dot"), status: $("status"), problem: $("problem"), provider: $("provider"), voice: $("voice"),
-  recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), clear: $("clear"),
+  recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), newChat: $("newChat"),
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
-  bargeHint: $("bargeHint"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
+  hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
+  hearLog: $("hearLog"), historyList: $("historyList"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
   usageTable: $("usageTable"), usageDetails: $("usageDetails"),
 };
 
@@ -141,7 +142,7 @@ function bubble(role, text) {
 function onUser(text, final) {
   if (!userBubble) userBubble = bubble("user partial", text);
   userBubble.textContent = text;
-  if (final) { userBubble.classList.remove("partial"); userBubble = null; }
+  if (final) { userBubble.classList.remove("partial"); userBubble = null; record("user", text); }
   el.log.scrollTop = el.log.scrollHeight;
 }
 
@@ -322,9 +323,13 @@ function heard(text, final) {
   text = text.trim();
   if (!text || !ready || micMuted) return;
   if (paused && !final) return; // on pause only whole phrases are kept, the server does it
-  if (!paused && !passesGate(text, final)) return;
+  if (!paused && !passesGate(text, final)) {
+    if (final) hearEvent("✖", "розпізнано «" + text + "», але не передано: це не ваш голос або він тихіший за ехо агента", true);
+    return;
+  }
   touch();
   barge.last = text;
+  if (final) hearEvent("✔", "розпізнано й передано: «" + text + "»");
   send({ type: "heard", text, final });
 }
 
@@ -386,7 +391,7 @@ function passesGate(text, final) {
 }
 
 function onGate(sig) {
-  if ("levels" in sig) { showBargeLevels(sig.levels); return; }
+  if ("levels" in sig) { onLevels(sig.levels); return; }
   if (paused) return;
   if (sig.speaking) touch();
   if ("audible" in sig) {
@@ -468,7 +473,11 @@ function onMessage(ev) {
     case "overheard": showRecog("🎤 На паузі, запам'ятовую фоном: " + m.count + " реплік"); break;
     case "end": stop(""); bubble("system", "Розмову завершено."); break;
     case "user": onUser(m.text, m.final); break;
-    case "user_drop": onUserDrop(); break;
+    case "user_drop":
+      onUserDrop();
+      hearEvent("✖", "агент не відповів на «" + (m.text || "…") + "»: " + (DROP_REASONS[m.reason] || "відкинуто"), true);
+      break;
+    case "record": record(m.role, m.text); break;
     case "assistant_delta": onAssistantDelta(m.text); break;
     case "turn_end": botBubble = null; turnEnded = true; maybePlayed(); break;
     case "clear":
@@ -502,9 +511,10 @@ async function start() {
     ws.binaryType = "arraybuffer";
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
-    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2) });
+    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: historyForServer() });
     live = true;
     paused = false;
+    renderHearing();
     usageLast = { seconds: 0, cost: 0 };
     usageNow = { seconds: 0, cost: 0, at: Date.now(), llm_in: 0, llm_out: 0, tts_chars: 0, searches: 0 };
     touch();
@@ -539,6 +549,8 @@ function stop(problem) {
   userBubble = botBubble = null;
   setMicMuted(false);
   el.meter.hidden = true;
+  el.hearing.hidden = true;
+  deadSince = 0;
   updateButtons();
   el.talk.textContent = "Почати розмову";
   el.talk.classList.remove("danger");
@@ -560,6 +572,7 @@ function setMicMuted(muted) {
   micStream?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
   el.micMute.textContent = muted ? "Увімкнути мікрофон" : "Вимкнути мікрофон";
   el.micMute.setAttribute("aria-pressed", String(muted));
+  renderHearing();
   el.micMute.classList.toggle("primary", muted);
   if (!live) return;
   if (muted) {
@@ -571,10 +584,123 @@ function setMicMuted(muted) {
   }
 }
 el.micMute.onclick = () => setMicMuted(!micMuted);
-el.clear.onclick = () => {
+function resetLog() {
   el.log.innerHTML = '<p class="muted empty">Тут з\'являтиметься текст розмови.</p>';
   userBubble = botBubble = lastBot = null;
-};
+}
+
+// ---------------------------------------------------------------- conversation history (kept in this browser)
+
+// Each call continues the current conversation: the agent is given its past when the call starts, so she knows
+// what was said before (the server keeps nothing between calls). «Нова розмова» puts it aside, into the list.
+const CONV_MAX = 40;
+const CONV_MSGS_MAX = 200;
+let convs = [];
+try { convs = JSON.parse(load("convs")) || []; } catch (err) { convs = []; }
+let current = convs.find((c) => c.id === load("convCurrent")) || null;
+
+function persistConvs() {
+  convs.sort((a, b) => b.u - a.u);
+  convs.length = Math.min(convs.length, CONV_MAX);
+  save("convs", JSON.stringify(convs));
+  save("convCurrent", current ? current.id : "");
+}
+
+function record(role, text) {
+  text = String(text || "").trim();
+  if (!text) return;
+  if (!current) {
+    current = { id: Date.now().toString(36), t: Date.now(), u: Date.now(), title: "", msgs: [] };
+    convs.unshift(current);
+  }
+  current.msgs.push({ r: role, t: text });
+  current.msgs = current.msgs.slice(-CONV_MSGS_MAX);
+  current.u = Date.now();
+  if (!current.title && role === "user") current.title = text.slice(0, 60);
+  persistConvs();
+  renderHistory();
+}
+
+function historyForServer() {
+  return current ? current.msgs.slice(-30).map((m) => ({ role: m.r, content: m.t })) : [];
+}
+
+function showConversation(conv) {
+  resetLog();
+  for (const m of conv ? conv.msgs : []) bubble(m.r, m.t);
+}
+
+function newConversation() {
+  current = null;
+  persistConvs();
+  resetLog();
+  if (live) send({ type: "history", history: [] });
+  renderHistory();
+}
+
+function openConversation(id) {
+  const conv = convs.find((c) => c.id === id);
+  if (!conv) return;
+  current = conv;
+  persistConvs();
+  showConversation(conv);
+  if (live) send({ type: "history", history: historyForServer() });
+  renderHistory();
+}
+
+function deleteConversation(id) {
+  convs = convs.filter((c) => c.id !== id);
+  if (current && current.id === id) { current = null; resetLog(); if (live) send({ type: "history", history: [] }); }
+  persistConvs();
+  renderHistory();
+}
+
+function renderHistory() {
+  el.historyList.innerHTML = "";
+  if (!convs.length) {
+    const none = document.createElement("p");
+    none.className = "muted";
+    none.textContent = "Поки порожньо: розмова з'явиться тут, щойно ви щось скажете.";
+    el.historyList.appendChild(none);
+    return;
+  }
+  for (const c of convs) {
+    const row = document.createElement("div");
+    row.className = "hitem" + (current && current.id === c.id ? " current" : "");
+    const text = document.createElement("div");
+    text.className = "htext";
+    const title = document.createElement("div");
+    title.className = "htitle";
+    title.textContent = c.title || "(без назви)"; // user text: textContent, never HTML
+    const meta = document.createElement("div");
+    meta.className = "hmeta";
+    meta.textContent = new Date(c.u).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+      + " · реплік: " + c.msgs.length + (current && current.id === c.id ? " · поточна" : "");
+    text.appendChild(title);
+    text.appendChild(meta);
+    const btns = document.createElement("div");
+    btns.className = "hbtns";
+    if (!(current && current.id === c.id)) {
+      const open = document.createElement("button");
+      open.className = "btn small-btn";
+      open.type = "button";
+      open.textContent = "Відкрити";
+      open.onclick = () => openConversation(c.id);
+      btns.appendChild(open);
+    }
+    const del = document.createElement("button");
+    del.className = "btn ghost small-btn";
+    del.type = "button";
+    del.textContent = "Видалити";
+    del.onclick = () => deleteConversation(c.id);
+    btns.appendChild(del);
+    row.appendChild(text);
+    row.appendChild(btns);
+    el.historyList.appendChild(row);
+  }
+}
+
+el.newChat.onclick = newConversation;
 
 // ---------------------------------------------------------------- the voice, mid-call too
 
@@ -624,6 +750,7 @@ function setPaused(on, why) {
     if (!recognition && !micMuted) startRecognition();
   }
   updateButtons();
+  renderHearing();
 }
 
 // On pause the recognizer goes on only if the user lets the agent listen in the background.
@@ -661,17 +788,62 @@ el.bargeSens.onchange = () => {
   if (gate) gate.port.postMessage({ sens: Number(el.bargeSens.value) }); // at once, mid-sentence too
 };
 
-// While she talks: how loud the user is against what the gate wants to take it for the user (not her echo).
-let lastLevelsAt = 0;
-function showBargeLevels(levels) {
-  if (!levels || !live || paused) { el.bargeHint.hidden = true; return; }
-  if (Date.now() - lastLevelsAt < 200) return;
-  lastLevelsAt = Date.now();
-  const have = levels.level * 100;
-  const need = levels.need * 100;
-  el.bargeHint.hidden = false;
-  el.bargeHint.textContent = "Перебивання голосом: ваш голос " + have.toFixed(1) + ", потрібно більше " + need.toFixed(1)
-    + (have > need ? " — зупиняю" : "");
+// ---------------------------------------------------------------- what the microphone hears
+
+// The gate reports the microphone's level ten times a second. The panel shows it with the bar a voice has to pass
+// to count as the user, and says in words which case this is: a dead microphone, a voice too quiet against her
+// echo, or all fine. The log lists every phrase: recognized, passed on, dropped and why.
+const LEVEL_FULL = 0.2; // the bar's full scale (rms)
+const DROP_REASONS = {
+  echo: "це ехо: агент почув власний голос через колонки",
+  stop: "ви сказали «стоп»: агент замовк і не відповідає на це",
+  backchannel: "«угу», «ага» чи фоновий звук: це не перебивання",
+  not_interruption: "сказано поверх агента, але це не схоже на перебивання (замало слів)",
+};
+let mic = { level: 0, need: 0, audible: false, speaking: false };
+let deadSince = 0;
+const hearLines = [];
+
+function onLevels(l) {
+  if (!l || !live) return;
+  mic = l;
+  el.levelFill.style.width = Math.min(100, (l.level / LEVEL_FULL) * 100) + "%";
+  el.levelNeed.style.left = Math.min(100, (l.need / LEVEL_FULL) * 100) + "%";
+  el.levelNeed.hidden = !l.audible;
+  if (l.level < 0.0002) deadSince = deadSince || Date.now(); else deadSince = 0;
+  renderHearing();
+}
+
+function renderHearing() {
+  el.hearing.hidden = !live;
+  if (!live) return;
+  const n = (x) => (x * 100).toFixed(1);
+  let text;
+  if (micMuted) text = "🔇 Мікрофон вимкнено: нічого не чую.";
+  else if (paused) text = el.bgListen.checked ? "⏸ Пауза: слухаю фоном." : "⏸ Пауза: нічого не слухаю.";
+  else if (!gate) text = "Рівень мікрофона в цьому браузері не видно (немає AudioWorklet).";
+  else if (deadSince && Date.now() - deadSince > 3000) {
+    text = "⚠ Мікрофон не передає звук (рівень 0). Це проблема мікрофона, не фільтра: перевірте вибір пристрою й дозвіл у браузері.";
+  } else if (mic.audible) {
+    if (mic.level > mic.need) text = "✔ Ваш голос (" + n(mic.level) + ") голосніший за ехо агента: він має зупинитись.";
+    else if (mic.level > 0.01) text = "Чую звук (" + n(mic.level) + "), але він тихіший за ехо агента: потрібно більше " + n(mic.need) + ". Говоріть голосніше або підніміть чутливість.";
+    else text = "Агент говорить, мікрофон майже мовчить (" + n(mic.level) + ").";
+  } else if (mic.speaking) text = "✔ Чую ваш голос (рівень " + n(mic.level) + ").";
+  else if (mic.level > 0.01) text = "Чую звук (рівень " + n(mic.level) + "), але це не схоже на голос поруч.";
+  else text = "Тихо (рівень " + n(mic.level) + ").";
+  el.hearingStatus.textContent = text;
+}
+
+function hearEvent(icon, text, bad) {
+  hearLines.unshift({ at: new Date(), icon, text, bad: Boolean(bad) });
+  hearLines.length = Math.min(hearLines.length, 12);
+  el.hearLog.innerHTML = "";
+  for (const h of hearLines) {
+    const row = document.createElement("div");
+    row.className = "hrow" + (h.bad ? " bad" : "");
+    row.textContent = h.at.toLocaleTimeString("uk-UA") + "  " + h.icon + " " + h.text;
+    el.hearLog.appendChild(row);
+  }
 }
 
 // ---------------------------------------------------------------- volume
@@ -794,6 +966,7 @@ function renderMeter() {
     + usageNow.tts_chars + "; пошуків: " + usageNow.searches + ". Пауза не рахується.";
 }
 setInterval(renderMeter, 1000);
+setInterval(() => renderHearing(), 1000);
 
 function renderUsageTable() {
   const rows = [];
@@ -838,6 +1011,8 @@ el.copyChat.onclick = async () => {
   setTimeout(() => { el.copyChat.textContent = old; }, 1800);
 };
 
+showConversation(current); // after a reload the conversation is still here
+renderHistory();
 refreshDevices();
 renderUsageTable();
 init();

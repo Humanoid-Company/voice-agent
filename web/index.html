@@ -22,7 +22,17 @@
 
       <p id="problem" class="hint err-text" hidden></p>
       <p id="recog" class="hint" hidden></p>
-      <p id="bargeHint" class="hint" hidden></p>
+      <div id="hearing" class="hearing" hidden>
+        <div class="levelbar" title="Рівень мікрофона. Риска — поріг, за яким ваш голос зупиняє агента, поки він говорить.">
+          <div id="levelFill" class="levelfill"></div>
+          <div id="levelNeed" class="levelneed" hidden></div>
+        </div>
+        <p id="hearingStatus" class="hint"></p>
+        <details>
+          <summary>Журнал слуху: що розпізнано й що відкинуто</summary>
+          <div id="hearLog" class="hearlog"><p class="muted">Поки порожньо.</p></div>
+        </details>
+      </div>
       <p class="hint name-line">Асистент: <strong id="assistantName">Єва</strong>. Голосом можна сказати «тепер тебе звати …», «змін голос на …», «говори англійською», «досить, до побачення».</p>
 
       <div class="settings">
@@ -87,12 +97,18 @@
         <h2>Розмова</h2>
         <div class="head-actions">
           <button id="copyChat" class="btn ghost small-btn" type="button">Скопіювати</button>
-          <button id="clear" class="btn ghost small-btn" type="button">Очистити</button>
+          <button id="newChat" class="btn ghost small-btn" type="button">Нова розмова</button>
         </div>
       </div>
       <div id="log" class="log" aria-live="polite">
         <p class="muted empty">Тут з'являтиметься текст розмови.</p>
       </div>
+    </section>
+
+    <section class="card" id="historyCard">
+      <h2>Історія розмов</h2>
+      <div id="historyList" class="history-list"></div>
+      <p class="hint">Розмови зберігаються в цьому браузері й лишаються після оновлення сторінки. «Відкрити» повертає розмову сюди, і агент пам'ятає, про що ви говорили. «Нова розмова» відкладає поточну сюди й починає з чистого аркуша.</p>
     </section>
 
     <section class="card">

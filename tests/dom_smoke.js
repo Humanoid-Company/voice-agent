@@ -11,11 +11,12 @@ function E(id) {
     add: function (o) { this.options.push(o); if (this.options.length === 1 || !this.value) this.value = o.value; },
     setAttribute: function (k, v) { this._attrs[k] = v; }, addEventListener: function () {},
     appendChild: function (c) { this.children.push(c); }, querySelector: function () { return null; },
-    querySelectorAll: function () { return []; }, remove: function () {}, select: function () {}, scrollTop: 0, scrollHeight: 0,
+    querySelectorAll: function () { return []; }, remove: function () {},
+    open: false, showModal: function () { this.open = true; }, close: function () { this.open = false; }, select: function () {}, scrollTop: 0, scrollHeight: 0,
   };
   return e;
 }
-var document = { getElementById: E, createElement: function () { return E("_new" + Math.random()); }, body: E("body"),
+var document = { querySelectorAll: function () { return []; }, getElementById: E, createElement: function () { return E("_new" + Math.random()); }, body: E("body"),
   visibilityState: "visible", execCommand: function () { return true; } };
 function Option(label, value) { this.text = label; this.value = value; }
 var recStarts = [], recAborts = 0;
@@ -153,4 +154,19 @@ deleteConversation(firstId);
 check("deleting the current conversation clears it", current === null && convs.length === 1 && JSON.parse(store["convs"]).length === 1);
 E("historyList").children = []; renderHistory();
 check("the history list has a row per conversation", E("historyList").children.length === 1);
+
+// the two buttons at the top open their windows
+E("openHistory").onclick();
+check("«Історія» opens the history window", E("historyDialog").open === true && E("usageDialog").open === false);
+E("historyDialog").close();
+E("openUsage").onclick();
+check("«Витрати» opens the costs window", E("usageDialog").open === true);
+E("usageDialog").close();
+newConversation();
+onMessage({ data: JSON.stringify({ type: "user", text: "Відкрий мене", final: true }) });
+var oldId = current.id;
+newConversation();
+E("historyDialog").open = true;
+openConversation(oldId);
+check("opening a conversation closes the history window", E("historyDialog").open === false && current.id === oldId);
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

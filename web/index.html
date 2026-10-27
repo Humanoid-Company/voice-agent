@@ -10,8 +10,16 @@
 </head>
 <body>
   <main class="wrap">
-    <h1>Голосовий агент</h1>
-    <p class="sub">Слухає розпізнавання Google у браузері, думає GPT, говорить Respeecher або Soniox. Можна перебивати.</p>
+    <header class="page-head">
+      <div>
+        <h1>Голосовий агент</h1>
+        <p class="sub">Слухає розпізнавання Google у браузері, думає GPT, говорить Respeecher або Soniox. Можна перебивати.</p>
+      </div>
+      <nav class="head-links" aria-label="Вкладки">
+        <button id="openHistory" class="btn ghost small-btn" type="button" title="Збережені розмови: відкрити, продовжити, видалити">Історія</button>
+        <button id="openUsage" class="btn ghost small-btn" type="button" title="Час і орієнтовні витрати за 30 днів">Витрати</button>
+      </nav>
+    </header>
 
     <section class="card">
       <div class="status-line">
@@ -105,19 +113,24 @@
       </div>
     </section>
 
-    <section class="card" id="historyCard">
-      <h2>Історія розмов</h2>
-      <div id="historyList" class="history-list"></div>
-      <p class="hint">Розмови зберігаються в цьому браузері й лишаються після оновлення сторінки. «Відкрити» повертає розмову сюди, і агент пам'ятає, про що ви говорили. «Нова розмова» відкладає поточну сюди й починає з чистого аркуша.</p>
-    </section>
-
-    <section class="card">
-      <details id="usageDetails">
-        <summary>Витрати за 30 днів</summary>
-        <div id="usageTable" class="usage-table"></div>
-        <p class="hint">Орієнтовно, у доларах: токени моделі, символи голосу й пошуки за цінами з налаштувань сервера (ціна Soniox там 0, якщо її не задано). Рахується в цьому браузері й не передається на сервер, тож інші пристрої й браузери тут не враховані.</p>
-      </details>
-    </section>
   </main>
+
+  <dialog id="historyDialog" class="dialog" aria-labelledby="historyTitle">
+    <div class="card-head">
+      <h2 id="historyTitle">Історія розмов</h2>
+      <button class="btn ghost small-btn dialog-close" type="button" data-close="historyDialog">Закрити</button>
+    </div>
+    <div id="historyList" class="history-list"></div>
+    <p class="hint">Розмови зберігаються в цьому браузері й лишаються після оновлення сторінки. «Відкрити» повертає розмову на сторінку, і агент пам'ятає, про що ви говорили. «Нова розмова» (у картці «Розмова») відкладає поточну сюди й починає з чистого аркуша.</p>
+  </dialog>
+
+  <dialog id="usageDialog" class="dialog" aria-labelledby="usageTitle">
+    <div class="card-head">
+      <h2 id="usageTitle">Витрати за 30 днів</h2>
+      <button class="btn ghost small-btn dialog-close" type="button" data-close="usageDialog">Закрити</button>
+    </div>
+    <div id="usageTable" class="usage-table"></div>
+    <p class="hint">Орієнтовно, у доларах: токени моделі, символи голосу й пошуки за цінами з налаштувань сервера (ціна Soniox там 0, якщо її не задано). Рахується в цьому браузері й не передається на сервер, тож інші пристрої й браузери тут не враховані.</p>
+  </dialog>
 </body>
 </html>

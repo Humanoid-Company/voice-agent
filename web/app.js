@@ -13,7 +13,8 @@ const el = {
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
-  usageTable: $("usageTable"), usageDetails: $("usageDetails"),
+  usageTable: $("usageTable"), openHistory: $("openHistory"), openUsage: $("openUsage"),
+  historyDialog: $("historyDialog"), usageDialog: $("usageDialog"),
 };
 
 const STATES = {
@@ -641,6 +642,7 @@ function newConversation() {
 function openConversation(id) {
   const conv = convs.find((c) => c.id === id);
   if (!conv) return;
+  closeDialog(el.historyDialog);
   current = conv;
   persistConvs();
   showConversation(conv);
@@ -701,6 +703,27 @@ function renderHistory() {
 }
 
 el.newChat.onclick = newConversation;
+
+// ---------------------------------------------------------------- the windows behind the two buttons at the top
+
+function openDialog(dialog) {
+  if (dialog.open) return;
+  if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+}
+
+function closeDialog(dialog) {
+  if (typeof dialog.close === "function") dialog.close(); else dialog.removeAttribute("open");
+}
+
+el.openHistory.onclick = () => { renderHistory(); openDialog(el.historyDialog); };
+el.openUsage.onclick = () => { renderUsageTable(); openDialog(el.usageDialog); };
+for (const dialog of [el.historyDialog, el.usageDialog]) {
+  // a click on the dimmed backdrop (the dialog element itself, not its content) closes it, like Esc does
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) closeDialog(dialog); });
+}
+document.querySelectorAll("[data-close]").forEach((b) => {
+  b.onclick = () => closeDialog(document.getElementById(b.dataset.close));
+});
 
 // ---------------------------------------------------------------- the voice, mid-call too
 

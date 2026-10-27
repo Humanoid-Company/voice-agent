@@ -53,6 +53,25 @@
           <select id="voice" disabled></select>
         </div>
       </div>
+      <div class="settings">
+        <div>
+          <label for="character">Персонаж</label>
+          <select id="character">
+            <option value="eva" data-desc="Звичайна приязна помічниця: жива, природна, без маски.">Єва</option>
+            <option value="tolik" data-desc="Дворовий хуліган з лавки біля під'їзду: бурчить, кепкує, сипле «трясця» й «бевзю», часом матюкнеться. Але відповідає по суті. Лише українською.">Толік</option>
+            <option value="kit" data-desc="Говорячий кіт для привітань і свят: вітає по-своєму щоразу інакше («гони касу!»), ниє, тролить, дивиться на людей по-котячому. Без мату. Лише українською.">Кіт</option>
+          </select>
+        </div>
+        <div>
+          <label for="emotion">Емоційність</label>
+          <select id="emotion">
+            <option value="calm">Спокійна</option>
+            <option value="normal">Звичайна</option>
+            <option value="emotional" selected>Емоційна</option>
+          </select>
+        </div>
+      </div>
+      <p id="characterInfo" class="hint"></p>
 
       <button id="talk" class="btn primary big" disabled>Почати розмову</button>
       <div class="row">

@@ -274,4 +274,17 @@ onLevels({ level: 0.05, need: 0.07, audible: false, speaking: false, active: tru
 check("the gate's active flag is the user still sounding", Date.now() - lastActiveAt < 1000);
 gate = null;
 check("without the gate the text alone decides, and after a longer wait", phrase(800, 0) === 0 && phrase(1200, 0) === 1);
+
+// ---- the character and the emotion
+check("the emotion defaults to emotional and the character to the plain one", E("emotion").value === "emotional" || store["emotion"] === undefined);
+live = true; sent.length = 0;
+E("character").value = "tolik"; E("character").onchange();
+check("picking a character is saved and sent mid-call", store["character"] === "tolik" && sent.some(function (m) { return m.type === "style" && m.character === "tolik"; }));
+sent.length = 0;
+E("emotion").value = "calm"; E("emotion").onchange();
+check("picking an emotion is saved and sent mid-call", store["emotion"] === "calm" && sent.some(function (m) { return m.type === "style" && m.emotion === "calm"; }));
+onMessage({ data: JSON.stringify({ type: "persona", name: "Кіт", character: "kit", emotion: "emotional", description: "Говорячий кіт" }) });
+check("the server's persona message moves the selectors, the name and the description", E("character").value === "kit" && E("emotion").value === "emotional" && E("assistantName").textContent === "Кіт" && E("characterInfo").textContent === "Говорячий кіт" && store["character"] === "kit");
+onMessage({ data: JSON.stringify({ type: "ready", sample_rate: 24000, name: "Толік", character: "tolik", emotion: "normal", recognition: "uk-UA" }) });
+check("ready shows the character the server actually started with", E("character").value === "tolik" && E("emotion").value === "normal");
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

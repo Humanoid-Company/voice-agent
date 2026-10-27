@@ -11,6 +11,7 @@ const el = {
   recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), newChat: $("newChat"),
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
+  character: $("character"), emotion: $("emotion"), characterInfo: $("characterInfo"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
   historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
@@ -504,13 +505,17 @@ function onMessage(ev) {
       ttsRate = m.sample_rate;
       ready = true;
       if (m.name) el.assistantName.textContent = m.name;
+      if (m.character) showStyle(m.character, m.emotion);
       if (m.recognition) setRecLang(m.recognition);
       setState("listening");
       break;
     case "state": setState(m.state); if (m.state === "listening") bargeReset(); break;
     case "voice": onVoice(m); break;
     case "language": setRecLang(m.recognition); break;
-    case "persona": el.assistantName.textContent = m.name; break;
+    case "persona":
+      el.assistantName.textContent = m.name;
+      showStyle(m.character, m.emotion, m.description);
+      break;
     case "usage": onUsage(m); break;
     case "overheard": showRecog("🎤 На паузі, запам'ятовую фоном: " + m.count + " реплік"); break;
     case "end": stop(""); bubble("system", "Розмову завершено."); break;
@@ -556,7 +561,8 @@ async function start() {
     ws.binaryType = "arraybuffer";
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
-    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer() });
+    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
+      character: el.character.value, emotion: el.emotion.value });
     live = true;
     paused = false;
     renderHearing();
@@ -872,6 +878,32 @@ function setRecLang(code) {
     try { recognition.abort(); } catch (err) { /* not started */ }
   }
 }
+
+// ---------------------------------------------------------------- the character and the emotion
+
+// The character is who speaks (its own name, manner, a woman's or a man's voice); the emotion is how alive the
+// delivery is. Both can be changed mid-call here, or by voice («поклич Толіка», «говори емоційніше»): then the
+// server tells us and the selectors follow.
+function describeCharacter() {
+  const option = el.character.options && [...el.character.options].find((o) => o.value === el.character.value);
+  el.characterInfo.textContent = (option && option.dataset && option.dataset.desc) || "";
+}
+
+function showStyle(character, emotion, description) {
+  if (character && el.character.value !== character) el.character.value = character;
+  if (emotion && el.emotion.value !== emotion) el.emotion.value = emotion;
+  if (character) save("character", character);
+  if (emotion) save("emotion", emotion);
+  if (description !== undefined) el.characterInfo.textContent = description; else describeCharacter();
+}
+
+function sendStyle() { send({ type: "style", character: el.character.value, emotion: el.emotion.value }); }
+
+el.character.value = load("character") || "eva";
+el.emotion.value = load("emotion") || "emotional";
+describeCharacter();
+el.character.onchange = () => { save("character", el.character.value); describeCharacter(); if (live) sendStyle(); };
+el.emotion.onchange = () => { save("emotion", el.emotion.value); if (live) sendStyle(); };
 
 // ---------------------------------------------------------------- pause
 

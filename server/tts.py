@@ -29,6 +29,10 @@ class TTSError(RuntimeError):
     pass
 
 
+class _NoAudio(TTSError):
+    """A generation ended without a single audio chunk (not an error reply: the provider said «done»)."""
+
+
 @dataclass
 class _Msg:
     kind: Literal["audio", "end", "error", "info"]
@@ -57,7 +61,9 @@ class _MuxTTS:
     async def _open(self) -> websockets.ClientConnection:
         raise NotImplementedError
 
-    def _start_messages(self, ctx: str, text: str) -> list[dict]:
+    def _variants(self) -> list:
+        """Ways to ask for one sentence, tried in order: each is a function (ctx, text) -> messages. A provider
+        that ends a generation without audio on one wire format gets the next one."""
         raise NotImplementedError
 
     def _cancel_message(self, ctx: str) -> dict:
@@ -72,6 +78,22 @@ class _MuxTTS:
         await self._ensure()
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
+        tried: list[str] = []
+        for build in self._variants():
+            got_audio = False
+            try:
+                async for chunk in self._generate(build, text):
+                    got_audio = True
+                    yield chunk
+            except _NoAudio as e:
+                tried.append(str(e))
+                log.warning("%s: %s", type(self).__name__, e)
+                continue
+            if got_audio:
+                return
+        raise TTSError(f"{type(self).__name__} returned no audio. Tried {len(tried)} request formats: {tried}")
+
+    async def _generate(self, build, text: str) -> AsyncIterator[bytes]:
         ws = await self._ensure()
         ctx = uuid.uuid4().hex
         queue: asyncio.Queue[_Msg] = asyncio.Queue()
@@ -80,7 +102,7 @@ class _MuxTTS:
         got_audio = False
         seen: list[str] = []  # the provider's replies, to say what went wrong when no audio comes
         try:
-            for m in self._start_messages(ctx, text):
+            for m in build(ctx, text):
                 await ws.send(json.dumps(m))
             while True:
                 try:
@@ -95,7 +117,7 @@ class _MuxTTS:
                 if msg.kind == "end":
                     finished = True
                     if not got_audio:
-                        raise TTSError(f"{type(self).__name__} returned no audio. Replies: {seen}")
+                        raise _NoAudio(f"replies {seen}")
                     return
                 if msg.audio:
                     got_audio = True
@@ -173,8 +195,13 @@ class RespeecherTTS(_MuxTTS):
             "output_format": {"encoding": "pcm_s16le", "sample_rate": self.sample_rate},
         }
 
-    def _start_messages(self, ctx: str, text: str) -> list[dict]:
-        return [self._request(ctx, text, True), self._request(ctx, "", False)]
+    def _variants(self) -> list:
+        # The whole sentence as the last (and only) chunk; then, if Respeecher says «done» with no audio, the
+        # streaming form: the text with `continue: true` and an empty closing chunk.
+        return [
+            lambda ctx, text: [self._request(ctx, text, False)],
+            lambda ctx, text: [self._request(ctx, text, True), self._request(ctx, "", False)],
+        ]
 
     def _cancel_message(self, ctx: str) -> dict:
         return {"context_id": ctx, "cancel": True}
@@ -209,6 +236,9 @@ class SonioxTTS(_MuxTTS):
             additional_headers={"Authorization": f"Bearer {self._cfg.soniox_api_key}"},
             max_size=None,
         )
+
+    def _variants(self) -> list:
+        return [self._start_messages]
 
     def _start_messages(self, ctx: str, text: str) -> list[dict]:
         return [

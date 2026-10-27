@@ -8,11 +8,11 @@ CFG = Config(respeecher_api_key="r", soniox_api_key="s")
 
 def test_respeecher_wire():
     tts = RespeecherTTS(CFG, "olesia-conversation")
-    start = tts._start_messages("c1", "Привіт.")
-    assert start[0]["transcript"] == "Привіт." and start[0]["continue"] is True
-    assert start[1]["transcript"] == "" and start[1]["continue"] is False
-    assert start[0]["voice"]["id"] == "olesia-conversation"
-    assert start[0]["output_format"] == {"encoding": "pcm_s16le", "sample_rate": 24000}
+    single, streaming = (build("c1", "Привіт.") for build in tts._variants())
+    assert len(single) == 1 and single[0]["transcript"] == "Привіт." and single[0]["continue"] is False
+    assert streaming[0]["continue"] is True and streaming[1]["transcript"] == "" and streaming[1]["continue"] is False
+    assert single[0]["voice"]["id"] == "olesia-conversation"
+    assert single[0]["output_format"] == {"encoding": "pcm_s16le", "sample_rate": 24000}
     assert tts._cancel_message("c1") == {"context_id": "c1", "cancel": True}
     pcm = b"\x01\x00\x02\x00"
     ctx, msg = tts._route({"type": "chunk", "context_id": "c1", "data": base64.b64encode(pcm).decode()})

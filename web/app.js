@@ -97,6 +97,7 @@ async function init() {
     const saved = load("provider");
     if (saved && providers.some((p) => p.id === saved)) el.provider.value = saved;
     fillVoices();
+    buildCharacterMenu(cfg.characters);
     const ok = providers.length > 0 && !!SpeechRec;
     el.provider.disabled = el.voice.disabled = !ok;
     el.talk.disabled = !ok;
@@ -564,7 +565,7 @@ async function start() {
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: el.character.value, emotion: el.emotion.value });
+      character: characterId(), emotion: el.emotion.value });
     live = true;
     paused = false;
     activeVoice = { provider: el.provider.value, voice: el.voice.value };
@@ -684,7 +685,7 @@ function logEvent(k, text, extra) {
   renderHistory();
 }
 
-function memoryTurns() { return Number(load("memory") ?? 10); }
+function memoryTurns() { return Number(load("memory") ?? 0); } // by default she remembers nothing between calls
 
 // What the agent is told of a conversation: only its dialogue, only the last few turns.
 function memoryForServer(conv = current) {
@@ -875,9 +876,10 @@ function resetVoiceApply() {
   el.voiceApply.textContent = "Застосувати голос";
 }
 
-el.provider.onchange = () => { fillVoices(); updateVoiceApply(); };
-el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); };
-el.voiceApply.onclick = () => {
+el.provider.onchange = () => { fillVoices(); updateVoiceApply(); syncCharacterEntry(); };
+el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); syncCharacterEntry(); };
+function applyVoice() {
+  el.voiceApply.hidden = false;
   el.voiceApply.disabled = true;
   el.voiceApply.textContent = "Застосовую…";
   save("provider", el.provider.value);
@@ -885,7 +887,9 @@ el.voiceApply.onclick = () => {
   sendVoice();
   clearTimeout(applyTimer);
   applyTimer = setTimeout(resetVoiceApply, 8000); // no answer: the button comes back, the user can try again
-};
+}
+
+el.voiceApply.onclick = applyVoice;
 
 // The server changed the voice (the page's selector, or the user asked for it): the selectors follow, and the
 // audio that comes next has the new sample rate.
@@ -896,6 +900,7 @@ function onVoice(m) {
   el.voice.value = m.voice;
   activeVoice = { provider: m.provider, voice: m.voice };
   updateVoiceApply();
+  syncCharacterEntry();
   save("provider", m.provider);
   save("voice:" + m.provider, m.voice);
 }
@@ -911,28 +916,102 @@ function setRecLang(code) {
 
 // ---------------------------------------------------------------- the character and the emotion
 
-// The character is who speaks (its own name, manner, a woman's or a man's voice); the emotion is how alive the
-// delivery is. Both can be changed mid-call here, or by voice («поклич Толіка», «говори емоційніше»): then the
-// server tells us and the selectors follow.
+// The character is who speaks (its own name and manner); the emotion is how alive the delivery is. The menu is
+// built from the server's list: every character and, for those that have them, their voices. An entry is «id» (the
+// character; the voice stays as it is) or «id|provider|voice» (the character AND that voice). A voice never changes
+// by itself: picking an entry with a voice is the manual change that moves it, right away, mid-call too; a character
+// asked for by voice («поклич Толіка») or picked as «голос лишається» leaves the voice alone.
+function parseCharacter(value) {
+  const [id, provider, voice] = String(value || "eva").split("|");
+  return { id: id === "kit" ? "kishka" : id, provider, voice }; // «kit»: the cat before she became a she-cat
+}
+
+function characterId() { return parseCharacter(el.character.value).id; }
+
 function describeCharacter() {
   const option = el.character.options && [...el.character.options].find((o) => o.value === el.character.value);
   el.characterInfo.textContent = (option && option.dataset && option.dataset.desc) || "";
 }
 
+function buildCharacterMenu(characters) {
+  if (!characters || !characters.length) return;
+  el.character.innerHTML = "";
+  for (const c of characters) {
+    const entry = (label, value) => { const o = new Option(label, value); o.dataset.desc = c.description; return o; };
+    if (!c.voices.length) { el.character.add(entry(c.label, c.id)); continue; }
+    const group = document.createElement("optgroup");
+    group.label = c.label;
+    group.appendChild(entry(c.label + " (голос лишається)", c.id));
+    for (const v of c.voices) group.appendChild(entry(c.label + " · " + v.label, c.id + "|" + v.provider + "|" + v.voice));
+    el.character.appendChild(group);
+  }
+  restoreCharacter();
+}
+
+function restoreCharacter() {
+  const saved = load("character") || "eva";
+  const options = [...el.character.options];
+  const want = options.find((o) => o.value === saved)
+    || options.find((o) => parseCharacter(o.value).id === parseCharacter(saved).id);
+  el.character.value = want ? want.value : "eva";
+  const c = parseCharacter(el.character.value);
+  if (c.voice) setVoiceSelects(c.provider, c.voice);
+  describeCharacter();
+}
+
+function setVoiceSelects(provider, voice) {
+  if (![...el.provider.options].some((o) => o.value === provider)) return false;
+  el.provider.value = provider;
+  fillVoices();
+  if (![...el.voice.options].some((o) => o.value === voice)) el.voice.add(new Option(voice, voice));
+  el.voice.value = voice;
+  return true;
+}
+
+// The voice was changed by hand (or by voice): the character entry follows it, so the menu never claims a voice that is
+// not the one speaking: the same character's entry with exactly this voice, or else «голос лишається».
+function syncCharacterEntry() {
+  const c = parseCharacter(el.character.value);
+  const exact = c.id + "|" + el.provider.value + "|" + el.voice.value;
+  const options = [...el.character.options];
+  const want = options.find((o) => o.value === exact) || options.find((o) => o.value === c.id);
+  if (want && want.value !== el.character.value) { el.character.value = want.value; save("character", want.value); describeCharacter(); }
+}
+
+function selectCharacterId(id) {
+  if (characterId() === id) return; // the entry (and its voice) the user picked stays
+  const options = [...el.character.options];
+  const want = options.find((o) => o.value === id) || options.find((o) => parseCharacter(o.value).id === id);
+  if (want) el.character.value = want.value;
+}
+
 function showStyle(character, emotion, description) {
-  if (character && el.character.value !== character) el.character.value = character;
+  if (character) selectCharacterId(character);
   if (emotion && el.emotion.value !== emotion) el.emotion.value = emotion;
-  if (character) save("character", character);
+  if (character) save("character", el.character.value);
   if (emotion) save("emotion", emotion);
   if (description !== undefined) el.characterInfo.textContent = description; else describeCharacter();
 }
 
-function sendStyle() { send({ type: "style", character: el.character.value, emotion: el.emotion.value }); }
+function sendStyle() { send({ type: "style", character: characterId(), emotion: el.emotion.value }); }
 
 el.character.value = load("character") || "eva";
 el.emotion.value = load("emotion") || "emotional";
 describeCharacter();
-el.character.onchange = () => { save("character", el.character.value); describeCharacter(); if (live) sendStyle(); };
+el.character.onchange = () => {
+  const c = parseCharacter(el.character.value);
+  save("character", el.character.value);
+  describeCharacter();
+  if (c.voice) { // this entry is a voice too: picking it is the manual change
+    setVoiceSelects(c.provider, c.voice);
+    save("provider", c.provider);
+    save("voice:" + c.provider, c.voice);
+  }
+  if (live) {
+    sendStyle();
+    if (c.voice && (c.provider !== activeVoice.provider || c.voice !== activeVoice.voice)) applyVoice();
+  }
+};
 el.emotion.onchange = () => { save("emotion", el.emotion.value); if (live) sendStyle(); };
 
 // ---------------------------------------------------------------- pause

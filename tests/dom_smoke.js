@@ -5,20 +5,29 @@ function E(id) {
   var e = made[id];
   if (e) return e;
   e = made[id] = {
-    id: id, value: "", textContent: "", innerHTML: "", hidden: false, disabled: false, checked: true, title: "", className: "",
+    id: id, value: "", textContent: "", hidden: false, disabled: false, checked: true, title: "", className: "",
     options: [], children: [], style: {}, _attrs: {},
     classList: { add: function () {}, remove: function () {}, toggle: function () {}, contains: function () { return false; } },
     add: function (o) { this.options.push(o); if (this.options.length === 1 || !this.value) this.value = o.value; },
     setAttribute: function (k, v) { this._attrs[k] = v; }, addEventListener: function () {},
-    appendChild: function (c) { this.children.push(c); }, querySelector: function () { return null; },
+    appendChild: function (c) {
+      this.children.push(c);
+      if (c.tagName === "optgroup") { for (var i = 0; i < c.children.length; i++) this.options.push(c.children[i]); }
+      else if (c instanceof Option) this.options.push(c);
+    }, querySelector: function () { return null; },
     querySelectorAll: function () { return []; }, remove: function () {},
     open: false, showModal: function () { this.open = true; }, close: function () { this.open = false; }, select: function () {}, scrollTop: 0, scrollHeight: 0,
   };
+  Object.defineProperty(e, "innerHTML", {
+    enumerable: true,
+    get: function () { return this._html || ""; },
+    set: function (v) { this._html = v; if (v === "") { this.children = []; this.options = []; } },
+  });
   return e;
 }
-var document = { querySelectorAll: function () { return []; }, getElementById: E, createElement: function () { return E("_new" + Math.random()); }, body: E("body"),
+var document = { querySelectorAll: function () { return []; }, getElementById: E, createElement: function (tag) { var e = E("_new" + Math.random()); e.tagName = tag; return e; }, body: E("body"),
   visibilityState: "visible", execCommand: function () { return true; } };
-function Option(label, value) { this.text = label; this.value = value; }
+function Option(label, value) { this.text = label; this.value = value; this.dataset = {}; }
 var recStarts = [], recAborts = 0;
 function FakeRec() {}
 FakeRec.prototype.start = function (track) { recStarts.push(track); };
@@ -30,7 +39,14 @@ function URLSearchParams() { this.get = function () { return null; }; }
 var localStorage = { getItem: function (k) { return k in store ? store[k] : null; }, setItem: function (k, v) { store[k] = String(v); } };
 var navigator = { mediaDevices: { enumerateDevices: function () { return Promise.resolve([]); }, addEventListener: function () {} },
   clipboard: { writeText: function () { return Promise.resolve(); } } };
-var fetch = function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ providers: [{ id: "soniox", label: "Soniox", voices: [{ id: "Daniel", label: "Daniel (male)" }] }], missing: [] }); } }); };
+var fetch = function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ providers: [
+  { id: "soniox", label: "Soniox", voices: [{ id: "Daniel", label: "Daniel (male)" }, { id: "Maya", label: "Maya (female)" }] },
+  { id: "respeecher", label: "Respeecher", voices: ["dmytro-conversation", "ihoreo-conversation", "yevhen-audiobook", "roksolana-conversation", "kseniia-conversation", "olesia-conversation"].map(function (v) { return { id: v, label: v }; }) },
+], characters: [
+  { id: "eva", label: "Єва", description: "Звичайна помічниця", voices: [] },
+  { id: "tolik", label: "Толік", description: "Дворовий хуліган", voices: [["dmytro-conversation", "Дмитро"], ["ihoreo-conversation", "Ігорео"], ["yevhen-audiobook", "Євген"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
+  { id: "kishka", label: "Кішка", description: "Говоряча кішка", voices: [["roksolana-conversation", "Роксолана"], ["kseniia-conversation", "Ксенія"], ["olesia-conversation", "Олеся"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
+], missing: [] }); } }); };
 var timers = [];
 var setTimeout = function (f) { timers.push(f); return timers.length; };
 var setInterval = function () { return 0; };
@@ -44,7 +60,7 @@ drainMicrotasks && drainMicrotasks();
 function check(name, cond) { print((cond ? "ok   " : "FAIL ") + name); if (!cond) failed = true; }
 var failed = false;
 
-check("init filled the provider list", E("provider").options.length === 1 && E("voice").options.length === 1);
+check("init filled the provider list", E("provider").options.length === 2 && E("voice").options.length === 2);
 check("talk button is enabled with keys and speech recognition", E("talk").disabled === false);
 
 // pretend a call is running
@@ -147,6 +163,8 @@ onMessage({ data: JSON.stringify({ type: "user_drop", reason: "echo", text: "п�
 check("the server's reason for a drop is shown", hearLines[0].text.indexOf("ехо") >= 0 && hearLines[0].text.indexOf("привіт світе") >= 0);
 
 // conversation history
+check("by default the agent remembers nothing between calls", memoryTurns() === 0 && E("memorySel").value === "0");
+E("memorySel").value = "10"; E("memorySel").onchange(); // the tests below need a memory
 var old = convs.find(function (c) { return c.id === "old1"; });
 check("an old conversation (dialogue only) is migrated to the event record", old && old.events.length === 2 && old.events[0].k === "user" && old.events[0].text === "привіт" && !("msgs" in old));
 deleteConversation("old1");
@@ -213,7 +231,7 @@ check("a pause and an error cut-off are not recorded as the user's interruptions
 var mem = memoryForServer();
 check("the agent is given only the dialogue, no attempts, dropped phrases or background talk", JSON.stringify(mem.map(function (m) { return m.role; })) === JSON.stringify(["user", "assistant"]) && mem[0].content === "Розкажи історію");
 for (var i = 0; i < 12; i++) logEvent(i % 2 ? "assistant" : "user", "репліка " + i);
-check("the agent remembers the last 10 by default", memoryForServer().length === 10 && memoryForServer()[9].content === "репліка 11");
+check("with «Останні 10 реплік» the agent remembers the last 10", memoryForServer().length === 10 && memoryForServer()[9].content === "репліка 11");
 E("memorySel").value = "0"; E("memorySel").onchange();
 check("«Нічого» gives the agent no memory, the record stays", memoryForServer().length === 0 && current.events.length > 20);
 E("memorySel").value = "30"; E("memorySel").onchange();
@@ -294,8 +312,36 @@ check("picking a character is saved and sent mid-call", store["character"] === "
 sent.length = 0;
 E("emotion").value = "calm"; E("emotion").onchange();
 check("picking an emotion is saved and sent mid-call", store["emotion"] === "calm" && sent.some(function (m) { return m.type === "style" && m.emotion === "calm"; }));
-onMessage({ data: JSON.stringify({ type: "persona", name: "Кіт", character: "kit", emotion: "emotional", description: "Говорячий кіт" }) });
-check("the server's persona message moves the selectors, the name and the description", E("character").value === "kit" && E("emotion").value === "emotional" && E("assistantName").textContent === "Кіт" && E("characterInfo").textContent === "Говорячий кіт" && store["character"] === "kit");
+onMessage({ data: JSON.stringify({ type: "persona", name: "Кішка", character: "kishka", emotion: "emotional", description: "Говоряча кішка" }) });
+check("the server's persona message moves the selectors, the name and the description", E("character").value === "kishka" && E("emotion").value === "emotional" && E("assistantName").textContent === "Кішка" && E("characterInfo").textContent === "Говоряча кішка" && store["character"] === "kishka");
 onMessage({ data: JSON.stringify({ type: "ready", sample_rate: 24000, name: "Толік", character: "tolik", emotion: "normal", recognition: "uk-UA" }) });
 check("ready shows the character the server actually started with", E("character").value === "tolik" && E("emotion").value === "normal");
+
+// ---- the character menu with its voices: a voice never changes by itself
+var values = E("character").options.map(function (o) { return o.value; });
+var count = function (prefix) { return values.filter(function (v) { return v.indexOf(prefix) === 0; }).length; };
+check("the menu lists each character and the three voices of Толік and Кішка", values.indexOf("eva") >= 0 && values.indexOf("tolik") >= 0 && values.indexOf("kishka") >= 0 && count("tolik|") === 3 && count("kishka|") === 3 && count("eva|") === 0);
+check("the menu entries carry the character's description", E("character").options.filter(function (o) { return o.value === "tolik|respeecher|dmytro-conversation"; })[0].dataset.desc === "Дворовий хуліган");
+live = true; ready = true; paused = false; sent.length = 0;
+activeVoice = { provider: "soniox", voice: "Daniel" };
+E("provider").value = "soniox"; fillVoices(); E("voice").value = "Daniel";
+E("character").value = "tolik"; E("character").onchange();
+check("picking a character without a voice sends only the character: the voice stays", sent.some(function (m) { return m.type === "style" && m.character === "tolik"; }) && !sent.some(function (m) { return m.type === "voice"; }) && E("voice").value === "Daniel");
+sent.length = 0;
+E("character").value = "tolik|respeecher|ihoreo-conversation"; E("character").onchange();
+check("an entry with a voice sends the character (its id only) and applies that voice at once", sent.some(function (m) { return m.type === "style" && m.character === "tolik"; }) && sent.some(function (m) { return m.type === "voice" && m.provider === "respeecher" && m.voice === "ihoreo-conversation"; }) && E("provider").value === "respeecher" && E("voice").value === "ihoreo-conversation");
+onMessage({ data: JSON.stringify({ type: "voice", provider: "respeecher", voice: "ihoreo-conversation", sample_rate: 24000, language: "uk" }) });
+check("the confirmed voice keeps its menu entry", E("character").value === "tolik|respeecher|ihoreo-conversation" && activeVoice.voice === "ihoreo-conversation");
+onMessage({ data: JSON.stringify({ type: "persona", name: "Толік", character: "tolik", emotion: "emotional", description: "Дворовий хуліган" }) });
+check("the server naming the same character does not move the entry (the voice)", E("character").value === "tolik|respeecher|ihoreo-conversation");
+E("voice").value = "dmytro-conversation"; E("voice").onchange();
+check("a voice picked by hand that is one of the character's moves the menu to its entry", E("character").value === "tolik|respeecher|dmytro-conversation");
+E("voice").value = "olesia-conversation"; E("voice").onchange();
+check("a voice that is not the character's turns the entry into «голос лишається»", E("character").value === "tolik");
+onMessage({ data: JSON.stringify({ type: "persona", name: "Єва", character: "eva", emotion: "emotional", description: "Звичайна помічниця" }) });
+check("a character asked for by voice shows its plain entry", E("character").value === "eva");
+store["character"] = "kit"; restoreCharacter();
+check("an old stored «kit» becomes Кішка", parseCharacter(E("character").value).id === "kishka");
+store["character"] = "kishka|respeecher|kseniia-conversation"; restoreCharacter();
+check("a stored entry with a voice is restored together with its voice", E("character").value === "kishka|respeecher|kseniia-conversation" && E("voice").value === "kseniia-conversation");
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

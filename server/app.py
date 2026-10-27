@@ -1,10 +1,16 @@
 """FastAPI: the web page, a config endpoint and one WebSocket per call."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -20,7 +26,38 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("app")
 
 cfg = Config()
-app = FastAPI(title="diff-voice-agent")
+
+# Free Render sleeps after ~15 min without inbound requests. While running, ping our own public URL (through
+# Render's proxy, so it counts as inbound traffic). It cannot wake a sleeping server: the first visitor does
+# that (the page waits for it). 0 = off. Render sets RENDER_EXTERNAL_URL itself.
+KEEP_AWAKE_S = float(os.getenv("KEEP_AWAKE_MINUTES", "10")) * 60
+SELF_URL = (os.getenv("PUBLIC_BACKEND_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
+
+
+async def keep_awake(url: str, interval_s: float, client: httpx.AsyncClient | None = None) -> None:
+    async with client or httpx.AsyncClient(timeout=30) as http:
+        while True:
+            await asyncio.sleep(interval_s)
+            try:
+                await http.get(f"{url}/healthz")
+            except httpx.HTTPError:
+                log.warning("keep-awake ping failed")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    task = None
+    if KEEP_AWAKE_S > 0 and SELF_URL.startswith("https://"):
+        task = asyncio.create_task(keep_awake(SELF_URL, KEEP_AWAKE_S))
+        log.info("keep-awake every %ss -> %s/healthz", int(KEEP_AWAKE_S), SELF_URL)
+    yield
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="diff-voice-agent", lifespan=lifespan)
 if cfg.frontend_origins:
     app.add_middleware(CORSMiddleware, allow_origins=cfg.frontend_origins, allow_methods=["*"], allow_headers=["*"])
 

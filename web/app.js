@@ -45,11 +45,35 @@ function fillVoices() {
   if (saved && p && p.voices.some((v) => v.id === saved)) el.voice.value = saved;
 }
 
+// A sleeping free-tier backend takes up to a minute to start: wait for it instead of failing.
+async function wakeBackend() {
+  const deadline = Date.now() + 90 * 1000;
+  let waiting = false;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(BACKEND + "/api/config");
+      if (res.ok) { if (waiting) setState("idle"); return await res.json(); }
+    } catch (e) { /* still waking up */ }
+    if (!waiting) {
+      waiting = true;
+      el.dot.className = "dot think";
+      el.status.textContent = "Сервер прокидається — до хвилини…";
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  return null;
+}
+
 async function init() {
   setState("idle");
   if (!SpeechRec) showProblem("Цей браузер не вміє розпізнавати мову. Відкрийте сторінку в Chrome, Edge або Safari.");
   try {
-    const cfg = await (await fetch(BACKEND + "/api/config")).json();
+    const cfg = await wakeBackend();
+    if (!cfg) throw new Error("backend is not answering");
+    // While the page is open and visible, keep the free-tier backend awake.
+    setInterval(() => {
+      if (document.visibilityState === "visible") fetch(BACKEND + "/healthz").catch(() => {});
+    }, 10 * 60 * 1000);
     providers = cfg.providers;
     if (cfg.missing.length) showProblem("На сервері не задано: " + cfg.missing.join(", "));
     el.provider.innerHTML = "";

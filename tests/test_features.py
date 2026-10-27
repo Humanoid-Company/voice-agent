@@ -379,3 +379,41 @@ def test_her_own_voice_back_through_the_mic_is_dropped_as_echo():
         assert of(out, "user_drop")[-1]["reason"] == "echo"
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------- how the user interrupted, for the page's record
+
+def test_the_page_is_told_how_she_was_interrupted():
+    async def go():
+        for how, send in (
+            ("stop", lambda s: s.on_heard("стоп", False)),
+            ("takeover", lambda s: s.on_heard("ні розкажи краще про погоду", False)),
+            ("button", lambda s: s.on_client({"type": "interrupt"})),
+            ("sound", lambda s: s.on_client({"type": "interrupt", "by": "sound"})),
+            ("button", lambda s: s.on_client({"type": "interrupt", "by": "<script>"})),  # only known reasons pass
+        ):
+            s, out = make(FakeLLM(answer="Це довга відповідь тут. І ще одне речення тут."))
+            await s.start()
+            await s.on_heard("Розкажи щось довге", True)
+            for _ in range(3):
+                await asyncio.sleep(0)
+            await send(s)
+            clear = of(out, "clear")[-1]
+            assert clear["reason"] == how, (how, clear)
+            if how in ("stop", "takeover"):
+                assert clear["text"]  # the user's own words that did it
+
+    asyncio.run(go())
+
+
+def test_pause_and_history_reset_say_so_when_they_cut_the_answer():
+    async def go():
+        s, out = make()
+        await s.start()
+        await s.on_heard("Розкажи щось довге", True)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        await s.on_client({"type": "pause"})
+        assert of(out, "clear")[-1]["reason"] == "pause"
+
+    asyncio.run(go())

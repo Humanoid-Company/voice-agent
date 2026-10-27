@@ -120,8 +120,25 @@
       <h2 id="historyTitle">Історія розмов</h2>
       <button class="btn ghost small-btn dialog-close" type="button" data-close="historyDialog">Закрити</button>
     </div>
+    <div class="memory-row">
+      <label for="memorySel">Що пам'ятає агент між дзвінками</label>
+      <select id="memorySel">
+        <option value="0">Нічого</option>
+        <option value="10" selected>Останні 10 реплік</option>
+        <option value="30">До 30 реплік</option>
+      </select>
+      <p class="hint">В історії записується все: що ви казали, як і чим пробували перебити, що не спрацювало, паузи. Агентові передається лише це: справжні репліки діалогу (ваші й його), без спроб перебити, відкинутих фраз і фонових слів. Діє з наступного дзвінка.</p>
+    </div>
     <div id="historyList" class="history-list"></div>
-    <p class="hint">Розмови зберігаються в цьому браузері й лишаються після оновлення сторінки. «Відкрити» повертає розмову на сторінку, і агент пам'ятає, про що ви говорили. «Нова розмова» (у картці «Розмова») відкладає поточну сюди й починає з чистого аркуша.</p>
+    <div id="historyView" hidden>
+      <div class="row">
+        <button id="historyBack" class="btn small-btn" type="button">← До списку</button>
+        <button id="historyCopy" class="btn ghost small-btn" type="button">Скопіювати</button>
+      </div>
+      <p id="historyStats" class="hint"></p>
+      <div id="timeline" class="timeline"></div>
+    </div>
+    <p class="hint">Розмови зберігаються в цьому браузері й лишаються після оновлення сторінки. «Відкрити» повертає розмову на сторінку, а агент пам'ятає з неї стільки, скільки дозволяє налаштування вище. «Нова розмова» (у картці «Розмова») відкладає поточну сюди й починає з чистого аркуша.</p>
   </dialog>
 
   <dialog id="usageDialog" class="dialog" aria-labelledby="usageTitle">

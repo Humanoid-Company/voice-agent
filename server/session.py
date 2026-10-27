@@ -192,7 +192,8 @@ class VoiceSession:
             await self.on_heard(str(msg.get("text", "")), bool(msg.get("final")))
         elif kind == "interrupt":
             self._end_requested = False  # the user took the floor
-            await self.interrupt()
+            by = str(msg.get("by"))
+            await self.interrupt(reason=by if by in ("button", "sound") else "button")
         elif kind == "played" and self._awaiting_played:
             self._awaiting_played = False
             self._last_audio_at = time.monotonic()
@@ -206,7 +207,7 @@ class VoiceSession:
         elif kind == "voice":
             await self.request_voice(str(msg.get("provider") or self.provider), str(msg.get("voice") or ""))
         elif kind == "history":  # the page opened another conversation, or started a new one
-            await self.interrupt()
+            await self.interrupt(reason="history")
             self.history = sanitize_history(msg.get("history"))
             self._recent = ""
 
@@ -231,7 +232,7 @@ class VoiceSession:
                 intent = classify_interjection(text, assistant_recent=self._recent)
                 if intent in ("stop", "takeover"):
                     log.info("barge-in (%s): %r", intent, text)
-                    await self.interrupt()
+                    await self.interrupt(reason=intent, text=text)
                     self._skip_reply = intent == "stop"
         if final:
             await self._on_endpoint()
@@ -263,7 +264,7 @@ class VoiceSession:
         if self.paused:
             return
         self._end_requested = False
-        await self.interrupt()
+        await self.interrupt(reason="pause")
         self.paused = True
         self._final = self._partial = ""
         self._during_turn = self._skip_reply = False
@@ -352,7 +353,7 @@ class VoiceSession:
         except Exception as e:
             log.exception("turn failed")
             await self._j({"type": "error", "message": f"{type(e).__name__}: {e}"})
-            await self._j({"type": "clear"})
+            await self._j({"type": "clear", "reason": "error"})
             self._awaiting_played = False
             self._end_requested = False
             await self._set_state("listening")
@@ -360,7 +361,9 @@ class VoiceSession:
         finally:
             producer.cancel()
 
-    async def interrupt(self) -> None:
+    async def interrupt(self, *, reason: str = "", text: str = "") -> None:
+        """Cut the answer off. `reason` (stop / takeover: the user's voice, with their words in `text`; button;
+        sound; pause; history) goes to the page, which keeps what the user tried in the conversation record."""
         async with self._lock:
             task, self._turn = self._turn, None
             if task and not task.done():
@@ -375,7 +378,7 @@ class VoiceSession:
                 await self._j({"type": "record", "role": "assistant", "text": heard})
             self._turn_done = True
             self._awaiting_played = False
-            await self._j({"type": "clear"})
+            await self._j({"type": "clear", "reason": reason, "text": text})
             await self._set_state("listening")
 
     # ------------------------------------------------------------------ the model's tools

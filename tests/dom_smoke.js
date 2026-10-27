@@ -1,5 +1,5 @@
 // Runs web/app.js against a fake DOM: load-time errors (undefined names, TDZ), message handling, meter, history.
-var store = {};
+var store = { convs: JSON.stringify([{ id: "old1", t: 1000, u: 2000, title: "старе", msgs: [{ r: "user", t: "привіт" }, { r: "assistant", t: "добрий день" }] }]) };
 var made = {};
 function E(id) {
   var e = made[id];
@@ -136,17 +136,21 @@ onMessage({ data: JSON.stringify({ type: "user_drop", reason: "echo", text: "п�
 check("the server's reason for a drop is shown", hearLines[0].text.indexOf("ехо") >= 0 && hearLines[0].text.indexOf("привіт світе") >= 0);
 
 // conversation history
+var old = convs.find(function (c) { return c.id === "old1"; });
+check("an old conversation (dialogue only) is migrated to the event record", old && old.events.length === 2 && old.events[0].k === "user" && old.events[0].text === "привіт" && !("msgs" in old));
+deleteConversation("old1");
+convs = []; current = null; persistConvs(); // the earlier tests left conversations of their own
 sent.length = 0;
 newConversation();
 check("a new conversation has no current one and tells the server", current === null && sent.some(function (m) { return m.type === "history" && m.history.length === 0; }));
 onMessage({ data: JSON.stringify({ type: "user", text: "Мене звати Віктор", final: true }) });
 onMessage({ data: JSON.stringify({ type: "record", role: "assistant", text: "Приємно, Вікторе." }) });
-check("the conversation is kept in the browser", current && current.msgs.length === 2 && current.title === "Мене звати Віктор" && JSON.parse(store["convs"]).length === 1);
-check("the server is given the past on the next call", JSON.stringify(historyForServer()) === JSON.stringify([{ role: "user", content: "Мене звати Віктор" }, { role: "assistant", content: "Приємно, Вікторе." }]));
+check("the conversation is kept in the browser", current && current.events.length === 2 && current.title === "Мене звати Віктор" && JSON.parse(store["convs"]).length === 1);
+check("the server is given the past on the next call", JSON.stringify(memoryForServer()) === JSON.stringify([{ role: "user", content: "Мене звати Віктор" }, { role: "assistant", content: "Приємно, Вікторе." }]));
 var firstId = current.id;
 newConversation();
 onMessage({ data: JSON.stringify({ type: "user", text: "Інша розмова", final: true }) });
-check("a new conversation is a separate entry", convs.length === 2 && current.id !== firstId && historyForServer().length === 1);
+check("a new conversation is a separate entry", convs.length === 2 && current.id !== firstId && memoryForServer().length === 1);
 sent.length = 0;
 openConversation(firstId);
 check("opening an old conversation restores it and tells the server", current.id === firstId && sent.some(function (m) { return m.type === "history" && m.history.length === 2; }) && store["convCurrent"] === firstId);
@@ -169,4 +173,48 @@ newConversation();
 E("historyDialog").open = true;
 openConversation(oldId);
 check("opening a conversation closes the history window", E("historyDialog").open === false && current.id === oldId);
+
+// ---- the full record: what the user said, how they tried to interrupt, what did not work
+newConversation();
+live = true; paused = false; micMuted = false; ready = true;
+gate = { port: { postMessage: function () {} } }; barge.audible = true; barge.speaking = false; barge.speechEndedAt = 0;
+onMessage({ data: JSON.stringify({ type: "user", text: "Розкажи історію", final: true }) });
+onMessage({ data: JSON.stringify({ type: "record", role: "assistant", text: "Жила собі дівчинка, що любила моря. Одного дня …" }) });
+onMessage({ data: JSON.stringify({ type: "clear", reason: "stop", text: "стоп" }) });
+onMessage({ data: JSON.stringify({ type: "user_drop", reason: "stop", text: "стоп" }) });
+onMessage({ data: JSON.stringify({ type: "user_drop", reason: "backchannel", text: "угу" }) });
+heard("це шум поруч", true);
+barge.audible = false;
+onMessage({ data: JSON.stringify({ type: "clear", reason: "pause" }) });
+onMessage({ data: JSON.stringify({ type: "clear", reason: "error" }) });
+onMessage({ data: JSON.stringify({ type: "clear", reason: "button" }) });
+setPaused(true, "тиша");
+heard("це я сказав на паузі", true);
+setPaused(false);
+var kinds = current.events.map(function (e) { return e.k; });
+check("everything is recorded in order", JSON.stringify(kinds) === JSON.stringify(["user", "assistant", "interrupt", "dropped", "dropped", "interrupt", "pause", "background", "resume"]));
+check("a stop word is one interruption, not also a dropped phrase", current.events.filter(function (e) { return e.k === "dropped" && e.text === "стоп"; }).length === 0 && current.events[2].by === "stop" && current.events[2].text === "стоп");
+check("the cut answer is marked and the button interruption is recorded", current.events[1].cut === true && current.events[5].by === "button");
+check("the reasons of dropped phrases are kept", current.events[3].why === "backchannel" && current.events[4].why === "quiet");
+check("a pause and an error cut-off are not recorded as the user's interruptions", kinds.filter(function (k) { return k === "interrupt"; }).length === 2);
+
+// the agent's memory is the dialogue only
+var mem = memoryForServer();
+check("the agent is given only the dialogue, no attempts, dropped phrases or background talk", JSON.stringify(mem.map(function (m) { return m.role; })) === JSON.stringify(["user", "assistant"]) && mem[0].content === "Розкажи історію");
+for (var i = 0; i < 12; i++) logEvent(i % 2 ? "assistant" : "user", "репліка " + i);
+check("the agent remembers the last 10 by default", memoryForServer().length === 10 && memoryForServer()[9].content === "репліка 11");
+E("memorySel").value = "0"; E("memorySel").onchange();
+check("«Нічого» gives the agent no memory, the record stays", memoryForServer().length === 0 && current.events.length > 20);
+E("memorySel").value = "30"; E("memorySel").onchange();
+check("up to 30 replies can be remembered", memoryForServer().length === 14);
+E("memorySel").value = "10"; E("memorySel").onchange();
+
+// the timeline in the history window
+E("timeline").children = [];
+viewing = current.id; renderHistory();
+check("the timeline has a row for every event", E("historyView").hidden === false && E("historyList").hidden === true && E("timeline").children.length === current.events.length);
+check("the timeline says how the user interrupted and what did not work", timelineText(current).indexOf("Ви перебили (стоп-слово голосом): «стоп»") >= 0 && timelineText(current).indexOf("Не спрацювало: «угу»") >= 0 && timelineText(current).indexOf("(перервано)") >= 0);
+check("the stats count the user's tries", E("historyStats").textContent.indexOf("перебивань: 2") >= 0);
+E("historyBack").onclick();
+check("«До списку» returns to the list", viewing === null && E("historyList").hidden === false && E("historyView").hidden === true);
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

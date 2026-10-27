@@ -12,7 +12,8 @@ const el = {
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
-  hearLog: $("hearLog"), historyList: $("historyList"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
+  hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
+  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
   usageTable: $("usageTable"), openHistory: $("openHistory"), openUsage: $("openUsage"),
   historyDialog: $("historyDialog"), usageDialog: $("usageDialog"),
 };
@@ -143,7 +144,7 @@ function bubble(role, text) {
 function onUser(text, final) {
   if (!userBubble) userBubble = bubble("user partial", text);
   userBubble.textContent = text;
-  if (final) { userBubble.classList.remove("partial"); userBubble = null; record("user", text); }
+  if (final) { userBubble.classList.remove("partial"); userBubble = null; logEvent("user", text); }
   el.log.scrollTop = el.log.scrollHeight;
 }
 
@@ -325,12 +326,16 @@ function heard(text, final) {
   if (!text || !ready || micMuted) return;
   if (paused && !final) return; // on pause only whole phrases are kept, the server does it
   if (!paused && !passesGate(text, final)) {
-    if (final) hearEvent("✖", "розпізнано «" + text + "», але не передано: це не ваш голос або він тихіший за ехо агента", true);
+    if (final) {
+      hearEvent("✖", "розпізнано «" + text + "», але не передано: це не ваш голос або він тихіший за ехо агента", true);
+      logEvent("dropped", text, { why: "quiet" });
+    }
     return;
   }
   touch();
   barge.last = text;
   if (final) hearEvent("✔", "розпізнано й передано: «" + text + "»");
+  if (final && paused) logEvent("background", text);
   send({ type: "heard", text, final });
 }
 
@@ -413,7 +418,7 @@ function onGate(sig) {
     // They keep talking over her and none of the words that came through are theirs (only her echo, or
     // nothing): they want the floor.
     barge.timers.push(setTimeout(() => {
-      if (barge.speaking && barge.stage === "ducked" && !ownWords(barge.last).length) send({ type: "interrupt" });
+      if (barge.speaking && barge.stage === "ducked" && !ownWords(barge.last).length) send({ type: "interrupt", by: "sound" });
     }, STOP_BY_SOUND_MS));
   } else {
     barge.speechEndedAt = Date.now();
@@ -422,7 +427,7 @@ function onGate(sig) {
     if (barge.stage === "ducked") {
       // A short sound: wait briefly for its transcript, else it was a cough, «угу» or her echo.
       barge.timers.push(setTimeout(() => {
-        if (barge.stage === "ducked" && !barge.speaking) { barge.stage = "idle"; setPlayVolume(1); }
+        if (barge.stage === "ducked" && !barge.speaking) { barge.stage = "idle"; setPlayVolume(1); logEvent("attempt", ""); }
       }, 400));
     }
   }
@@ -477,13 +482,16 @@ function onMessage(ev) {
     case "user_drop":
       onUserDrop();
       hearEvent("✖", "агент не відповів на «" + (m.text || "…") + "»: " + (DROP_REASONS[m.reason] || "відкинуто"), true);
+      // «стоп» is already in the record as the interruption it was
+      if (m.text && m.reason !== "stop") logEvent("dropped", m.text, { why: m.reason });
       break;
-    case "record": record(m.role, m.text); break;
+    case "record": if (m.role === "assistant") logEvent("assistant", m.text, { cut: /…$/.test(m.text || "") }); break;
     case "assistant_delta": onAssistantDelta(m.text); break;
     case "turn_end": botBubble = null; turnEnded = true; maybePlayed(); break;
     case "clear":
       stopPlayback();
       bargeReset();
+      if (["stop", "takeover", "button", "sound"].includes(m.reason)) logEvent("interrupt", m.text, { by: m.reason });
       (botBubble || lastBot)?.classList.add("cut");
       botBubble = null;
       break;
@@ -512,7 +520,7 @@ async function start() {
     ws.binaryType = "arraybuffer";
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
-    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: historyForServer() });
+    ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer() });
     live = true;
     paused = false;
     renderHearing();
@@ -563,7 +571,7 @@ function stop(problem) {
 }
 
 el.talk.onclick = () => (live ? stop("") : start());
-el.interrupt.onclick = () => send({ type: "interrupt" });
+el.interrupt.onclick = () => send({ type: "interrupt", by: "button" });
 
 // Mic off: the gate and the recognizer get silence (the track is disabled, the recognizer is stopped), so the
 // agent hears nothing, her own voice included; she can still finish what she is saying. The conversation stays.
@@ -590,15 +598,23 @@ function resetLog() {
   userBubble = botBubble = lastBot = null;
 }
 
-// ---------------------------------------------------------------- conversation history (kept in this browser)
+// ---------------------------------------------------------------- the conversation record and the agent's memory
 
-// Each call continues the current conversation: the agent is given its past when the call starts, so she knows
-// what was said before (the server keeps nothing between calls). «Нова розмова» puts it aside, into the list.
+// Everything is recorded, the agent remembers little. A conversation keeps a full timeline: what the user said and
+// was answered, what she said, how the user tried to interrupt (and what did not work), pauses, what was said on
+// pause. The agent is given only the real dialogue (the user's turns and her answers), and only the last few of
+// them (the «memory» setting): attempts, dropped phrases, noise and background talk never reach her. The server
+// keeps nothing between calls, so the page hands her that memory when a call starts.
 const CONV_MAX = 40;
-const CONV_MSGS_MAX = 200;
+const EVENTS_MAX = 400;
 let convs = [];
 try { convs = JSON.parse(load("convs")) || []; } catch (err) { convs = []; }
+for (const c of convs) { // the first version kept only the dialogue, as {r, t}
+  if (!c.events) c.events = (c.msgs || []).map((m, i) => ({ k: m.r, at: c.t + i, text: m.t }));
+  delete c.msgs;
+}
 let current = convs.find((c) => c.id === load("convCurrent")) || null;
+let viewing = null; // the id of the conversation whose timeline is open in the history window
 
 function persistConvs() {
   convs.sort((a, b) => b.u - a.u);
@@ -607,32 +623,45 @@ function persistConvs() {
   save("convCurrent", current ? current.id : "");
 }
 
-function record(role, text) {
+function logEvent(k, text, extra) {
   text = String(text || "").trim();
-  if (!text) return;
+  if ((k === "user" || k === "assistant") && !text) return;
+  if (!current && (k === "pause" || k === "resume")) return; // not worth a conversation of its own
   if (!current) {
-    current = { id: Date.now().toString(36), t: Date.now(), u: Date.now(), title: "", msgs: [] };
+    current = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), t: Date.now(), u: Date.now(), title: "", events: [] };
     convs.unshift(current);
   }
-  current.msgs.push({ r: role, t: text });
-  current.msgs = current.msgs.slice(-CONV_MSGS_MAX);
+  current.events.push({ k, at: Date.now(), text, ...extra });
+  current.events = current.events.slice(-EVENTS_MAX);
   current.u = Date.now();
-  if (!current.title && role === "user") current.title = text.slice(0, 60);
+  if (!current.title && k === "user") current.title = text.slice(0, 60);
   persistConvs();
   renderHistory();
 }
 
-function historyForServer() {
-  return current ? current.msgs.slice(-30).map((m) => ({ role: m.r, content: m.t })) : [];
+function memoryTurns() { return Number(load("memory") ?? 10); }
+
+// What the agent is told of a conversation: only its dialogue, only the last few turns.
+function memoryForServer(conv = current) {
+  const n = memoryTurns();
+  if (!conv || !n) return [];
+  return conv.events
+    .filter((e) => (e.k === "user" || e.k === "assistant") && e.text)
+    .slice(-n)
+    .map((e) => ({ role: e.k, content: e.text }));
 }
+
+el.memorySel.value = String(memoryTurns());
+el.memorySel.onchange = () => save("memory", el.memorySel.value);
 
 function showConversation(conv) {
   resetLog();
-  for (const m of conv ? conv.msgs : []) bubble(m.r, m.t);
+  for (const e of conv ? conv.events : []) if (e.k === "user" || e.k === "assistant") bubble(e.k, e.text);
 }
 
 function newConversation() {
   current = null;
+  viewing = null;
   persistConvs();
   resetLog();
   if (live) send({ type: "history", history: [] });
@@ -644,20 +673,76 @@ function openConversation(id) {
   if (!conv) return;
   closeDialog(el.historyDialog);
   current = conv;
+  viewing = null;
   persistConvs();
   showConversation(conv);
-  if (live) send({ type: "history", history: historyForServer() });
+  if (live) send({ type: "history", history: memoryForServer(conv) });
   renderHistory();
 }
 
 function deleteConversation(id) {
   convs = convs.filter((c) => c.id !== id);
+  if (viewing === id) viewing = null;
   if (current && current.id === id) { current = null; resetLog(); if (live) send({ type: "history", history: [] }); }
   persistConvs();
   renderHistory();
 }
 
+const INTERRUPT_BY = {
+  stop: "стоп-слово голосом",
+  takeover: "голосом: ви почали говорити своє",
+  sound: "голосом: ви говорили поверх агента",
+  button: "кнопкою",
+};
+
+// One timeline row: [icon, text, style].
+function describeEvent(e, name) {
+  switch (e.k) {
+    case "user": return ["🗣", "Ви: " + e.text, ""];
+    case "assistant": return ["🤖", name + ": " + e.text + (e.cut ? " (перервано)" : ""), ""];
+    case "interrupt": return ["✂", "Ви перебили (" + (INTERRUPT_BY[e.by] || e.by) + ")" + (e.text ? ": «" + e.text + "»" : ""), ""];
+    case "attempt": return ["…", "Ви заговорили поверх агента, але це був короткий звук, не перебивання", "dim"];
+    case "dropped": return ["✖", "Не спрацювало: «" + e.text + "». Чому: " + (DROP_REASONS[e.why] || e.why || "відкинуто"), "warn"];
+    case "pause": return ["⏸", "Пауза" + (e.text ? " (" + e.text + ")" : ""), "dim"];
+    case "resume": return ["▶", "Продовжено", "dim"];
+    case "background": return ["👂", "На паузі ви сказали: «" + e.text + "»", "dim"];
+    default: return ["•", e.text || e.k, "dim"];
+  }
+}
+
+const clock = (at) => new Date(at).toLocaleTimeString("uk-UA");
+
+function timelineText(conv) {
+  const name = el.assistantName.textContent;
+  return conv.events.map((e) => { const [icon, text] = describeEvent(e, name); return clock(e.at) + "  " + icon + " " + text; }).join("\n");
+}
+
+function renderTimeline(conv) {
+  const name = el.assistantName.textContent;
+  el.timeline.innerHTML = "";
+  for (const e of conv.events) {
+    const [icon, text, style] = describeEvent(e, name);
+    const row = document.createElement("div");
+    row.className = "trow" + (style ? " " + style : "");
+    for (const [cls, content] of [["t", clock(e.at)], ["i", icon], ["x", text]]) {
+      const cell = document.createElement("span");
+      cell.className = cls;
+      cell.textContent = content; // what the user said: textContent, never HTML
+      row.appendChild(cell);
+    }
+    el.timeline.appendChild(row);
+  }
+  const count = (k) => conv.events.filter((e) => e.k === k).length;
+  el.historyStats.textContent = "Ваших реплік: " + count("user") + " · перебивань: " + count("interrupt")
+    + " · не спрацювало: " + (count("dropped") + count("attempt")) + " · записано подій: " + conv.events.length;
+}
+
 function renderHistory() {
+  const conv = viewing && convs.find((c) => c.id === viewing);
+  if (viewing && !conv) viewing = null;
+  el.historyList.hidden = Boolean(conv);
+  el.historyView.hidden = !conv;
+  if (conv) { renderTimeline(conv); return; }
   el.historyList.innerHTML = "";
   if (!convs.length) {
     const none = document.createElement("p");
@@ -667,8 +752,9 @@ function renderHistory() {
     return;
   }
   for (const c of convs) {
+    const isCurrent = Boolean(current && current.id === c.id);
     const row = document.createElement("div");
-    row.className = "hitem" + (current && current.id === c.id ? " current" : "");
+    row.className = "hitem" + (isCurrent ? " current" : "");
     const text = document.createElement("div");
     text.className = "htext";
     const title = document.createElement("div");
@@ -676,32 +762,31 @@ function renderHistory() {
     title.textContent = c.title || "(без назви)"; // user text: textContent, never HTML
     const meta = document.createElement("div");
     meta.className = "hmeta";
+    const said = c.events.filter((e) => e.k === "user").length;
     meta.textContent = new Date(c.u).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
-      + " · реплік: " + c.msgs.length + (current && current.id === c.id ? " · поточна" : "");
+      + " · ваших реплік: " + said + " · подій: " + c.events.length + (isCurrent ? " · поточна" : "");
     text.appendChild(title);
     text.appendChild(meta);
     const btns = document.createElement("div");
     btns.className = "hbtns";
-    if (!(current && current.id === c.id)) {
-      const open = document.createElement("button");
-      open.className = "btn small-btn";
-      open.type = "button";
-      open.textContent = "Відкрити";
-      open.onclick = () => openConversation(c.id);
-      btns.appendChild(open);
-    }
-    const del = document.createElement("button");
-    del.className = "btn ghost small-btn";
-    del.type = "button";
-    del.textContent = "Видалити";
-    del.onclick = () => deleteConversation(c.id);
-    btns.appendChild(del);
+    const addButton = (label, ghost, handler) => {
+      const b = document.createElement("button");
+      b.className = "btn small-btn" + (ghost ? " ghost" : "");
+      b.type = "button";
+      b.textContent = label;
+      b.onclick = handler;
+      btns.appendChild(b);
+    };
+    addButton("Переглянути", false, () => { viewing = c.id; renderHistory(); });
+    if (!isCurrent) addButton("Відкрити", false, () => openConversation(c.id));
+    addButton("Видалити", true, () => deleteConversation(c.id));
     row.appendChild(text);
     row.appendChild(btns);
     el.historyList.appendChild(row);
   }
 }
 
+el.historyBack.onclick = () => { viewing = null; renderHistory(); };
 el.newChat.onclick = newConversation;
 
 // ---------------------------------------------------------------- the windows behind the two buttons at the top
@@ -715,7 +800,7 @@ function closeDialog(dialog) {
   if (typeof dialog.close === "function") dialog.close(); else dialog.removeAttribute("open");
 }
 
-el.openHistory.onclick = () => { renderHistory(); openDialog(el.historyDialog); };
+el.openHistory.onclick = () => { viewing = null; renderHistory(); openDialog(el.historyDialog); };
 el.openUsage.onclick = () => { renderUsageTable(); openDialog(el.usageDialog); };
 for (const dialog of [el.historyDialog, el.usageDialog]) {
   // a click on the dimmed backdrop (the dialog element itself, not its content) closes it, like Esc does
@@ -759,6 +844,7 @@ const IDLE_PAUSE_MS = (((window.APP_CONFIG || {}).IDLE_PAUSE_SECONDS ?? 90)) * 1
 function setPaused(on, why) {
   if (!live || on === paused) return;
   paused = on;
+  logEvent(on ? "pause" : "resume", on ? (why ? "тиша" : "кнопкою") : "");
   if (on) {
     send({ type: "pause", background: el.bgListen.checked });
     stopPlayback();
@@ -818,6 +904,7 @@ el.bargeSens.onchange = () => {
 // echo, or all fine. The log lists every phrase: recognized, passed on, dropped and why.
 const LEVEL_FULL = 0.2; // the bar's full scale (rms)
 const DROP_REASONS = {
+  quiet: "це не ваш голос або він тихіший за ехо агента",
   echo: "це ехо: агент почув власний голос через колонки",
   stop: "ви сказали «стоп»: агент замовк і не відповідає на це",
   backchannel: "«угу», «ага» чи фоновий звук: це не перебивання",
@@ -1011,27 +1098,35 @@ function renderUsageTable() {
 
 // ---------------------------------------------------------------- copy the conversation
 
-el.copyChat.onclick = async () => {
-  const name = el.assistantName.textContent;
-  const text = [...el.log.querySelectorAll(".msg")]
-    .filter((m) => !m.classList.contains("partial"))
-    .map((m) => (m.classList.contains("user") ? "Ви: " : m.classList.contains("assistant") ? name + ": " : "") + m.textContent)
-    .join("\n");
-  const old = el.copyChat.textContent;
-  if (!text) { el.copyChat.textContent = "Немає що копіювати"; } else {
+async function copyText(button, text) {
+  const old = button.textContent;
+  if (!text) { button.textContent = "Немає що копіювати"; } else {
     try {
       await navigator.clipboard.writeText(text);
-      el.copyChat.textContent = "Скопійовано";
+      button.textContent = "Скопійовано";
     } catch (err) { // no clipboard permission (an insecure page, an old browser): the old way
       const area = document.createElement("textarea");
       area.value = text;
       document.body.appendChild(area);
       area.select();
-      try { document.execCommand("copy"); el.copyChat.textContent = "Скопійовано"; } catch (e2) { el.copyChat.textContent = "Не вдалося"; }
+      try { document.execCommand("copy"); button.textContent = "Скопійовано"; } catch (e2) { button.textContent = "Не вдалося"; }
       area.remove();
     }
   }
-  setTimeout(() => { el.copyChat.textContent = old; }, 1800);
+  setTimeout(() => { button.textContent = old; }, 1800);
+}
+
+el.copyChat.onclick = () => {
+  const name = el.assistantName.textContent;
+  const text = [...el.log.querySelectorAll(".msg")]
+    .filter((m) => !m.classList.contains("partial"))
+    .map((m) => (m.classList.contains("user") ? "Ви: " : m.classList.contains("assistant") ? name + ": " : "") + m.textContent)
+    .join("\n");
+  copyText(el.copyChat, text);
+};
+el.historyCopy.onclick = () => {
+  const conv = convs.find((c) => c.id === viewing);
+  copyText(el.historyCopy, conv ? timelineText(conv) : "");
 };
 
 showConversation(current); // after a reload the conversation is still here

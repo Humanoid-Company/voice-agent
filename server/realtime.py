@@ -106,6 +106,7 @@ class RealtimeLLM:
         self.on_speech_started: Handler | None = None
         self.on_speech_stopped: Handler | None = None  # (item_id)
         self.on_user_text: Handler | None = None  # (item_id, text)
+        self.on_user_item: Handler | None = None  # (item_id): the user's audio is in the conversation, an answer can be asked for
         self.on_error: Handler | None = None  # (message)
 
         self._conn: Any = None
@@ -209,6 +210,10 @@ class RealtimeLLM:
             await self._call(self.on_speech_started)
         elif kind == "input_audio_buffer.speech_stopped":
             await self._call(self.on_speech_stopped, ev.get("item_id", ""))
+        elif kind in ("conversation.item.added", "conversation.item.created"):
+            item = ev.get("item") or {}
+            if item.get("role") == "user":
+                await self._call(self.on_user_item, item.get("id", ""))
         elif kind == "conversation.item.input_audio_transcription.completed":
             await self._call(self.on_user_text, ev.get("item_id", ""), str(ev.get("transcript") or "").strip())
         elif kind == "error":

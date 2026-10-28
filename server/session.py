@@ -53,6 +53,10 @@ log = logging.getLogger(__name__)
 # recognizer managed to hear (it is fed silence through a long answer and restarts, so it is often late or deaf then). Her
 # own echo does not count: the microphone Realtime gets is shut while she is audible, and only a louder voice opens it.
 _VAD_BARGE_S = 0.6
+# An answer is asked for when the user's phrase is IN the Realtime conversation (its item exists), not when the VAD says the
+# phrase ended: «speech_stopped» comes first, the item is made a moment later, and an answer asked for in between is made
+# without the last phrase, that is to the one before it («відповідає на крок позаду»). If no item event comes, ask anyway.
+_ITEM_WAIT_S = 1.0
 _ECHO_TAIL_S = 3.0  # right after the assistant stopped, its tail may still come back through the mic
 _ECHO_STRIP_S = 8.0  # her last words may be glued to the user's reply for this long after she stopped
 _OVERHEARD_MAX = 20  # what is kept from a pause
@@ -165,6 +169,7 @@ class VoiceSession:
         self._turn_audio: list[tuple[str, float]] = []
         self._cut: dict | None = None
         self._vad_speaking = False  # Realtime's VAD hears the user right now
+        self._rt_waiting: dict[str, asyncio.Task] = {}  # phrases to answer, until their item exists (fallback timers)
         self._barge_task: asyncio.Task | None = None
         self.tts = tts
         self.cfg = cfg or Config()
@@ -243,6 +248,7 @@ class VoiceSession:
         if self._turn and not self._turn.done():
             self._turn.cancel()
         self._cancel_barge()
+        self._cancel_waiting()
         for task in list(self._bg):
             task.cancel()
         if self._prepared:
@@ -348,8 +354,10 @@ class VoiceSession:
     async def _open_ears(self) -> None:
         await self.ears.close()
         self._rt_users.clear()
+        self._cancel_waiting()
         self.ears.on_speech_started = self._on_speech_started
         self.ears.on_speech_stopped = self._on_speech_stopped
+        self.ears.on_user_item = self._on_user_item
         self.ears.on_user_text = self._on_user_text
         self.ears.on_error = self._on_ears_error
         await self.ears.open(language=self.persona.language, history=[h for h in self.history if h.get("content")])
@@ -397,6 +405,34 @@ class VoiceSession:
             await self._j({"type": "user_drop", "reason": "stop", "text": self._last_interim})
             return
         if self.state in ("thinking", "speaking") or (self._turn and not self._turn.done()):
+            # She was busy and this was short: not an interruption (that takes _VAD_BARGE_S of voice). Said so on the page,
+            # so that a phrase that got no answer does not look like a deaf agent.
+            text = self._last_interim if time.monotonic() - self._last_interim_at < 4.0 else ""
+            await self._j({"type": "user_drop", "reason": "busy", "text": text})
+            return
+        if item_id not in self._rt_waiting:  # answered when its item exists (_on_user_item), or after _ITEM_WAIT_S anyway
+            self._rt_waiting[item_id] = asyncio.create_task(self._item_fallback(item_id))
+
+    async def _item_fallback(self, item_id: str) -> None:
+        await asyncio.sleep(_ITEM_WAIT_S)
+        await self._start_rt_turn(item_id)
+
+    async def _on_user_item(self, item_id: str) -> None:
+        await self._start_rt_turn(item_id)
+
+    def _cancel_waiting(self) -> None:
+        for task in self._rt_waiting.values():
+            if task is not asyncio.current_task():
+                task.cancel()
+        self._rt_waiting.clear()
+
+    async def _start_rt_turn(self, item_id: str) -> None:
+        task = self._rt_waiting.pop(item_id, None)
+        if task is None:  # already answered (the item event and the fallback both come), or no longer wanted
+            return
+        if task is not asyncio.current_task():
+            task.cancel()
+        if self.paused or self.state in ("thinking", "speaking") or (self._turn and not self._turn.done()):
             return
         entry = {"role": "user", "content": ""}  # the transcript arrives later (_on_user_text)
         self._rt_users[item_id] = entry
@@ -407,6 +443,12 @@ class VoiceSession:
     async def _on_user_text(self, item_id: str, text: str) -> None:
         entry = self._rt_users.pop(item_id, None)
         if entry is None:  # a phrase we did not answer
+            return
+        if not text.strip():
+            # Nothing was recognized (short or quiet words often come back empty). The model heard the audio itself and is
+            # already answering it: an empty transcript is no reason to drop the answer (it used to be taken for echo).
+            with contextlib.suppress(ValueError):
+                self.history.remove(entry)
             return
         busy = self.state in ("thinking", "speaking")
         recently = time.monotonic() - self._last_audio_at < _ECHO_TAIL_S

@@ -122,7 +122,7 @@ def test_a_report_without_a_cut_off_or_with_nonsense_is_ignored():
 
 
 def test_realtime_is_told_where_the_answer_was_cut_and_can_be_told_again():
-    from tests.test_realtime import FakeConn, answer_events, make_llm
+    from tests.test_realtime import FakeConn, answer_events, make_llm, said
 
     async def go():
         conn = FakeConn()
@@ -139,7 +139,7 @@ def test_realtime_is_told_where_the_answer_was_cut_and_can_be_told_again():
         conn.on_create = lambda _e: answer_events(
             conn, "r1", "Перше довге речення тут. Друге довге речення тут. Третє довге речення тут.", item="msg_1"
         )
-        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        said(conn, "u1")
         for _ in range(60):
             await asyncio.sleep(0)
         await asyncio.gather(s._turn, return_exceptions=True)

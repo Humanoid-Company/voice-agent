@@ -315,6 +315,12 @@ class FakeTTS:
         self.said.append(text)
 
 
+def said(conn, item_id):
+    """The user finishes a phrase: the VAD says so, then the server makes the item of it (what an answer needs)."""
+    conn.push(type="input_audio_buffer.speech_stopped", item_id=item_id)
+    conn.push(type="conversation.item.created", item={"id": item_id, "type": "message", "role": "user"})
+
+
 def make_session(conn):
     out = []
 
@@ -343,7 +349,7 @@ def test_session_answers_when_realtime_hears_the_user_stop():
         await s.on_heard("привіт", False)  # the browser's interim words are only shown
         await s.on_heard("привіт", True)  # a final from the browser does not start a turn
         assert s._turn is None
-        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        said(conn, "u1")
         await pump()
         await asyncio.gather(s._turn, return_exceptions=True)
         conn.push(type="conversation.item.input_audio_transcription.completed", item_id="u1", transcript="Привіт")
@@ -363,12 +369,12 @@ def test_session_ignores_sound_while_busy_and_after_stop():
         s, out = make_session(conn)
         await s.start()
         s.state = "speaking"
-        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        said(conn, "u1")
         await pump()
         assert s._turn is None  # she was talking: the browser's words decide interruptions
         s.state = "listening"
         s._skip_reply = True  # «стоп» was recognized
-        conn.push(type="input_audio_buffer.speech_stopped", item_id="u2")
+        said(conn, "u2")
         await pump()
         assert s._turn is None and any(m["type"] == "user_drop" and m["reason"] == "stop" for m in out)
         await s.close()
@@ -382,7 +388,7 @@ def test_session_drops_a_phrase_that_is_her_own_echo():
         s, out = make_session(conn)
         await s.start()
         conn.on_create = lambda _e: answer_events(conn, "r1", "Окей.")
-        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        said(conn, "u1")
         await pump()
         await asyncio.gather(s._turn, return_exceptions=True)
         s._recent = "Це було моє довге речення про погоду"  # what she said meanwhile
@@ -656,17 +662,132 @@ def test_going_on_while_she_thinks_cancels_the_answer_and_the_whole_phrase_is_an
                 answer_events(conn, "r2", "Відповідаю на все.")
 
         conn.on_create = create
-        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        said(conn, "u1")
         await asyncio.sleep(0.02)
         assert s.state == "thinking"
         conn.push(type="input_audio_buffer.speech_started")  # the user adds to the phrase
         await asyncio.sleep(0.15)
         assert s._turn is None or s._turn.done() or s.state == "listening"
         assert "response.cancel" in conn.kinds()
-        conn.push(type="input_audio_buffer.speech_stopped", item_id="u2")  # the phrase ends: one answer to all of it
+        said(conn, "u2")  # the phrase ends: one answer to all of it
         await pump(60)
         await asyncio.gather(s._turn, return_exceptions=True)
         assert len(created) == 2 and " ".join(s.tts.said) == "Відповідаю на все."
+        await s.close()
+
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------------- when an answer is asked for
+
+
+def test_an_answer_waits_for_the_users_phrase_to_exist_in_the_conversation():
+    """«speech_stopped» comes before the server has made the item of the phrase: an answer asked for then is made without the
+    last phrase, i.e. to the one before it (the agent answered one step behind)."""
+
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Привіт.")
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        await pump()
+        assert "response.create" not in conn.kinds() and s._turn is None  # the phrase is not in the conversation yet
+        conn.push(type="conversation.item.created", item={"id": "u1", "type": "message", "role": "user"})
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert conn.kinds().count("response.create") == 1
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_the_added_event_does_too_and_two_events_for_one_phrase_make_one_answer():
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Привіт.")
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        conn.push(type="conversation.item.added", item={"id": "u1", "type": "message", "role": "user"})
+        conn.push(type="conversation.item.created", item={"id": "u1", "type": "message", "role": "user"})
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert conn.kinds().count("response.create") == 1
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_an_item_of_the_assistant_or_of_another_phrase_does_not_start_the_answer():
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        conn.push(type="conversation.item.created", item={"id": "u1", "type": "message", "role": "assistant"})
+        conn.push(type="conversation.item.created", item={"id": "other", "type": "message", "role": "user"})
+        await pump()
+        assert "response.create" not in conn.kinds()
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_if_no_item_event_ever_comes_the_phrase_is_answered_anyway(monkeypatch):
+    async def go():
+        import server.session as sess
+
+        monkeypatch.setattr(sess, "_ITEM_WAIT_S", 0.05)
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Привіт.")
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        await asyncio.sleep(0.02)
+        assert "response.create" not in conn.kinds()
+        await asyncio.sleep(0.12)
+        assert conn.kinds().count("response.create") == 1  # never left in silence
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_an_empty_transcript_does_not_cancel_the_answer_the_model_heard_the_audio_itself():
+    """Short or quiet words («Ало?») often come back empty from the transcription: that used to be taken for echo and the
+    answer was cancelled, so the agent kept silent after the user's words."""
+
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Я тут, чую тебе.")
+        said(conn, "u1")
+        await pump()
+        conn.push(type="conversation.item.input_audio_transcription.completed", item_id="u1", transcript="")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        await pump()
+        assert " ".join(s.tts.said) == "Я тут, чую тебе."  # spoken
+        assert not any(m["type"] in ("user_drop", "clear") for m in out)  # nothing was dropped or cut
+        assert all(h["role"] != "user" or h["content"] for h in s.history)  # no empty user line in the memory
+        assert "response.cancel" not in conn.kinds()
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_a_short_phrase_while_she_is_busy_is_reported_as_dropped_not_silently_lost(monkeypatch):
+    async def go():
+        conn = FakeConn()
+        s, out = vad_session(monkeypatch, conn, delay=5.0)  # no barge-in: the phrase is short
+        await s.start()
+        s.state = "speaking"
+        conn.push(type="input_audio_buffer.speech_started")
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        await pump()
+        drops = [m for m in out if m["type"] == "user_drop"]
+        assert drops and drops[-1]["reason"] == "busy" and "response.create" not in conn.kinds()
         await s.close()
 
     asyncio.run(go())

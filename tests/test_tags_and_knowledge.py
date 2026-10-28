@@ -198,3 +198,13 @@ def test_the_knowledge_role_beats_the_default_description_but_not_a_sincere_ques
 def test_the_prompt_tells_how_to_perform_verse_songs_and_prose():
     p = prompt()
     assert "це виступ, а не розмова" in p and "окремим реченням" in p and "не співаєш" in p
+
+
+def test_with_knowledge_the_base_does_not_call_her_an_assistant_or_an_ai_and_the_knowledge_is_repeated_last():
+    for key in ("eva", "taras", "lesya"):
+        p = build_system_prompt(search=True, persona=Persona(character=key), now="x", about="Ти людина.")
+        assert "Ти — голосовий асистент" not in p and "чесно скажи, що так" not in p, key
+        assert p.rstrip().endswith("кожній відповіді."), key  # the reminder comes last (before a greeting, if any)
+        assert "щире серйозне питання" in p, key  # the one exception stays
+    plain = build_system_prompt(search=True, persona=Persona(), now="x")
+    assert "Ти — голосовий асистент" in plain and "чесно скажи, що так" in plain and "Нагадування: довідка" not in plain

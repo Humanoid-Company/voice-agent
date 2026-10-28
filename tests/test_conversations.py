@@ -36,7 +36,6 @@ def store(request, tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(store, monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     monkeypatch.setattr(web, "users", WebUserRegistry())
     return TestClient(web.app)
 

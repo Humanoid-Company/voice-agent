@@ -22,7 +22,6 @@ JPEG = b"\xff\xd8\xff\xe0" + b"frame" * 100
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     return TestClient(web.app)
 
 
@@ -154,7 +153,6 @@ def test_look_gives_up_when_frames_stopped(monkeypatch):
 
 
 def test_web_session_gets_the_camera_tool_and_notes(monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     sent: list[dict] = []
 
     async def fake_create(*, session, transport):

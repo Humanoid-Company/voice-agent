@@ -9,7 +9,6 @@
     get(key) { try { return localStorage.getItem(key); } catch { return null; } },
     set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
   };
-  const auth = window.EvaAuth; // the login (web/auth.js)
   let draft = null; // { items, file } — the parsed file before it is saved
   const PREVIEW_MAX = 200; // records drawn in the preview; all of them are saved
   const opened = new Map(); // set id → its records, once «Переглянути» loaded them
@@ -41,12 +40,11 @@
   async function api(path, opts = {}) {
     const res = await fetch(BACKEND + path, {
       ...opts,
-      headers: { ...auth.headers(), ...(opts.body && !(opts.body instanceof Blob) ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
+      headers: { ...(opts.body && !(opts.body instanceof Blob) ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
     });
     if (!res.ok) {
       let detail = "Помилка " + res.status;
       try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
-      if (res.status === 401) auth.toLogin();
       throw new ApiError(res.status, typeof detail === "string" ? detail : "Помилка " + res.status);
     }
     return res.json();
@@ -184,13 +182,12 @@
         el("div", { class: "set-head" },
           el("div", { class: "set-text" },
             el("strong", {}, s.name),
-            el("span", { class: "muted small" }, [records(s.count), s.source, s.owner_name, fmtDate(s.created_at)].filter(Boolean).join(" · "))),
+            el("span", { class: "muted small" }, [records(s.count), s.source, fmtDate(s.created_at)].filter(Boolean).join(" · "))),
           el("label", { class: "set-switch" }, el("span", { class: "small" }, s.enabled ? "Консьєрж знає" : "Вимкнено"), sw)),
         s.note && el("p", { class: "hint" }, s.note),
         el("div", { class: "row set-actions" },
           view,
-          // Only the one who uploaded it and admins (the server says so in can_delete).
-          s.can_delete && el("button", { class: "btn small-btn ghost danger-text", type: "button", onclick: () => remove(s) }, "Видалити")),
+          el("button", { class: "btn small-btn ghost danger-text", type: "button", onclick: () => remove(s) }, "Видалити")),
         body);
     }));
   }

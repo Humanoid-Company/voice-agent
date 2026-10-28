@@ -93,7 +93,6 @@ def test_phrases_to_eva_are_not_background(phrase):
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     return TestClient(web.app)
 
 

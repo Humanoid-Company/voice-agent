@@ -47,7 +47,6 @@ def store(request, tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(store, monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     return TestClient(web.app)
 
 
@@ -193,41 +192,19 @@ def test_bad_file_and_empty_set_are_refused_with_a_reason(client):
     assert res.status_code == 503 and "запису" in res.json()["detail"]
 
 
-def test_knowledge_needs_a_login_and_every_member_changes_it(client, monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "team-secret")
-    assert client.get("/api/knowledge").status_code == 401
-    assert client.post("/api/knowledge/parse", content=PEOPLE_CSV, headers={"X-File-Name": "a.csv"}).status_code == 401
-
-    def login(email):
-        res = client.post("/api/auth/register", json={"email": email, "password": "password1", "invite_code": "team-secret"})
-        return {"Authorization": "Bearer " + res.json()["token"]}
-
-    admin, member = login("boss@team.ua"), login("anna@team.ua")  # the first account is the admin
-    assert client.get("/api/knowledge", headers=member).status_code == 200
-    saved = client.post("/api/knowledge", json={"name": "X", "items": [{"title": "Олег"}]}, headers=member)
-    assert saved.status_code == 200  # members upload…
+def test_knowledge_is_open_and_anyone_changes_it(client):
+    assert client.get("/api/knowledge").status_code == 200
+    saved = client.post("/api/knowledge", json={"name": "X", "items": [{"title": "Олег"}]})
+    assert saved.status_code == 200
     set_id = saved.json()["id"]
-    assert saved.json()["owner_name"] == "anna@team.ua" and saved.json()["can_delete"] is True
-    assert client.post(f"/api/knowledge/{set_id}", json={"enabled": False}, headers=member).json()["enabled"] is False
-    assert client.delete(f"/api/knowledge/{set_id}", headers=member).status_code == 200  # …switch and delete their own
-    # Someone else's set: switched by anyone, deleted only by the one who uploaded it or an admin.
-    other = login("ivan@team.ua")
-    theirs = client.post("/api/knowledge", json={"name": "Y", "items": [{"title": "Марина"}]}, headers=other).json()["id"]
-    assert client.post(f"/api/knowledge/{theirs}", json={"enabled": False}, headers=member).status_code == 200
-    rights = {who: client.get("/api/knowledge", headers=h).json()["sets"][0]["can_delete"]
-              for who, h in [("member", member), ("other", other), ("admin", admin)]}
-    assert rights == {"member": False, "other": True, "admin": True}
-    refused = client.delete(f"/api/knowledge/{theirs}", headers=member)
-    assert refused.status_code == 403 and "завантажив" in refused.json()["detail"]
-    assert client.delete(f"/api/knowledge/{theirs}", headers=admin).status_code == 200
-    # A set from before owners were kept: only an admin deletes it.
+    assert client.post(f"/api/knowledge/{set_id}", json={"enabled": False}).json()["enabled"] is False
+    assert client.delete(f"/api/knowledge/{set_id}").status_code == 200
+    # A set from before owners were kept goes away the same way.
     old = knowledge.store.create_set("Z", [{"title": "Тарас"}])
-    assert client.delete(f"/api/knowledge/{old['id']}", headers=other).status_code == 403
-    assert client.delete(f"/api/knowledge/{old['id']}", headers=admin).status_code == 200
-    # A new event (everyone may come in again) and the people stay the admin's.
-    assert client.delete("/api/concierge/checkins", headers=member).status_code == 403
-    assert client.delete("/api/concierge/checkins", headers=admin).status_code == 200
-    assert client.get("/api/concierge/checkins", headers=member).status_code == 200
+    assert client.delete(f"/api/knowledge/{old['id']}").status_code == 200
+    # A new event: everyone may come in again.
+    assert client.delete("/api/concierge/checkins").status_code == 200
+    assert client.get("/api/concierge/checkins").status_code == 200
 
 
 # ── Єва ──

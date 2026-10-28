@@ -28,10 +28,10 @@ def test_transcript_deltas_join_into_lines_and_tools_are_kept():
     assert store.get("s1") is None and [c["session_id"] for c in store.latest()] == ["s3", "s2"]
 
 
-def test_logs_need_the_token(monkeypatch):
+def test_logs_are_open_unless_a_token_is_set(monkeypatch):
     client = TestClient(web.app)
     monkeypatch.setattr(web, "LOGS_TOKEN", "")
-    assert client.get("/api/logs").status_code == 503  # unset: nobody reads conversations
+    assert client.get("/api/logs").status_code == 200  # unset: open, like everything else
     monkeypatch.setattr(web, "LOGS_TOKEN", "s3cret")
     assert client.get("/api/logs", headers={"X-Logs-Token": "nope"}).status_code == 401
     log = web.calls.start("sess-logs-test", "client12", voice="gleam")

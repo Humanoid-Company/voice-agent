@@ -4,11 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Голосові помічники — налаштування</title>
-  <meta name="description" content="Акаунт, версія й моделі, довідка і люди команди.">
+  <meta name="description" content="Сторінки, версія й моделі, довідка.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="style.css">
   <script src="config.js"></script>
-  <script src="auth.js"></script>
   <script src="settings.js" defer></script>
 </head>
 <body>
@@ -16,57 +15,28 @@
     <header class="page-head">
       <div>
         <h1>Налаштування</h1>
-        <p class="sub" id="whoami">Акаунт, система, довідка.</p>
+        <p class="sub" id="whoami">Сторінки, система, довідка.</p>
       </div>
       <a id="backLink" class="nav-btn header-link" href="index.html">← До помічника</a>
     </header>
 
     <nav class="mode-tabs" role="tablist" aria-label="Розділи налаштувань">
-      <button id="tab-account" role="tab" type="button" aria-selected="true" aria-controls="view-account">Акаунт</button>
+      <button id="tab-pages" role="tab" type="button" aria-selected="true" aria-controls="view-pages">Сторінки</button>
       <button id="tab-system" role="tab" type="button" aria-selected="false" aria-controls="view-system">Система</button>
       <button id="tab-help" role="tab" type="button" aria-selected="false" aria-controls="view-help">Довідка</button>
-      <button id="tab-people" role="tab" type="button" aria-selected="false" aria-controls="view-people" hidden>Люди</button>
     </nav>
 
     <p id="msg" class="status-msg" role="status" hidden></p>
 
-    <!-- ── Акаунт ── -->
-    <div id="view-account" role="tabpanel" aria-labelledby="tab-account">
-      <form id="profileForm" class="card">
-        <div class="card-head">
-          <h2>Профіль</h2>
-          <span id="roleBadge" class="pill"></span>
-        </div>
-        <label for="name">Ім'я</label>
-        <div class="row">
-          <input id="name" type="text" maxlength="80" autocomplete="name">
-          <button class="btn" type="submit">Зберегти</button>
-        </div>
-        <dl class="kv">
-          <dt id="emailLabel">Email</dt><dd id="email">—</dd>
-          <dt>З нами з</dt><dd id="since">—</dd>
-        </dl>
-        <p id="roleHint" class="hint"></p>
-      </form>
-
-      <form id="passwordForm" class="card">
-        <h2>Пароль</h2>
-        <label for="pwCurrent">Поточний пароль</label>
-        <input id="pwCurrent" class="field" type="password" autocomplete="current-password" required>
-        <label for="pwNew" class="gap">Новий пароль <span class="muted small">— щонайменше 8 символів</span></label>
-        <input id="pwNew" class="field" type="password" autocomplete="new-password" minlength="8" required>
-        <div class="row actions"><button class="btn" type="submit">Змінити пароль</button></div>
-        <p class="hint">Після зміни пароля вихід відбудеться на всіх інших пристроях.</p>
-      </form>
-
+    <!-- ── Сторінки ── -->
+    <div id="view-pages" role="tabpanel" aria-labelledby="tab-pages">
       <section class="card">
         <h2>Сторінки</h2>
         <div class="row links">
           <a class="btn small-btn" data-page="history.html" href="history.html">Історія розмов</a>
           <a class="btn small-btn" data-page="knowledge.html" href="knowledge.html">Знання</a>
-          <a class="btn small-btn admin-only" data-page="logs.html" href="logs.html" hidden>Логи й витрати</a>
+          <a class="btn small-btn" data-page="logs.html" href="logs.html">Логи й витрати</a>
         </div>
-        <div class="row actions"><button id="logout" class="btn ghost danger-text" type="button">Вийти з акаунта</button></div>
       </section>
     </div>
 
@@ -105,7 +75,6 @@
           <dt>База даних</dt><dd id="sysDb">—</dd>
           <dt>Логи дзвінків</dt><dd id="sysLogs">—</dd>
           <dt>Знання</dt><dd id="sysKnowledge">—</dd>
-          <dt>Акаунтів у команді</dt><dd id="sysAccounts">—</dd>
         </dl>
       </section>
 
@@ -120,7 +89,7 @@
         <p class="hint">Платимо за кожну хвилину відкритої сесії, навіть коли всі мовчать. Тому пауза й тиша закривають її самі.</p>
       </section>
 
-      <section id="usageCard" class="card admin-only" hidden>
+      <section id="usageCard" class="card" hidden>
         <h2>Витрати за 30 днів</h2>
         <dl class="kv">
           <dt>Дзвінків</dt><dd id="useCalls">—</dd>
@@ -148,18 +117,18 @@
           <p>Режим для входу на подію: помічник вітає гостя, питає ім'я, звіряє зі списком у «Знаннях» і ставить одне
             перевірочне питання про факт із запису (хобі, улюблену їжу…). Правильна відповідь — «проходьте», ні — кличе
             когось із команди.</p>
-          <p>Після кожного гостя — «Наступний гість». Перед новою подією адмін натискає «Скинути відмітки»: тоді всі
+          <p>Після кожного гостя — «Наступний гість». Перед новою подією натисніть «Скинути відмітки»: тоді всі
             можуть пройти знову.</p>
         </details>
         <details>
           <summary>Знання</summary>
           <p>Завантажте таблицю (CSV, Excel), JSON чи документ: перший рядок — назви колонок, далі по рядку на людину.
             Перед збереженням видно всі записи. Увімкнені набори консьєрж знає з наступної розмови; звичайні помічники їх не бачать.</p>
-          <p>Додавати, вмикати й вимикати набори може кожен у команді, а видаляти — лише той, хто завантажив набір, або адмін.</p>
+          <p>Додавати, вмикати, вимикати й видаляти набори може кожен.</p>
         </details>
         <details>
           <summary>Історія</summary>
-          <p>Кожна розмова зберігається у вашому акаунті й видна з будь-якого пристрою. Будь-яку можна перечитати,
+          <p>Кожна розмова зберігається на сервері для цього браузера. Будь-яку можна перечитати,
             продовжити (помічник згадає, про що говорили) або видалити. «Нова розмова» починає з чистого аркуша.</p>
         </details>
         <details>
@@ -173,33 +142,9 @@
           <p>Ставте на паузу, коли не говорите, і закривайте вкладку після розмови. Не лишайте розмову відкритою в
             галасливій кімнаті. Для перевірки змін у коді — тести й заглушки, а не серії живих дзвінків.</p>
         </details>
-        <details>
-          <summary>Ролі</summary>
-          <p><strong>Учасник</strong> говорить з помічниками, бачить свою історію і керує «Знаннями».
-            <strong>Адмін</strong> може те саме, а ще керує людьми команди, бачить логи й витрати, скидає відмітки консьєржа.</p>
-        </details>
       </section>
     </div>
 
-    <!-- ── Люди (admin) ── -->
-    <div id="view-people" role="tabpanel" aria-labelledby="tab-people" hidden>
-      <section class="card">
-        <h2>Код запрошення</h2>
-        <p class="hint">З ним людина заходить сама: на сторінці входу — своє ім'я й цей код (так входять учасники; адміни — через email і пароль). Змінити код — змінна INVITE_CODE (або ACCESS_CODE) на Render.</p>
-        <div class="row">
-          <input id="inviteCode" type="password" readonly aria-label="Код запрошення">
-          <button id="inviteShow" class="btn small-btn" type="button">Показати</button>
-          <button id="inviteCopy" class="btn small-btn" type="button">Скопіювати</button>
-        </div>
-      </section>
-      <section class="card">
-        <div class="card-head">
-          <h2>Люди</h2>
-          <span id="peopleCount" class="muted small"></span>
-        </div>
-        <div id="people" class="sets"><p class="muted empty">Завантаження…</p></div>
-      </section>
-    </div>
   </main>
 </body>
 </html>

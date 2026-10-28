@@ -24,7 +24,6 @@ def guest_list():
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     return TestClient(web.app)
 
 

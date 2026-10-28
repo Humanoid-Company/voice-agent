@@ -17,7 +17,6 @@ ALICE = "alice-usage-0123456789ab"
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     monkeypatch.setattr(web, "LOGS_TOKEN", "secret")
     return TestClient(web.app)
 

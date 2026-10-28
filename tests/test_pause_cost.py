@@ -84,7 +84,6 @@ def test_bridge_puts_tool_result_into_history(remembered):
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     return TestClient(web.app)
 
 

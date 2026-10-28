@@ -16,48 +16,24 @@ BOB = "bob-browser-0123456789ab"
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     return TestClient(web.app)
 
 
 def test_health_and_config(client):
     health = client.get("/healthz").json()
     assert health["ok"] is True and isinstance(health["web_search"], bool)
-    assert client.get("/api/config").json() == {"login_required": False, "invite_required": False, "guest_allowed": True}
 
 
-def test_with_a_team_code_only_a_login_gets_in(client, monkeypatch):
-    monkeypatch.setattr(web, "ACCESS_CODE", "team-secret")
-    monkeypatch.setattr(web, "GUEST_ACCESS", False)  # GUEST_ACCESS=0: no «Увійти як гість»
-    assert client.get("/api/me", headers={"X-Client-Id": ALICE}).status_code == 401
-    # The old code alone no longer opens the page: it is the registration code now.
-    assert client.get("/api/me", headers={"X-Client-Id": ALICE, "X-Access-Code": "team-secret"}).status_code == 401
-    token = client.post("/api/auth/register", json={"email": "a@team.ua", "password": "password1",
-                                                    "invite_code": "team-secret"}).json()["token"]
-    ok = client.get("/api/me", headers={"X-Client-Id": ALICE, "Authorization": "Bearer " + token})
-    assert ok.status_code == 200
-
-
-def test_a_guest_only_looks_around(client, monkeypatch):
-    """«Увійти як гість»: no account — the page, the voices, their own (empty) conversation; nothing that costs
-    tokens (a call, the pause's digest, what is overheard or seen), and not «Знання», the concierge or settings."""
-    monkeypatch.setattr(web, "ACCESS_CODE", "team-secret")
-    assert client.get("/api/config").json()["guest_allowed"] is True
-    guest = {"X-Client-Id": "guest-browser-0123456789"}
-    assert client.get("/api/me", headers=guest).status_code == 200
-    assert client.get("/api/voices").status_code == 200
-    assert client.post("/api/voice", json={"voice": "stone"}, headers=guest).status_code == 200
-    assert client.get("/api/conversation", headers=guest).status_code == 200
-    # Nothing that reaches OpenAI.
-    assert client.post("/api/session", json={"sdp": "v=0"}, headers=guest).json()["detail"] == "guest_view_only"
-    for path, body in (("/api/overheard/digest", None), ("/api/overheard", {"text": "привіт"}),
-                       ("/api/voice-request", {"text": "зміни голос на Толіка"})):
-        assert client.post(path, json=body, headers=guest).status_code == 403
-    assert client.post("/api/frame", content=b"jpeg", headers=guest).status_code == 403
-    assert client.get("/api/knowledge", headers=guest).status_code == 401
-    assert client.get("/api/concierge/checkins", headers=guest).status_code == 401
-    assert client.get("/api/auth/me", headers=guest).status_code == 401
-    assert client.get("/api/admin/users", headers=guest).status_code == 401
+def test_there_are_no_accounts_and_everything_is_open(client):
+    """No login, no guests, no admins: any browser with a client id talks, reads «Знання» and the concierge's marks."""
+    browser = {"X-Client-Id": ALICE}
+    assert client.get("/api/me", headers=browser).status_code == 200
+    assert client.get("/api/knowledge").status_code == 200
+    assert client.get("/api/concierge/checkins").status_code == 200
+    assert client.delete("/api/concierge/checkins").status_code == 200
+    assert client.get("/api/system").status_code == 200
+    for path in ("/api/config", "/api/auth/me", "/api/admin/users"):
+        assert client.get(path).status_code == 404
 
 
 def test_client_id_is_validated(client):
@@ -601,7 +577,6 @@ def test_asked_for_voice_change(utterances, expected):
 def test_wake_request_goes_into_the_new_call_as_the_users_message(monkeypatch):
     """Prod: «Єва, скажи, яка в мене завтра подія» → she said «Яка в мене завтра подія?». Quoted in a
     commentary GPT-Live sometimes reads it back (1 of 3); as the user's message in the history, 0 of 3."""
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     captured = {}
 
     async def fake_create(*, session, transport):
@@ -625,7 +600,6 @@ def test_wake_request_goes_into_the_new_call_as_the_users_message(monkeypatch):
 def test_voice_switch_keeps_the_old_call_until_the_page_swaps(monkeypatch):
     """keep_old: the new call in another voice opens beside the talking one; the page closes the old
     call when it swaps — and the server does it anyway if both are still open much later."""
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     monkeypatch.setattr(web, "KEEP_OLD_MAX_S", 0.05)
 
     class _Old:
@@ -664,7 +638,6 @@ def test_voice_switch_keeps_the_old_call_until_the_page_swaps(monkeypatch):
 def test_prompt_v5_is_the_default_and_v4_v3_only_when_the_page_asks(monkeypatch):
     """v5 (v4 condensed) is the default; v1 and v2 are gone from the web (desktop only): a page that
     still asks for them gets v5."""
-    monkeypatch.setattr(web, "ACCESS_CODE", "")
     sent: list[str] = []
 
     async def fake_create(*, session, transport):

@@ -1,4 +1,4 @@
-// «Історія» — the account's saved conversations (this browser's without a login) (server/conversations.py via /api/conversations): read one,
+// «Історія» — this browser's saved conversations (server/conversations.py via /api/conversations): read one,
 // continue it (Єва remembers it from the next call), copy or delete it.
 (() => {
   const params = new URLSearchParams(location.search);
@@ -9,7 +9,6 @@
     set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
   };
   const clientId = store.get("va-client-id") || "";
-  const auth = window.EvaAuth; // the login (web/auth.js)
   let current = "";
   const opened = new Map(); // conversation id → its turns, once opened
 
@@ -37,11 +36,10 @@
   }
 
   async function api(path, opts = {}) {
-    const res = await fetch(BACKEND + path, { ...opts, headers: { "X-Client-Id": clientId, ...auth.headers() } });
+    const res = await fetch(BACKEND + path, { ...opts, headers: { "X-Client-Id": clientId } });
     if (!res.ok) {
       let detail = "Помилка " + res.status;
       try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
-      if (res.status === 401) auth.toLogin();
       throw new ApiError(res.status, typeof detail === "string" ? detail : "Помилка " + res.status);
     }
     return res.json();

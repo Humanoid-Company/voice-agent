@@ -114,8 +114,6 @@
   let mic = null;
   // «Вимкнути мікрофон»: nothing reaches her — not the call, not the wake phrase, not background listening.
   let micMuted = false;
-  // «Увійти як гість»: a look around the page only — no call (the server refuses it: guest_view_only).
-  let guestView = false;
   let gate = null;
   let gateStats = null; // ?debug=1: the gate's totals (evaGate())
   let micSender = null; // the current call's mic sender: another mic replaces its track in place
@@ -132,7 +130,6 @@
   const headers = () => ({
     "Content-Type": "application/json",
     "X-Client-Id": clientId,
-    ...window.EvaAuth.headers(), // the login (web/auth.js)
   });
 
   function setStatus(text, state) {
@@ -591,7 +588,7 @@
   function updateButtons() {
     const on = eva.mode !== "off";
     $("nextGuest").hidden = !(on && mode === "concierge");
-    $("talk").textContent = on ? "Завершити" : guestView ? "Увійти, щоб поговорити" : "Почати розмову";
+    $("talk").textContent = on ? "Завершити" : "Почати розмову";
     $("talk").classList.toggle("primary", !on);
     $("talk").classList.toggle("danger", on);
     $("talk").disabled = false;
@@ -1173,14 +1170,6 @@
         body: JSON.stringify(sessionBody({ sdp: withClearOpus(offer.sdp), user_text: opts.userText || undefined })),
       });
       if (my !== attempt) return;
-      if (res.status === 401) {
-        showGate();
-        throw new Error("Потрібен вхід в акаунт");
-      }
-      if (res.status === 403) {
-        guestView = true;
-        throw new Error("Гість може лише переглядати — увійдіть, щоб поговорити");
-      }
       if (!res.ok) throw new Error("Сервер відповів " + res.status);
       const { sdp } = await res.json();
       if (my !== attempt) return;
@@ -2196,7 +2185,6 @@
   async function fetchMe() {
     try {
       const res = await fetch(BACKEND + "/api/me", { headers: headers() });
-      if (res.status === 401) { showGate(); return null; }
       return res.ok ? await res.json() : null;
     } catch { return null; } // backend asleep / offline
   }
@@ -2220,21 +2208,6 @@
       if (serverSpeed && serverSpeed !== "normal" && serverSpeed !== speed) { speed = serverSpeed; store.set("va-speed", speed); $("speed").value = speed; }
       if (serverStyle && serverStyle !== "normal" && serverStyle !== style) { style = serverStyle; store.set("va-style", style); $("style").value = style; }
     } catch { /* backend asleep / offline: keep the old state */ }
-  }
-
-  // Not logged in (or the login ended): to the login page, back here after it.
-  function showGate() { window.EvaAuth.toLogin(); }
-
-  // Who is logged in: «Скинути відмітки» is an admin's (a new event); the settings link carries the name.
-  async function showAccount() {
-    const auth = window.EvaAuth;
-    const fit = (a) => {
-      $("checkinReset").hidden = auth.isGuest() || (Boolean(a) && a.role !== "admin");
-      if (a) $("settingsLink").title = (a.name || a.email) + " · акаунт, версія й моделі, довідка";
-      else if (auth.isGuest()) $("settingsLink").title = "Ви як гість — увійдіть в акаунт для налаштувань";
-    };
-    fit(auth.account());
-    if (auth.token()) fit(await auth.refresh());
   }
 
   // ── devices: microphone (in), speaker (out), camera ──
@@ -2604,7 +2577,6 @@
 
   async function init() {
     $("talk").addEventListener("click", () => {
-      if (guestView) { window.EvaAuth.toLogin(); return; } // a guest only looks: talking needs a login
       if (eva.mode !== "off") { stop(); return; }
       if (noMicReason()) { showNoMic(); setStatus("Немає доступу до мікрофона", "err"); postDiag(true); return; }
       meterReset(); // a new call counts from zero
@@ -2680,15 +2652,6 @@
     const cfg = await wakeBackend();
     if (micMissing) setStatus("Немає доступу до мікрофона", "err");
     if (cfg) {
-      const guest = cfg.guest_allowed && window.EvaAuth.isGuest();
-      if (cfg.login_required && !window.EvaAuth.token() && !guest) { showGate(); return; }
-      guestView = cfg.login_required && !window.EvaAuth.token() && guest;
-      if (guestView) {
-        setStatus("Гостьовий режим — лише перегляд", "wait");
-        addLine("system", "Ви як гість: можна роздивитися персонажів і налаштування. Щоб поговорити, увійдіть — ім'я й код команди.");
-        updateButtons();
-      }
-      showAccount();
       await loadVoices();
       refreshMe();
       loadConversation();
@@ -2707,11 +2670,11 @@
     let notified = false;
     while (Date.now() < deadline) {
       try {
-        const res = await fetch(BACKEND + "/api/config");
+        const res = await fetch(BACKEND + "/healthz");
         if (res.ok) {
           if (notified) setStatus("Не підключено");
           $("talk").disabled = false;
-          return await res.json();
+          return true;
         }
       } catch { /* still waking up */ }
       if (!notified) {

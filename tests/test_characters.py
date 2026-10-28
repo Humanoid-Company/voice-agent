@@ -227,3 +227,12 @@ def test_every_character_gets_eva_s_common_rules_but_only_the_plain_one_is_frien
             assert rule in p, (key, rule)
         assert ("Твоя манера: тепла й приязна" in p) == (key == "eva"), key  # a named character brings its own manner
         assert "дві-три найсвіжіші події" in p  # news with substance, not a vague review
+
+
+def test_war_is_not_raised_unasked_and_general_news_means_interesting_world_news():
+    for key in CHARACTERS:
+        p = build_system_prompt(search=True, persona=Persona(character=key), now="x")
+        assert "Війну (бойові дії, обстріли, жертви, руйнування) сама не зачіпай" in p, key
+        assert "цікаві світові новини" in p and "пропускай воєнні" in p and "поки людина не спитала саме про війну" in p, key
+    # also without a search tool the war rule holds (it is in the common part)
+    assert "Війну (бойові дії" in build_system_prompt(search=False, persona=Persona(), now="x")

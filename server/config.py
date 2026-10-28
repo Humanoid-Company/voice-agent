@@ -47,7 +47,7 @@ class Config:
 
     soniox_tts_model: str = field(default_factory=lambda: os.getenv("SONIOX_TTS_MODEL", "tts-rt-v2"))
     soniox_tts_language: str = field(default_factory=lambda: os.getenv("SONIOX_TTS_LANGUAGE", "uk"))
-    soniox_voices: list[str] = field(default_factory=lambda: _list("SONIOX_VOICES", "Adrian"))
+    soniox_voices: list[str] = field(default_factory=lambda: _list("SONIOX_VOICES", "Taras"))
     soniox_tts_sample_rate: int = field(default_factory=lambda: _int("SONIOX_TTS_SAMPLE_RATE", 24000))
 
     web_search_api_key: str = field(default_factory=lambda: os.getenv("WEB_SEARCH_API_KEY", ""))

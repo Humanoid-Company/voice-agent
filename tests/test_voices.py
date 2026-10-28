@@ -46,6 +46,21 @@ def test_soniox_voices_come_from_the_configured_model():
     assert [v["id"] for v in out] == ["Maya", "Daniel"] and out[0]["label"] == "Maya (female)"
 
 
+def _soniox_catalog(req):
+    names = ["Daniel", "Nina", "Taras", "Andrei", "Yana", "Bohdan", "Kirill", "Marek"]
+    return httpx.Response(200, json={"models": [{"id": "tts-rt-v2", "voices": [{"id": n, "gender": "x"} for n in names]}]})
+
+
+def test_soniox_offers_only_ukrainian_voices_for_ukrainian():
+    out = asyncio.run(voices._soniox(CFG, client(_soniox_catalog), "uk"))
+    assert [v["id"] for v in out] == ["Taras", "Bohdan", "Yana"]  # in the order of SONIOX_UKRAINIAN
+
+
+def test_soniox_keeps_the_full_list_for_other_languages():
+    out = asyncio.run(voices._soniox(CFG, client(_soniox_catalog), "en"))
+    assert len(out) == 8
+
+
 def test_provider_list_falls_back_to_configured_voices_when_the_api_fails(monkeypatch):
     voices._cache.clear()
 
@@ -57,7 +72,7 @@ def test_provider_list_falls_back_to_configured_voices_when_the_api_fails(monkey
     out = asyncio.run(voices.tts_providers(CFG))
     assert [p["id"] for p in out] == ["respeecher", "soniox"]
     assert out[0]["voices"] == [{"id": "olesia-conversation", "label": "olesia-conversation"}]
-    assert out[1]["voices"] == [{"id": "Adrian", "label": "Adrian"}]
+    assert out[1]["voices"] == [{"id": "Taras", "label": "Taras"}]
 
 
 def test_only_providers_with_a_key_are_offered(monkeypatch):

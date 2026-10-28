@@ -38,23 +38,33 @@ async def _respeecher(cfg: Config, client: httpx.AsyncClient, language: str = "u
     ]
 
 
-async def _soniox(cfg: Config, client: httpx.AsyncClient, language: str = "uk") -> list[dict]:  # noqa: ARG001
+# Soniox offers ~200 multilingual voices (Japanese, Hindi, Spanish…), in groups by the language each one is made for.
+# For Ukrainian only the Ukrainian-named ones are offered (picked by name and group, not by ear); the other
+# Slavic-group voices (Andrei, Vadim, Kirill) are Russian-named. Other languages get the full list.
+SONIOX_UKRAINIAN = ("Taras", "Bohdan", "Yana")
+
+
+async def _soniox(cfg: Config, client: httpx.AsyncClient, language: str = "uk") -> list[dict]:
     r = await client.get(
         "https://api.soniox.com/v1/tts-models", headers={"Authorization": f"Bearer {cfg.soniox_api_key}"}
     )
     r.raise_for_status()
     models = r.json().get("models") or []
     model = next((m for m in models if m.get("id") == cfg.soniox_tts_model), models[0] if models else {})
-    return [
+    found = [
         {"id": v["id"], "label": _label(v["id"], v.get("gender", ""))}
         for v in model.get("voices") or []
         if isinstance(v, dict) and v.get("id")
     ]
+    if language == "uk":
+        ours = [next(v for v in found if v["id"] == name) for name in SONIOX_UKRAINIAN if any(v["id"] == name for v in found)]
+        return ours or found  # the model has none of them (renamed?): better the full list than none
+    return found
 
 
 async def _load(provider: str, cfg: Config, fallback: list[str], language: str = "uk") -> list[dict]:
-    # Soniox has one voice list for every language; Respeecher one per language model.
-    key = f"{provider}:{language if provider == 'respeecher' else ''}"
+    # Respeecher has one voice list per language model; Soniox's list is cut down for Ukrainian only.
+    key = f"{provider}:{language}"
     cached = _cache.get(key)
     if cached and time.monotonic() - cached[0] < _TTL_S:
         return cached[1]

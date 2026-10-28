@@ -215,6 +215,7 @@ function onAssistantDelta(text) {
 
 let sources = new Set();
 let nextTime = 0;
+let playStart = 0; // when this answer's first audio starts (AudioContext time): how much has played = now - this
 let leftover = null; // an odd trailing byte of the previous chunk
 let turnEnded = false;
 
@@ -242,6 +243,7 @@ function playChunk(data) {
   if (sources.size === 0) nextTime = Math.max(nextTime, playCtx.currentTime + 0.1);
   const at = Math.max(playCtx.currentTime + 0.02, nextTime);
   src.start(at);
+  if (sources.size === 0) playStart = at;
   nextTime = at + buf.duration;
   sources.add(src);
   src.onended = () => { sources.delete(src); maybePlayed(); };
@@ -254,10 +256,17 @@ function maybePlayed() {
   }
 }
 
+// Seconds of the answer that have really sounded. The server finishes a long answer long before it has played, so it
+// asks (played_until, on every cut-off) where the user stopped hearing it, and remembers the answer only up to there.
+function playedSeconds() {
+  return playCtx ? Math.max(0, Math.min(nextTime, playCtx.currentTime) - playStart) : 0;
+}
+
 function stopPlayback() {
   for (const s of sources) { s.onended = null; try { s.stop(); } catch (e) { /* already stopped */ } }
   sources.clear();
   nextTime = 0;
+  playStart = 0;
   leftover = null;
   turnEnded = false;
 }
@@ -603,13 +612,16 @@ function onMessage(ev) {
     case "record": if (m.role === "assistant") logEvent("assistant", m.text, { cut: /…$/.test(m.text || "") }); break;
     case "assistant_delta": onAssistantDelta(m.text); break;
     case "turn_end": botBubble = null; turnEnded = true; maybePlayed(); break;
-    case "clear":
+    case "clear": {
+      const had = sources.size > 0, played = playedSeconds(); // before the audio is dropped
       stopPlayback();
+      if (had) send({ type: "played_until", seconds: Math.round(played * 100) / 100 });
       bargeReset();
       if (["stop", "takeover", "button", "sound"].includes(m.reason)) logEvent("interrupt", m.text, { by: m.reason });
       (botBubble || lastBot)?.classList.add("cut");
       botBubble = null;
       break;
+    }
     case "error": showProblem(m.message); bubble("system", m.message); resetVoiceApply(); break;
   }
 }

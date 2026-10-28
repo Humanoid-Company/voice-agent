@@ -117,6 +117,7 @@ class RealtimeLLM:
         self._response_id = ""
         self._items: list[str] = []  # assistant message ids of the current answer
         self._response_open = False
+        self._cuts = 0
 
     # ------------------------------------------------------------------ connection
 
@@ -329,7 +330,11 @@ class RealtimeLLM:
             if item_id:
                 await self._send({"type": "conversation.item.delete", "item_id": item_id})
         if heard.strip():
-            await self._send({"type": "conversation.item.create", "item": _text_item("assistant", heard.strip())})
+            # With an id of ours, so that it can be replaced once more when the page says how much had really played.
+            self._cuts += 1
+            item = {**_text_item("assistant", heard.strip()), "id": f"heard_{self._cuts}"}
+            await self._send({"type": "conversation.item.create", "item": item})
+            self._items = [item["id"]]
 
     async def drop_item(self, item_id: str) -> None:
         """Take a phrase out of the conversation (it turned out to be the agent's own echo)."""

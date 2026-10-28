@@ -29,6 +29,7 @@ from typing import Any
 
 from .characters import CHARACTERS, EMOTIONS, find_character, tone_factor
 from .config import Config
+from .heard import heard_part
 from .interrupt_intent import classify_interjection, strip_echo
 from .llm import SEGMENT_END, TurnContext
 from .persona import (
@@ -157,6 +158,10 @@ class VoiceSession:
         self._rt_users: dict[str, dict] = {}  # Realtime audio item id -> the history entry waiting for its transcript
         self._last_interim = ""
         self._last_interim_at = 0.0
+        # What was sent to the browser to speak this turn: (sentence, seconds of its audio). When she is cut off the page
+        # says how many seconds had really played, and her memory is trimmed to that place (see heard.py).
+        self._turn_audio: list[tuple[str, float]] = []
+        self._cut: dict | None = None
         self._vad_speaking = False  # Realtime's VAD hears the user right now
         self._barge_task: asyncio.Task | None = None
         self.tts = tts
@@ -257,6 +262,8 @@ class VoiceSession:
             if by == "sound" and classify_interjection(str(msg.get("text") or ""), assistant_recent=self._recent) in ("backchannel", "echo"):
                 return  # a listener's «угу» or her own echo, not the user taking the floor, however long it sounded
             await self.interrupt(reason=by if by in ("button", "sound") else "button")
+        elif kind == "played_until":  # the page stopped her audio: how much of it had really played
+            await self._trim_to_heard(msg.get("seconds"))
         elif kind == "played" and self._awaiting_played:
             self._awaiting_played = False
             self._last_audio_at = time.monotonic()
@@ -455,7 +462,7 @@ class VoiceSession:
     # ------------------------------------------------------------------ turn
 
     async def _run_turn(self, *, greeting: bool = False) -> None:
-        self._spoken, self._turn_done = [], False
+        self._spoken, self._turn_done, self._turn_audio = [], False, []
         await self._set_state("thinking")
         splitter = SentenceSplitter()
         sentences: asyncio.Queue[str | None] = asyncio.Queue()
@@ -513,11 +520,14 @@ class VoiceSession:
                 if not voiced:
                     continue
                 self.usage.chars[self.provider] = self.usage.chars.get(self.provider, 0) + len(voiced)
+                seconds = 0.0
                 async for chunk in self.tts.synthesize(voiced):
                     self._last_audio_at = time.monotonic()
                     await self._send_bytes(chunk)
+                    seconds += len(chunk) / 2 / self.tts.sample_rate
                 if plain:
                     self._spoken.append(plain)
+                    self._turn_audio.append((plain, seconds))
             await producer  # surfaces an LLM error
             await self._apply_pending()
             self._turn_done = True
@@ -555,17 +565,40 @@ class VoiceSession:
                 await asyncio.gather(task, return_exceptions=True)
             if self.state in ("listening", "paused") and not self._awaiting_played:
                 return
+            entry = None  # the history entry that says what she said: trimmed when the page reports what had played
             if not self._turn_done and self._spoken:
                 # keep only what the user actually got to hear
                 heard = " ".join(self._spoken) + " …"
-                self.history.append({"role": "assistant", "content": heard})
+                entry = {"role": "assistant", "content": heard}
+                self.history.append(entry)
                 await self._j({"type": "record", "role": "assistant", "text": heard})
+            elif self._awaiting_played and self.history and self.history[-1].get("role") == "assistant":
+                entry = self.history[-1]  # all of it was generated and sent, but not all of it had played
+            self._cut = {"audio": list(self._turn_audio), "entry": entry} if entry is not None and self._turn_audio else None
             if self.ears and not self._turn_done:  # the model wrote the whole answer: keep what was heard
                 await self.ears.replace_spoken(" ".join(self._spoken) + " …" if self._spoken else "")
             self._turn_done = True
             self._awaiting_played = False
             await self._j({"type": "clear", "reason": reason, "text": text})
             await self._set_state("listening")
+
+    async def _trim_to_heard(self, seconds: object) -> None:
+        """After a cut-off: her memory of the answer ends where the user stopped hearing it, so that «продовжуй» goes on
+        from that place and not from the end of an answer she had only generated."""
+        cut, self._cut = self._cut, None
+        if not cut or isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            return
+        heard = heard_part(cut["audio"], max(0.0, float(seconds)))
+        if heard is None:  # it had all played
+            return
+        if heard:
+            cut["entry"]["content"] = heard
+        else:
+            with contextlib.suppress(ValueError):
+                self.history.remove(cut["entry"])
+        if self.ears:
+            await self.ears.replace_spoken(heard)
+        log.info("cut off after %.1f s of audio: she remembers %r", float(seconds), heard[-60:])
 
     # ------------------------------------------------------------------ the model's tools
 

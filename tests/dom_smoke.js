@@ -384,4 +384,16 @@ E("about").value = "Ти робот Тарас на стенді в Києві."
 E("about").oninput();
 check("the knowledge is saved in the browser and counted", store["about"] === "Ти робот Тарас на стенді в Києві." && E("aboutCount").textContent === "33 / 4000");
 check("and sent to the server for the next answer", sent.some(function (m) { return m.type === "about" && m.text === "Ти робот Тарас на стенді в Києві."; }));
+// a cut-off tells the server how much of the answer had really played
+live = true; ready = true; ws = { readyState: 1, send: function (m) { sent.push(JSON.parse(m)); }, close: function () {} };
+playCtx = { currentTime: 3.0 };
+playStart = 1.0; nextTime = 9.0; // 8 s of answer scheduled, 2 s of them played
+var stub = { stop: function () {}, onended: null };
+sources = new Set([stub]);
+sent.length = 0;
+onMessage({ data: JSON.stringify({ type: "clear", reason: "sound", text: "" }) });
+check("a cut-off reports the seconds that had played", sent.some(function (m) { return m.type === "played_until" && m.seconds === 2; }));
+sent.length = 0;
+onMessage({ data: JSON.stringify({ type: "clear", reason: "history", text: "" }) });
+check("nothing was playing: nothing is reported", !sent.some(function (m) { return m.type === "played_until"; }));
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

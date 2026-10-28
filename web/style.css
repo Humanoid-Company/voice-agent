@@ -131,6 +131,13 @@ summary { cursor: pointer; font-weight: 600; font-size: 1.05rem; }
 
 /* what the microphone hears, the conversation history */
 .hearing { margin-top: 10px; }
+/* These lines change ten times a second and used to change height with their text, so everything below jumped (the whole
+   screen of a phone shook). Each has a fixed height of its longest text; a longer one is cut, not grown. */
+.hearing-status, #recog:not([hidden]) {
+  line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical;
+}
+.hearing-status { height: calc(1.4em * 3); -webkit-line-clamp: 3; }
+#recog:not([hidden]) { height: calc(1.4em * 2); -webkit-line-clamp: 2; }
 .levelbar { position: relative; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
 .levelfill { height: 100%; width: 0; background: var(--ok); transition: width 0.1s linear; }
 .levelneed { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--err); }

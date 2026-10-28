@@ -48,7 +48,8 @@ var CONFIG = {
     { id: "eva", label: "Єва", description: "Звичайна помічниця", voices: [] },
     { id: "tolik", label: "Толік", description: "Дворовий хуліган", voices: [["dmytro-conversation", "Дмитро"], ["ihoreo-conversation", "Ігорео"], ["yevhen-audiobook", "Євген"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
     { id: "kishka", label: "Кішка", description: "Говоряча кішка", voices: [["roksolana-conversation", "Роксолана"], ["kseniia-conversation", "Ксенія"], ["olesia-conversation", "Олеся"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
-    { id: "taras", label: "Тарас", description: "Лавелас", voices: [["oleksandr-radio", "Олександр"], ["yevhen-audiobook", "Євген"], ["dmytro-conversation", "Дмитро"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
+    { id: "taras", label: "Тарас", description: "Лавелас", bound: { provider: "soniox", voice: "Daniel" }, // Daniel stands in for Taras here
+      voices: [{ provider: "soniox", voice: "Daniel", label: "Тарас" }].concat([["oleksandr-radio", "Олександр"], ["yevhen-audiobook", "Євген"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; })) },
   ],
   missing: [],
 };
@@ -418,4 +419,65 @@ check("a cut-off reports the seconds that had played", sent.some(function (m) { 
 sent.length = 0;
 onMessage({ data: JSON.stringify({ type: "clear", reason: "history", text: "" }) });
 check("nothing was playing: nothing is reported", !sent.some(function (m) { return m.type === "played_until"; }));
+// playback: the voice's chunks are joined, resampled to the device's rate across the joins, and scheduled back to back
+var sched = [];
+playCtx = { sampleRate: 48000, currentTime: 10, state: "running",
+  createBuffer: function (ch, len, rate) { return { length: len, sampleRate: rate, duration: len / rate, data: null, copyToChannel: function (f) { this.data = f.slice(); } }; },
+  createBufferSource: function () { var src = { buffer: null, connect: function () {}, start: function (t) { src.at = t; sched.push(src); }, stop: function () {}, onended: null }; return src; } };
+playGain = {};
+ttsRate = 24000;
+function pcm(from, n) { var b = new Int16Array(n); for (var i = 0; i < n; i++) b[i] = Math.round(16000 * Math.sin(2 * Math.PI * 440 * (from + i) / 24000)); return b.buffer; }
+function joinedData() { var all = []; sched.forEach(function (m) { for (var i = 0; i < m.buffer.data.length; i++) all.push(m.buffer.data[i]); }); return all; }
+function maxStep(a) { var m = 0; for (var i = 1; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - a[i - 1])); return m; }
+function backToBack() { for (var i = 0; i + 1 < sched.length; i++) if (Math.abs(sched[i + 1].at - (sched[i].at + sched[i].buffer.duration)) > 1e-9) return false; return true; }
+
+[[48000, 19200, 0.035], [44100, 17640, 0.037]].forEach(function (c) {
+  stopPlayback(); sched.length = 0; playCtx.sampleRate = c[0]; playCtx.currentTime = 10;
+  for (var k = 0; k < 20; k++) playChunk(pcm(k * 480, 480)); // 20 chunks of 20 ms: 400 ms
+  flushPlay();
+  var data = joinedData();
+  check(c[0] + " Hz: 20 little chunks become a few longer pieces, all at the device's rate (the browser resamples nothing)", sched.length >= 2 && sched.length <= 5 && sched.every(function (m) { return m.buffer.sampleRate === c[0]; }));
+  check(c[0] + " Hz: no sample lost or invented at the joins", Math.abs(data.length - c[1]) <= 4);
+  check(c[0] + " Hz: the signal is continuous across the joins (no clicks)", maxStep(data) < c[2]);
+  check(c[0] + " Hz: the pieces follow one another with no gap and no overlap, after a head start", backToBack() && Math.abs(sched[0].at - 10.15) < 1e-9);
+});
+
+// the audio ran dry: the next piece starts again with a head start, and the gap is not counted as played
+stopPlayback(); sched.length = 0; playCtx.sampleRate = 48000; playCtx.currentTime = 10;
+for (var k2 = 0; k2 < 6; k2++) playChunk(pcm(k2 * 480, 480));
+var firstEnd = nextTime; // the end of what is scheduled
+playCtx.currentTime = firstEnd + 1; // a second of silence: the stream stalled
+for (var k3 = 0; k3 < 6; k3++) playChunk(pcm(k3 * 480, 480));
+check("after the stream stalled the next piece starts with a head start, not in the past", sched.length === 2 && Math.abs(sched[1].at - (firstEnd + 1 + 0.15)) < 1e-9);
+playCtx.currentTime = sched[1].at + 0.05;
+check("the stall is not counted as played time", Math.abs(playedSeconds() - (0.12 + 0.05)) < 0.002);
+
+// the end of an answer plays what is still waiting; a cut-off drops it
+stopPlayback(); sched.length = 0; playCtx.currentTime = 10;
+playChunk(pcm(0, 480)); playChunk(pcm(480, 480)); // 40 ms: short of a piece
+check("a short bit waits for its neighbours", sched.length === 0 && pendingLen === 960);
+onMessage({ data: JSON.stringify({ type: "turn_end" }) });
+check("the end of the answer plays it at once", sched.length === 1 && pendingLen === 0);
+stopPlayback(); sched.length = 0;
+playChunk(pcm(0, 480));
+stopPlayback();
+check("a cut-off drops what was waiting", pendingLen === 0 && sched.length === 0 && answerOpen === false);
+
+// Тарас brings his own voice: before a call into the selectors, in a call the server does it
+live = false; buildCharacterMenu(CONFIG.characters);
+E("provider").value = "respeecher"; fillVoices(); E("voice").value = "dmytro-conversation";
+E("character").value = "taras"; E("character").onchange();
+check("choosing Тарас before a call puts his voice in the selectors", E("provider").value === "soniox" && E("voice").value === "Daniel" && store["voice:soniox"] === "Daniel" && store["provider"] === "soniox");
+E("character").value = "tolik"; E("character").onchange();
+check("another character leaves that voice as it is", E("provider").value === "soniox" && E("voice").value === "Daniel");
+live = true; ready = true; ws = { readyState: 1, send: function (m) { sent.push(JSON.parse(m)); }, close: function () {} };
+activeVoice = { provider: "respeecher", voice: "dmytro-conversation" };
+E("provider").value = "respeecher"; fillVoices(); E("voice").value = "dmytro-conversation";
+sent.length = 0;
+E("character").value = "taras"; E("character").onchange();
+check("in a call the page only sends the character: the voice is the server's to switch", sent.some(function (m) { return m.type === "style" && m.character === "taras"; }) && !sent.some(function (m) { return m.type === "voice"; }) && E("provider").value === "respeecher");
+onMessage({ data: JSON.stringify({ type: "voice", provider: "soniox", voice: "Daniel", sample_rate: 24000, language: "uk" }) });
+check("and the selectors follow the server's voice message", E("provider").value === "soniox" && E("voice").value === "Daniel");
+live = false;
+
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

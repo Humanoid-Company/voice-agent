@@ -2,7 +2,8 @@
 
 Ported from the Eva project (voice/options.py, voice/blunt_prompt.py): the same characters with the same limits.
 A character is a manner and a role, never instead of the answer. The voice itself (the TTS voice) is picked
-separately and never changes by itself: not when a character is picked, not when it is asked for by voice. A character
+separately and does not change by itself when a character is picked, with one exception: a character with a `bound_voice`
+(Тарас and the Soniox voice Taras) brings that voice with it, from the menu and when it is called by voice alike. A character
 only has a few voices that fit it, offered in the menu next to it; picking one of them is a manual change.
 """
 from __future__ import annotations
@@ -37,6 +38,8 @@ class Character:
     ukrainian_only: bool = False  # the jokes and curses are Ukrainian: the language cannot be changed under it
     aliases: tuple[str, ...] = ()  # how the user may name it aloud («поклич Толіка»)
     voices: tuple[CharacterVoice, ...] = ()  # voices that suit it: marked in the voice list, never forced
+    # The one voice that goes with this character (his own): switched on together with the character, if the provider has it.
+    bound_voice: CharacterVoice | None = None
     # How lively the synthesizer's delivery is for this character, as a factor of the voice's own `temperature`
     # (Respeecher): below 1 steadier and flatter, above 1 more varied. A first guess: the provider's guide says only that
     # the right values are «largely a matter of trial and error», so it is tuned by ear and can be switched off.
@@ -197,10 +200,11 @@ CHARACTERS: dict[str, Character] = {
             ukrainian_only=True,
             tone=0.85,  # unhurried, sure of himself: steady
             voices=(
+                CharacterVoice("soniox", "Taras", "Тарас"),
                 CharacterVoice("respeecher", "oleksandr-radio", "Олександр (радіо)"),
                 CharacterVoice("respeecher", "yevhen-audiobook", "Євген (аудіокнига)"),
-                CharacterVoice("respeecher", "dmytro-conversation", "Дмитро"),
             ),
+            bound_voice=CharacterVoice("soniox", "Taras", "Тарас"),
             aliases=("тарас", "тараса", "тарасе", "тарасу", "тарасом", "тарасику", "taras", "лавелас", "лавеласа", "альфа", "альфу"),
         ),
     )
@@ -309,6 +313,12 @@ def characters_payload(providers: list[dict]) -> list[dict]:
                 for v in c.voices
                 if v.voice in available.get(v.provider, set())
             ],
+            # his own voice, when the provider really has it: the page puts it in the selectors with the character
+            "bound": (
+                {"provider": c.bound_voice.provider, "voice": c.bound_voice.voice}
+                if c.bound_voice and c.bound_voice.voice in available.get(c.bound_voice.provider, set())
+                else None
+            ),
         }
         for c in CHARACTERS.values()
     ]

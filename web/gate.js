@@ -4,7 +4,8 @@
 // with it never hears her. It opens only for the person at the microphone. It also tells the page when the
 // assistant is audible and when that person speaks.
 // Output 1: the same microphone for the Realtime model. It is shut only while she is audible (and ~0.2 s after) and
-// not opened by the person; otherwise it passes at full level. Output 0 is also turned down by 14 dB when she is
+// the person's voice is not «near» (the same test that lets the page stop her: ~120 ms of voice clearly over her echo,
+// so her echo bursts, which do open output 0, never reach the model); otherwise it passes at full level. Output 0 is also turned down by 14 dB when she is
 // silent and for 0.3 s after her, which cut the first words of a quiet start or of an answer given at once.
 //
 // The assistant's echo in the mic is learned: how loud the mic is per unit of playback while only the
@@ -42,9 +43,13 @@ class EchoGate extends AudioWorkletProcessor {
     this.speaking = false; this.nearFrames = 0; this.nearQuietFor = 1;
     this.audible = false; this.outQuietFor = 1;
     this.gain1 = 1; // output 1, see above
-    // Starts as «loud speakers»; drops within a second or two when there is no echo (headset).
-    this.echo = 0.5;
-    this.echoMax = 0.5; // what the person's own quiet attempts to talk over her must not push the estimate past
+    // Starts as a phone's speaker beside its microphone, the loudest echo there is (a phone's AGC and its speaker next to
+    // the microphone make the echo louder than the sound that made it). A too high estimate only makes the gate a little
+    // deaf for the first half second: the gate is shut, so it learns, and the estimate falls at once to the real echo. A too
+    // low one is the dangerous direction: her echo opens the gate, nothing is learned while it is open, and she «interrupts»
+    // herself.
+    this.echo = 2;
+    this.echoMax = 3; // above this the estimate is not believed
   }
 
   judge(level, outLevel) {
@@ -62,9 +67,10 @@ class EchoGate extends AudioWorkletProcessor {
     // Learn the echo while the gate is shut (the user isn't talking over the assistant).
     if (audible && !this.open && this.outEnv > 0.01) {
       const ratio = level / this.outEnv;
-      // Slower up than down, and never above the «loud speakers» start: the user's own voice, below the bar, was read as
-      // echo, which raised the bar further, so that during a long answer the harder they tried the less they counted.
-      this.echo += (ratio - this.echo) * (ratio < this.echo ? 0.1 : 0.01);
+      // Slower up than down: the user's own voice, below the bar, was read as echo, which raised the bar further, so
+      // that during a long answer the harder they tried the less they counted. (Not capped at the «loud speakers» start:
+      // on a phone the real echo is louder than that, and a too low estimate made her echo count as the user.)
+      this.echo += (ratio - this.echo) * (ratio < this.echo ? 0.1 : 0.005);
       this.echo = Math.min(this.echo, this.echoMax);
     }
     if (level > threshold) { this.loud += 1; this.quietFor = 0; }
@@ -124,7 +130,7 @@ class EchoGate extends AudioWorkletProcessor {
       this.gain += ((this.open ? 1 : closed) - this.gain) * (this.open ? 0.004 : 0.0005);
       if (out) out[i] = delayed * this.gain;
       if (out1) {
-        this.gain1 += ((this.outQuietFor < 0.2 && !this.open ? 0 : 1) - this.gain1) * 0.01; // ~2 ms at 48 kHz
+        this.gain1 += ((this.outQuietFor < 0.2 && !this.speaking ? 0 : 1) - this.gain1) * 0.01; // ~2 ms at 48 kHz
         out1[i] = delayed * this.gain1;
       }
     }

@@ -60,6 +60,7 @@ function load(key) { try { return localStorage.getItem(key); } catch (e) { retur
 
 // Any voice can be chosen for any character. The voices that suit the current one are marked with ★ and come first.
 const characterVoices = {}; // character id -> [{ provider, voice, label }] from the server
+const characterBound = {}; // character id -> { provider, voice }: the voice that goes with the character (Тарас), if the server has it
 
 function recommendedVoices(provider) { // in the character's own order: the first is the best fit
   return (characterVoices[characterId()] || []).filter((v) => v.provider === provider).map((v) => v.voice);
@@ -216,11 +217,26 @@ function onAssistantDelta(text) {
 
 // ---------------------------------------------------------------- playback
 
+// The voice's audio arrives in small chunks at its own rate (ttsRate). Each chunk used to be its own AudioBuffer, resampled
+// by the browser to the device's rate separately from its neighbours: every little buffer resampled on its own leaves a
+// click at the join, and on an iPhone that crackled like popcorn. Now the chunks are joined into longer pieces, resampled
+// here to the device's rate with the position carried over from one piece to the next (no seam), and scheduled back to
+// back after a short head start.
+const PIECE_MS = 120; // chunks are joined up to this much audio before a piece is scheduled
+const FLUSH_MS = 45; // a piece that is still short is scheduled after this long, so a slow stream is not held back
+const LEAD_S = 0.15; // head start at the beginning of an answer and after the audio ran dry (an iPhone needs more than a desktop)
+
 let sources = new Set();
 let nextTime = 0;
 let playStart = 0; // when this answer's first audio starts (AudioContext time): how much has played = now - this
+let answerOpen = false; // an answer is being played (its first piece has been scheduled)
 let leftover = null; // an odd trailing byte of the previous chunk
 let turnEnded = false;
+let pending = []; // chunks (Float32Array at ttsRate) waiting to be joined
+let pendingLen = 0;
+let flushTimer = null;
+let resPos = 0; // where the next piece is read from, in source samples (-1..0: between the previous piece's last sample and this one's first)
+let lastSample = 0; // the previous piece's last sample, for the interpolation across the join
 
 function playChunk(data) {
   let bytes = new Uint8Array(data);
@@ -237,24 +253,68 @@ function playChunk(data) {
   const i16 = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + usable));
   const f32 = new Float32Array(i16.length);
   for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-  const buf = playCtx.createBuffer(1, f32.length, ttsRate);
-  buf.copyToChannel(f32, 0);
+  pending.push(f32);
+  pendingLen += f32.length;
+  if (pendingLen >= (ttsRate * PIECE_MS) / 1000) flushPlay();
+  else if (!flushTimer) flushTimer = setTimeout(flushPlay, FLUSH_MS);
+}
+
+// Linear interpolation to the device's rate. The read position and the last sample are kept between pieces, so the
+// output is one continuous signal however the audio was cut into chunks.
+function resampleTo(src, outRate) {
+  const ratio = ttsRate / outRate;
+  if (ratio === 1) { lastSample = src[src.length - 1]; return src; }
+  const out = new Float32Array(Math.ceil((src.length - resPos) / ratio) + 2);
+  let n = 0;
+  let p = resPos;
+  for (;;) {
+    const i = Math.floor(p);
+    if (i + 1 >= src.length) break;
+    const a = i < 0 ? lastSample : src[i];
+    out[n++] = a + (src[i + 1] - a) * (p - i);
+    p += ratio;
+  }
+  resPos = p - src.length;
+  lastSample = src[src.length - 1];
+  return out.subarray(0, n);
+}
+
+function flushPlay() {
+  clearTimeout(flushTimer);
+  flushTimer = null;
+  if (!pendingLen || !playCtx) { pending = []; pendingLen = 0; return; }
+  const joined = new Float32Array(pendingLen);
+  let at = 0;
+  for (const piece of pending) { joined.set(piece, at); at += piece.length; }
+  pending = [];
+  pendingLen = 0;
+  const out = resampleTo(joined, playCtx.sampleRate);
+  if (!out.length) return;
+  const buf = playCtx.createBuffer(1, out.length, playCtx.sampleRate); // already at the device's rate: nothing left for the browser to resample
+  buf.copyToChannel(out, 0);
   const src = playCtx.createBufferSource();
   src.buffer = buf;
   src.connect(playGain);
-  // A small head start for the first chunk of a turn, so a late next chunk does not click.
-  if (sources.size === 0) nextTime = Math.max(nextTime, playCtx.currentTime + 0.1);
-  const at = Math.max(playCtx.currentTime + 0.02, nextTime);
-  src.start(at);
-  if (sources.size === 0) playStart = at;
-  nextTime = at + buf.duration;
+  const now = playCtx.currentTime;
+  if (!answerOpen) {
+    answerOpen = true;
+    nextTime = now + LEAD_S;
+    playStart = nextTime;
+  } else if (nextTime < now + 0.01) { // the audio ran dry: start again with a head start (the gap is not played time)
+    const start = now + LEAD_S;
+    playStart += start - nextTime;
+    nextTime = start;
+  }
+  src.start(nextTime);
+  nextTime += buf.duration;
   sources.add(src);
   src.onended = () => { sources.delete(src); maybePlayed(); };
 }
 
 function maybePlayed() {
-  if (turnEnded && sources.size === 0) {
+  if (turnEnded && sources.size === 0 && !pendingLen) {
     turnEnded = false;
+    answerOpen = false;
     send({ type: "played" });
   }
 }
@@ -268,6 +328,13 @@ function playedSeconds() {
 function stopPlayback() {
   for (const s of sources) { s.onended = null; try { s.stop(); } catch (e) { /* already stopped */ } }
   sources.clear();
+  clearTimeout(flushTimer);
+  flushTimer = null;
+  pending = [];
+  pendingLen = 0;
+  resPos = 0;
+  lastSample = 0;
+  answerOpen = false;
   nextTime = 0;
   playStart = 0;
   leftover = null;
@@ -614,7 +681,7 @@ function onMessage(ev) {
       break;
     case "record": if (m.role === "assistant") logEvent("assistant", m.text, { cut: /…$/.test(m.text || "") }); break;
     case "assistant_delta": onAssistantDelta(m.text); break;
-    case "turn_end": botBubble = null; turnEnded = true; maybePlayed(); break;
+    case "turn_end": botBubble = null; flushPlay(); turnEnded = true; maybePlayed(); break;
     case "clear": {
       const had = sources.size > 0, played = playedSeconds(); // before the audio is dropped
       stopPlayback();
@@ -637,6 +704,7 @@ async function start() {
     stopPreview(); // a sample left playing would talk over the agent
     // Created in the click handler: browsers only allow audio after a user gesture.
     playCtx = new AudioContext();
+    if (playCtx.state === "suspended") playCtx.resume().catch(() => {}); // iOS may start it suspended
     playGain = playCtx.createGain();
     playGain.connect(playCtx.destination);
     setPlayVolume(1);
@@ -1072,6 +1140,7 @@ function buildCharacterMenu(characters) {
     option.dataset.desc = c.description;
     el.character.add(option);
     characterVoices[c.id] = c.voices || [];
+    characterBound[c.id] = c.bound || null;
   }
   const want = parseCharacter(load("character")).id;
   el.character.value = [...el.character.options].some((o) => o.value === want) ? want : "eva";
@@ -1086,6 +1155,16 @@ function refreshVoiceList() {
   const keep = el.voice.value;
   fillVoices();
   if ([...el.voice.options].some((o) => o.value === keep)) el.voice.value = keep;
+  updateVoiceApply();
+}
+
+function selectVoice(provider, voice) {
+  if (![...el.provider.options].some((o) => o.value === provider)) return;
+  el.provider.value = provider;
+  fillVoices();
+  if ([...el.voice.options].some((o) => o.value === voice)) el.voice.value = voice;
+  save("provider", provider);
+  save("voice:" + provider, el.voice.value);
   updateVoiceApply();
 }
 
@@ -1125,6 +1204,10 @@ el.character.onchange = () => {
   save("character", characterId());
   describeCharacter();
   refreshVoiceList();
+  // A character with a voice of its own brings it. In a call the server does it (and answers with the voice, which the
+  // selectors then follow); before one the selectors are set here, so the call starts with that voice.
+  const bound = characterBound[characterId()];
+  if (bound && !live) selectVoice(bound.provider, bound.voice);
   if (live) sendStyle();
 };
 el.emotion.onchange = () => { save("emotion", el.emotion.value); if (live) sendStyle(); };
@@ -1289,12 +1372,12 @@ function renderHearing() {
   let text;
   if (micMuted) text = "🔇 Мікрофон вимкнено: нічого не чую.";
   else if (paused) text = el.bgListen.checked ? "⏸ Пауза: слухаю фоном." : "⏸ Пауза: нічого не слухаю.";
-  else if (!gate) text = "Рівень мікрофона в цьому браузері не видно (немає AudioWorklet).";
+  else if (!gate) text = "Рівень мікрофона тут не видно (немає AudioWorklet).";
   else if (deadSince && Date.now() - deadSince > 3000) {
-    text = "⚠ Мікрофон не передає звук (рівень 0). Це проблема мікрофона, не фільтра: перевірте вибір пристрою й дозвіл у браузері.";
+    text = "⚠ Мікрофон не передає звук (рівень 0): перевірте вибір пристрою й дозвіл у браузері.";
   } else if (mic.audible) {
     if (mic.level > mic.need) text = "✔ Ваш голос (" + n(mic.level) + ") голосніший за ехо агента: він має зупинитись.";
-    else if (mic.level > 0.01) text = "Чую звук (" + n(mic.level) + "), але він тихіший за ехо агента: потрібно більше " + n(mic.need) + ". Говоріть голосніше або підніміть чутливість.";
+    else if (mic.level > 0.01) text = "Чую звук (" + n(mic.level) + "), але він тихіший за ехо агента: потрібно більше " + n(mic.need) + ".";
     else text = "Агент говорить, мікрофон майже мовчить (" + n(mic.level) + ").";
   } else if (mic.speaking) text = "✔ Чую ваш голос (рівень " + n(mic.level) + ").";
   else if (mic.level > 0.01) text = "Чую звук (рівень " + n(mic.level) + "), але це не схоже на голос поруч.";

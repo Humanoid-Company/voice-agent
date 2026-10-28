@@ -63,7 +63,9 @@ def test_every_named_character_has_three_real_voices_and_the_plain_one_has_none(
     for key in NAMED:
         voices = CHARACTERS[key].voices
         assert len(voices) == 3 and len({v.voice for v in voices}) == 3, key
-        assert {v.provider for v in voices} == {"respeecher"} and {v.voice for v in voices} <= RESPEECHER_UK, key
+        own = {v.voice for v in voices if v.provider == "soniox"}  # Тарас has his own Soniox voice, the rest are Respeecher's
+        assert own == ({"Taras"} if key == "taras" else set()), key
+        assert {v.voice for v in voices if v.provider == "respeecher"} <= RESPEECHER_UK, key
         assert all(v.label for v in voices) and CHARACTERS[key].ukrainian_only and CHARACTERS[key].character, key
     assert CHARACTERS["eva"].voices == ()
     assert {v.voice for v in CHARACTERS["tolik"].voices}.isdisjoint({v.voice for v in CHARACTERS["kishka"].voices})
@@ -236,3 +238,72 @@ def test_war_is_not_raised_unasked_and_general_news_means_interesting_world_news
         assert "цікаві світові новини" in p and "пропускай воєнні" in p and "поки людина не спитала саме про війну" in p, key
     # also without a search tool the war rule holds (it is in the common part)
     assert "Війну (бойові дії" in build_system_prompt(search=False, persona=Persona(), now="x")
+
+
+# ---------------------------------------------------------------- Тарас and his own voice
+
+
+def test_only_taras_has_a_voice_of_his_own_and_it_is_the_first_one_offered():
+    bound = {k: c.bound_voice for k, c in CHARACTERS.items() if c.bound_voice}
+    assert set(bound) == {"taras"} and (bound["taras"].provider, bound["taras"].voice) == ("soniox", "Taras")
+    assert CHARACTERS["taras"].voices[0] == bound["taras"]  # and marked first in the list
+
+
+def test_the_menu_carries_his_voice_only_when_the_provider_really_has_it():
+    soniox = [{"id": "soniox", "label": "S", "voices": [{"id": "Taras", "label": "Taras (male)"}]}]
+    menu = {c["id"]: c for c in characters_payload(soniox)}
+    assert menu["taras"]["bound"] == {"provider": "soniox", "voice": "Taras"}
+    assert menu["tolik"]["bound"] is None and menu["kishka"]["bound"] is None and menu["eva"]["bound"] is None
+    assert [v["voice"] for v in menu["taras"]["voices"]] == ["Taras"]
+    for providers in ([], [{"id": "respeecher", "label": "R", "voices": [{"id": "Taras", "label": "x"}]}]):  # no Soniox / the wrong provider
+        assert {c["id"]: c for c in characters_payload(providers)}["taras"]["bound"] is None
+
+
+def _with_taras(monkeypatch):
+    import tests.test_features as tf
+
+    monkeypatch.setitem(tf.VOICES, ("soniox", "uk"), [{"id": "Daniel", "label": "Daniel (male)"}, {"id": "Taras", "label": "Taras (male)"}])
+
+
+def test_choosing_taras_in_the_menu_brings_his_voice_and_leaving_him_keeps_it(monkeypatch):
+    async def go():
+        _with_taras(monkeypatch)
+        s, out = make()
+        await s.start()
+        assert (s.provider, s.voice) == ("respeecher", "olesia")
+        await s.on_client({"type": "style", "character": "taras", "emotion": "normal"})
+        assert (s.provider, s.voice) == ("soniox", "Taras") and of(out, "voice")[-1]["voice"] == "Taras"
+        await s.on_client({"type": "style", "character": "tolik", "emotion": "normal"})
+        assert (s.provider, s.voice) == ("soniox", "Taras")  # another character does not take it away, nor change it
+
+    asyncio.run(go())
+
+
+def test_calling_taras_by_voice_brings_his_voice_too_and_the_model_is_told(monkeypatch):
+    async def go():
+        _with_taras(monkeypatch)
+        s, out = make()
+        await s.start()
+        result = await s.run_tool("change_character", {"character": "Тараса"})
+        assert "Тепер ти Тарас" in result and "голос Тарас" in result
+        assert (s.provider, s.voice) == ("soniox", "Taras")
+
+    asyncio.run(go())
+
+
+def test_taras_does_not_change_a_voice_that_is_already_his_or_that_the_provider_lacks(monkeypatch):
+    async def go():
+        _with_taras(monkeypatch)
+        s, out = make(provider="soniox", voice="Taras")
+        await s.start()
+        made = len(out["made"])
+        result = await s.run_tool("change_character", {"character": "Тараса"})
+        assert "голос Тарас" not in result and len(out["made"]) == made and not of(out, "voice")  # already his voice
+        # Soniox without a "Taras": the voice stays as it is, the character still comes
+        monkeypatch.setitem(__import__("tests.test_features", fromlist=["VOICES"]).VOICES, ("soniox", "uk"), [{"id": "Daniel", "label": "Daniel"}])
+        s2, out2 = make()
+        await s2.start()
+        result2 = await s2.run_tool("change_character", {"character": "Тараса"})
+        assert s2.persona.character == "taras" and (s2.provider, s2.voice) == ("respeecher", "olesia") and "голос Тарас" not in result2
+
+    asyncio.run(go())

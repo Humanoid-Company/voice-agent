@@ -59,7 +59,7 @@ var out = {};
       if (r.stopAfterMs >= 0) falseStops++;
       if (r.duckAfterMs >= 0) falseDucks++;
     }
-    var normal = run(s, 6, k, 0.3, 0.17, 3), quiet = run(s, 6, k, 0.3, 0.10, 3);
+    var normal = run(s, 6, k, 0.3, 0.30, 3), quiet = run(s, 6, k, 0.3, 0.15, 3);
     out[k].push({ falseStops: falseStops, falseDucks: falseDucks, normalStopMs: normal.stopAfterMs, quietStopMs: quiet.stopAfterMs });
   }
 });

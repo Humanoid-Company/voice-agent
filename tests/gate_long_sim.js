@@ -19,7 +19,7 @@ function trial(sens, echoK, startAt, voiceAmp, triesAmp, seed0) {
     for (var i = 0; i < 128; i++, t++) {
       var a = 0.3 * Math.sin(2 * Math.PI * 220 * t / sampleRate) * (1 + 0.5 * Math.sin(2 * Math.PI * 3 * t / sampleRate));
       rem[i] = a;
-      mic[i] = echoK * burst * a + (amp ? amp * Math.sin(2 * Math.PI * 150 * t / sampleRate) : 0) + 0.003 * rnd();
+      mic[i] = echoK * burst * a + (amp ? amp * (0.15 + 0.85 * Math.pow(Math.abs(Math.sin(Math.PI * 4 * t / sampleRate)), 1.5)) * Math.sin(2 * Math.PI * 150 * t / sampleRate) : 0) + 0.003 * rnd();
     }
     g.process([[mic], [rem]], [[out]]);
     if (sec >= startAt) { frames++; if (g.speaking) { nearFrames++; if (first < 0) first = Math.round((sec - startAt) * 1000); } }
@@ -31,7 +31,7 @@ var res = {};
 [0.10, 0.20, 0.35].forEach(function (k) {
   res[k] = {};
   [4, 20, 40, 60].forEach(function (at) {
-    res[k][at] = { normal: trial(2, k, at, 0.17, 0, 3), quietTries: trial(2, k, at, 0.17, 0.08, 3) };
+    res[k][at] = { normal: trial(2, k, at, 0.30, 0, 3), quietTries: trial(2, k, at, 0.30, 0.14, 3) };
   });
 });
 print(JSON.stringify(res));

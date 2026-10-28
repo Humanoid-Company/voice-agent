@@ -17,7 +17,7 @@ function run(sens, sec, echoK, jitter, voiceAmp, seed0) {
     for (var i = 0; i < 128; i++, t++) {
       var a = 0.3 * Math.sin(2 * Math.PI * 220 * t / sampleRate) * (1 + 0.5 * Math.sin(2 * Math.PI * 3 * t / sampleRate));
       rem[i] = a;
-      mic[i] = echoK * burst * a + (user ? user * Math.sin(2 * Math.PI * 150 * t / sampleRate) : 0) + 0.003 * rnd();
+      mic[i] = echoK * burst * a + (user ? user * (0.15 + 0.85 * Math.pow(Math.abs(Math.sin(Math.PI * 4 * t / sampleRate)), 1.5)) * Math.sin(2 * Math.PI * 150 * t / sampleRate) : 0) + 0.003 * rnd();
     }
     g.process([[mic], [rem]], [[out]]);
     if (b > warm) { blocks++; if (g.speaking) nearBlocks++; }
@@ -33,7 +33,7 @@ var result = {};
   for (var s = 0; s < 4; s++) {
     var worst = 0;
     for (var seed = 1; seed <= 5; seed++) worst = Math.max(worst, run(s, 6, k, 0.3, 0, seed));
-    result[k].push({ echoOnly: worst, quiet: run(s, 3, k, 0.3, 0.10), normal: run(s, 3, k, 0.3, 0.17) });
+    result[k].push({ echoOnly: worst, quiet: run(s, 3, k, 0.3, 0.15), normal: run(s, 3, k, 0.3, 0.30) });
   }
 });
 print(JSON.stringify(result));

@@ -186,3 +186,10 @@ def test_a_long_answer_is_shortened_by_forty_percent_but_a_short_one_is_not_and_
     assert "читай усе повністю й одразу, без відмов" in p and "пункт про довжину тут не діє" in p
     assert "Довгі тексти (есе, резюме" not in p  # the old «I do not dictate long texts»
     assert "секунд двадцять-сорок" not in p
+
+
+def test_the_knowledge_role_beats_the_default_description_but_not_a_sincere_question():
+    p = prompt(about="Ти людина, ти не робот, відповідай своїй ролі.")
+    assert "Ти людина, ти не робот" in p
+    assert "сильніша за загальні описи" in p and "не кажи «як ШІ»" in p
+    assert "щиро й серйозно питає" in p  # she still does not deny being an AI to a sincere question

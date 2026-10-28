@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import server.app as app_module
 from server.about_store import AboutKnowledge, AboutStore
+from server.auth import make_token
 from server.db import StoreError
 from server.persona import ABOUT_MAX_CHARS
 
@@ -96,18 +97,26 @@ def client(tmp_path, monkeypatch):
 
 
 PASSWORD = "test-password"  # what the fixture sets as ACCESS_PASSWORD
-PW = {"X-Access-Password": PASSWORD}
+PW = {"X-Access-Token": make_token(PASSWORD)}  # a logged-in page
 
 
-def test_without_the_password_nothing_is_read_or_written(client):
+def test_without_a_login_nothing_is_read_or_written(client):
     c, st = client
-    for headers in ({}, {"X-Access-Password": "wrong"}, {"X-Access-Password": ""}, {"X-Access-Password": PASSWORD + " "}):
-        assert c.get("/api/knowledge", headers=headers).status_code == 401
-        assert c.put("/api/knowledge", json={"text": "зламано"}, headers=headers).status_code == 401
+    bad = (
+        {},
+        {"X-Access-Token": "wrong"},
+        {"X-Access-Token": ""},
+        {"X-Access-Token": make_token("another-password")},  # signed with a different key
+        {"X-Access-Token": make_token(PASSWORD, now=0)},  # long expired
+        {"X-Access-Password": PASSWORD},  # the raw password is not a token
+    )
+    for headers in bad:
+        assert c.get("/api/knowledge", headers=headers).status_code == 401, headers
+        assert c.put("/api/knowledge", json={"text": "зламано"}, headers=headers).status_code == 401, headers
     assert st.get() == ""
 
 
-def test_with_the_password_the_text_is_saved_and_read_back(client):
+def test_with_a_login_the_text_is_saved_and_read_back(client):
     c, st = client
     r = c.put("/api/knowledge", json={"text": "  Ти робот Тарас.  "}, headers=PW)
     assert r.status_code == 200 and r.json()["text"] == "Ти робот Тарас."
@@ -124,11 +133,12 @@ def test_the_text_is_bounded_and_text_only(client):
     assert c.put("/api/knowledge", json={}, headers=PW).json()["text"] == ""
 
 
-def test_a_blank_password_setting_locks_the_knowledge_for_everyone(client, monkeypatch):
+def test_a_blank_password_setting_closes_the_site_for_everyone(client, monkeypatch):
     c, _ = client
     monkeypatch.setattr(app_module, "cfg", replace(app_module.cfg, access_password=""))
-    assert c.get("/api/knowledge", headers={"X-Access-Password": ""}).status_code == 403
-    assert c.get("/api/knowledge", headers=PW).status_code == 403
+    assert c.get("/api/knowledge", headers=PW).status_code == 503
+    assert c.post("/api/login", json={"password": ""}).status_code == 503
+    assert c.get("/api/knowledge", headers={"X-Access-Token": make_token("")}).status_code == 503
 
 
 def test_a_database_that_is_down_is_a_clear_error_not_a_crash(client, monkeypatch):
@@ -144,9 +154,9 @@ def test_a_database_that_is_down_is_a_clear_error_not_a_crash(client, monkeypatc
     assert r.status_code == 503 and "недоступна" in r.json()["detail"]
 
 
-def test_healthz_says_where_the_knowledge_lives(client):
+def test_healthz_stays_open_and_says_where_the_knowledge_lives(client):
     c, _ = client
-    body = c.get("/healthz").json()
+    body = c.get("/healthz").json()  # Render's health check and the keep-awake ping carry no token
     assert body["ok"] is True and body["knowledge"] == "sqlite" and "persistent" in body
 
 
@@ -154,6 +164,6 @@ def test_without_the_setting_the_knowledge_is_locked_and_there_is_no_default_pas
     from server.config import Config
 
     monkeypatch.delenv("ACCESS_PASSWORD", raising=False)
-    assert Config().access_password == ""  # not set: locked for everyone, whatever is sent
+    assert Config().access_password == ""  # not set: closed for everyone, whatever is sent
     monkeypatch.setenv("ACCESS_PASSWORD", "from-the-environment")
     assert Config().access_password == "from-the-environment"

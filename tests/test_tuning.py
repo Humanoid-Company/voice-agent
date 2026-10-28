@@ -128,12 +128,17 @@ def test_the_page_gets_no_sampling_defaults_and_the_character_menu():
             return [{"id": "respeecher", "label": "Respeecher", "voices": [
                 {"id": "dmytro-conversation", "label": "Дмитро", "sampling": {"temperature": 0.8}}]}]
 
-        original = app_module.tts_providers
+        from dataclasses import replace
+
+        from server.auth import make_token
+
+        original, original_cfg = app_module.tts_providers, app_module.cfg
         app_module.tts_providers = fake
+        app_module.cfg = replace(original_cfg, access_password="test-password")  # the endpoint is behind the login
         try:
-            config = await app_module.api_config()
+            config = await app_module.api_config(x_access_token=make_token("test-password"))
         finally:
-            app_module.tts_providers = original
+            app_module.tts_providers, app_module.cfg = original, original_cfg
         assert config["providers"][0]["voices"] == [{"id": "dmytro-conversation", "label": "Дмитро"}]  # no defaults to the page
         assert [c["id"] for c in config["characters"]] == ["eva", "tolik", "kishka", "taras"]
         assert [v["voice"] for v in {c["id"]: c for c in config["characters"]}["tolik"]["voices"]] == ["dmytro-conversation"]

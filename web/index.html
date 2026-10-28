@@ -9,15 +9,24 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <main class="wrap">
+  <div id="login" class="login">
+    <div class="card login-card">
+      <h1>Голосовий агент</h1>
+      <p class="hint">Введіть пароль, щоб увійти.</p>
+      <input id="loginPass" type="password" placeholder="Пароль" autocomplete="current-password" aria-label="Пароль" autofocus>
+      <button id="loginBtn" class="btn primary wide" type="button">Увійти</button>
+      <p id="loginError" class="hint err-text" hidden></p>
+    </div>
+  </div>
+
+  <main class="wrap" id="app" hidden>
     <header class="page-head">
       <div>
         <h1>Голосовий агент</h1>
         <p class="sub">Слухає розпізнавання Google у браузері, думає GPT, говорить Respeecher або Soniox. Можна перебивати.</p>
       </div>
-      <nav class="head-links" aria-label="Вкладки">
-        <button id="openHistory" class="btn ghost small-btn" type="button" title="Збережені розмови: відкрити, продовжити, видалити">Історія</button>
-        <button id="openUsage" class="btn ghost small-btn" type="button" title="Час і орієнтовні витрати за 30 днів">Витрати</button>
+      <nav class="head-links" aria-label="Налаштування">
+        <button id="openSettings" class="btn ghost icon-btn" type="button" aria-label="Налаштування" title="Налаштування: історія, знання, витрати">⚙</button>
       </nav>
     </header>
 
@@ -102,25 +111,6 @@
     </section>
 
     <section class="card">
-      <h2>Знання агента</h2>
-      <p class="hint">Тут пишуть, хто він і що за робот, де він і що це за подія чи стенд, про що розповідати, хто організатори, що можна обіцяти, а що ні. Агент спирається на це у відповідях і не вигадує понад написане. Знання зберігаються в базі на сервері й діють у кожній розмові на будь-якому пристрої, одразу після збереження. Побачити й змінити їх можна лише з паролем.</p>
-      <div id="aboutLock" class="row">
-        <input id="aboutPass" type="password" placeholder="Пароль" autocomplete="current-password" aria-label="Пароль до знань">
-        <button id="aboutUnlock" class="btn" type="button">Відкрити</button>
-      </div>
-      <div id="aboutEditor" hidden>
-        <textarea id="about" rows="7" maxlength="4000" placeholder="Наприклад: Ти робот-помічник Тарас компанії Humanoid. Ми на виставці у Києві, стенд № 12: показуємо голосових агентів, які розмовляють українською. Якщо питають про ціни, скажи, що детальніше розповість менеджер на стенді."></textarea>
-        <div class="row">
-          <button id="aboutSave" class="btn primary" type="button">Зберегти</button>
-          <button id="aboutHide" class="btn ghost" type="button" title="Забути пароль у цьому браузері й сховати знання">Заблокувати</button>
-          <span id="aboutCount" class="hint">0 / 4000</span>
-        </div>
-      </div>
-      <p id="aboutStatus" class="hint" hidden></p>
-      <p id="aboutStorage" class="hint err-text" hidden>База на сервері не підключена (немає DATABASE_URL): знання лежать у файлі, який наступний деплой на Render зітре. Підключіть Postgres на Neon, як в Eva.</p>
-    </section>
-
-    <section class="card">
       <h2>Звук і пристрої</h2>
       <div class="label-row">
         <label for="volume">Гучність</label>
@@ -171,11 +161,18 @@
 
   </main>
 
-  <dialog id="historyDialog" class="dialog" aria-labelledby="historyTitle">
+  <dialog id="settingsDialog" class="dialog" aria-labelledby="settingsTitle">
     <div class="card-head">
-      <h2 id="historyTitle">Історія розмов</h2>
-      <button class="btn ghost small-btn dialog-close" type="button" data-close="historyDialog">Закрити</button>
+      <h2 id="settingsTitle">Налаштування</h2>
+      <button class="btn ghost small-btn dialog-close" type="button" data-close="settingsDialog">Закрити</button>
     </div>
+    <div class="tabs" role="tablist">
+      <button id="tabHistory" class="tab" type="button" role="tab" data-tab="history">Історія</button>
+      <button id="tabKnowledge" class="tab" type="button" role="tab" data-tab="knowledge">Знання</button>
+      <button id="tabUsage" class="tab" type="button" role="tab" data-tab="usage">Витрати</button>
+    </div>
+
+    <div id="panelHistory" class="panel" role="tabpanel">
     <div class="memory-row">
       <label for="memorySel">Що пам'ятає агент між дзвінками</label>
       <select id="memorySel">
@@ -195,15 +192,27 @@
       <div id="timeline" class="timeline"></div>
     </div>
     <p class="hint">Розмови зберігаються в цьому браузері й лишаються після оновлення сторінки. «Відкрити» повертає розмову на сторінку, а агент пам'ятає з неї стільки, скільки дозволяє налаштування вище. «Нова розмова» (у картці «Розмова») відкладає поточну сюди й починає з чистого аркуша.</p>
-  </dialog>
-
-  <dialog id="usageDialog" class="dialog" aria-labelledby="usageTitle">
-    <div class="card-head">
-      <h2 id="usageTitle">Витрати за 30 днів</h2>
-      <button class="btn ghost small-btn dialog-close" type="button" data-close="usageDialog">Закрити</button>
     </div>
+
+    <div id="panelKnowledge" class="panel" role="tabpanel" hidden>
+      <p class="hint">Тут пишуть, хто він і що за робот, де він і що це за подія чи стенд, про що розповідати, хто організатори, що можна обіцяти, а що ні. Агент спирається на це у відповідях і не вигадує понад написане. Знання зберігаються в базі на сервері й діють у кожній розмові на будь-якому пристрої, одразу після збереження.</p>
+      <textarea id="about" rows="9" maxlength="4000" placeholder="Наприклад: Ти робот-помічник Тарас компанії Humanoid. Ми на виставці у Києві, стенд № 12: показуємо голосових агентів, які розмовляють українською. Якщо питають про ціни, скажи, що детальніше розповість менеджер на стенді."></textarea>
+      <div class="row">
+        <button id="aboutSave" class="btn primary" type="button">Зберегти</button>
+        <span id="aboutCount" class="hint">0 / 4000</span>
+      </div>
+      <p id="aboutStatus" class="hint" hidden></p>
+      <p id="aboutStorage" class="hint err-text" hidden>База на сервері не підключена (немає DATABASE_URL): знання лежать у файлі, який наступний деплой на Render зітре. Підключіть Postgres на Neon, як в Eva.</p>
+    </div>
+
+    <div id="panelUsage" class="panel" role="tabpanel" hidden>
     <div id="usageTable" class="usage-table"></div>
     <p class="hint">Орієнтовно, у доларах: токени моделі, символи голосу й пошуки за цінами з налаштувань сервера (ціна Soniox там 0, якщо її не задано). Рахується в цьому браузері й не передається на сервер, тож інші пристрої й браузери тут не враховані.</p>
+    </div>
+
+    <div class="row panel-foot">
+      <button id="logout" class="btn ghost small-btn" type="button" title="Забути вхід у цьому браузері">Вийти</button>
+    </div>
   </dialog>
 </body>
 </html>

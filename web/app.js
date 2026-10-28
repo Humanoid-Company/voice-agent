@@ -6,6 +6,10 @@ const BACKEND = (params.get("backend") || (window.APP_CONFIG && window.APP_CONFI
 const WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
 
 const $ = (id) => document.getElementById(id);
+// The site is behind one password: it is exchanged once (POST /api/login) for a signed token, which every request carries.
+let token = (() => { try { return localStorage.getItem("token") || ""; } catch (e) { return ""; } })();
+const authHeaders = () => (token ? { "X-Access-Token": token } : {});
+
 const el = {
   dot: $("dot"), status: $("status"), problem: $("problem"), provider: $("provider"), voice: $("voice"),
   recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), newChat: $("newChat"),
@@ -15,10 +19,12 @@ const el = {
   tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"), engine: $("engine"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
-  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"), about: $("about"), aboutCount: $("aboutCount"), aboutPass: $("aboutPass"), aboutUnlock: $("aboutUnlock"), aboutLock: $("aboutLock"),
-  aboutEditor: $("aboutEditor"), aboutSave: $("aboutSave"), aboutHide: $("aboutHide"), aboutStatus: $("aboutStatus"), aboutStorage: $("aboutStorage"),
-  usageTable: $("usageTable"), openHistory: $("openHistory"), openUsage: $("openUsage"),
-  historyDialog: $("historyDialog"), usageDialog: $("usageDialog"),
+  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"), about: $("about"), aboutCount: $("aboutCount"),
+  aboutSave: $("aboutSave"), aboutStatus: $("aboutStatus"), aboutStorage: $("aboutStorage"),
+  usageTable: $("usageTable"), openSettings: $("openSettings"), settingsDialog: $("settingsDialog"), logout: $("logout"),
+  login: $("login"), loginPass: $("loginPass"), loginBtn: $("loginBtn"), loginError: $("loginError"), app: $("app"),
+  tabs: { history: $("tabHistory"), knowledge: $("tabKnowledge"), usage: $("tabUsage") },
+  panels: { history: $("panelHistory"), knowledge: $("panelKnowledge"), usage: $("panelUsage") },
 };
 
 const STATES = {
@@ -83,9 +89,12 @@ async function wakeBackend() {
   let waiting = false;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(BACKEND + "/api/config");
+      const res = await fetch(BACKEND + "/api/config", { headers: authHeaders() });
+      if (res.status === 401 || res.status === 503) throw Object.assign(new Error((await res.json().catch(() => ({}))).detail || "Потрібен вхід."), { auth: true });
       if (res.ok) { if (waiting) setState("idle"); return await res.json(); }
-    } catch (e) { /* still waking up */ }
+    } catch (e) {
+      if (e.auth) throw e; // the login is not valid: no use waiting
+    }
     if (!waiting) {
       waiting = true;
       el.dot.className = "dot think";
@@ -96,7 +105,11 @@ async function wakeBackend() {
   return null;
 }
 
+let inited = false;
+
 async function init() {
+  if (inited) return;
+  inited = true;
   setState("idle");
   if (!SpeechRec) showProblem("Цей браузер не вміє розпізнавати мову. Відкрийте сторінку в Chrome, Edge або Safari.");
   try {
@@ -119,9 +132,62 @@ async function init() {
     el.talk.disabled = !ok;
     if (!ok) el.provider.innerHTML = "<option>Немає ключів</option>";
   } catch (e) {
+    inited = false; // the next login starts it again
+    if (e.auth) { logout(e.message); return; }
     showProblem("Бекенд недоступний: " + BACKEND);
   }
 }
+
+// ---------------------------------------------------------------- the login
+
+function showLogin(message) {
+  el.app.hidden = true;
+  el.login.hidden = false;
+  el.loginError.hidden = !message;
+  el.loginError.textContent = message || "";
+}
+
+function showApp() {
+  el.login.hidden = true;
+  el.app.hidden = false;
+}
+
+async function doLogin() {
+  const password = el.loginPass.value;
+  if (!password) return;
+  el.loginBtn.disabled = true;
+  try {
+    const res = await fetch(BACKEND + "/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showLogin(data.detail || "Не вдалося увійти (" + res.status + ")."); return; }
+    token = data.token;
+    save("token", token);
+    el.loginPass.value = "";
+    showApp();
+    init();
+  } catch (e) {
+    showLogin("Сервер недоступний: " + BACKEND);
+  } finally {
+    el.loginBtn.disabled = false;
+  }
+}
+
+// Out: the token is forgotten, a running call is ended, and the password is asked for again.
+function logout(message) {
+  token = "";
+  save("token", "");
+  inited = false;
+  if (live) stop("");
+  closeDialog(el.settingsDialog);
+  lockedAbout();
+  showLogin(message || "");
+}
+
+el.loginBtn.onclick = doLogin;
+el.loginPass.onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
+el.logout.onclick = () => logout("");
 
 function showProblem(text) { el.problem.textContent = text; el.problem.hidden = !text; }
 
@@ -164,7 +230,7 @@ function stopPreview() {
 function togglePreview() {
   if (preview) { stopPreview(); return; }
   if (live || !el.voice.value) return;
-  const query = new URLSearchParams({ provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2) });
+  const query = new URLSearchParams({ provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), t: token });
   // The server makes the sample once per voice (the first listen takes a moment) and the browser keeps it.
   const audio = new Audio(BACKEND + "/api/preview?" + query);
   preview = audio;
@@ -623,7 +689,7 @@ function onMessage(ev) {
       botBubble = null;
       break;
     }
-    case "error": showProblem(m.message); bubble("system", m.message); resetVoiceApply(); break;
+    case "error": if (m.auth) { logout(m.message); break; } showProblem(m.message); bubble("system", m.message); resetVoiceApply(); break;
   }
 }
 
@@ -651,7 +717,7 @@ async function start() {
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked,
+      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked, token,
       engine: pcmTap ? "realtime" : "browser" });
     live = true;
     paused = false;
@@ -806,7 +872,7 @@ function newConversation() {
 function openConversation(id) {
   const conv = convs.find((c) => c.id === id);
   if (!conv) return;
-  closeDialog(el.historyDialog);
+  closeDialog(el.settingsDialog);
   current = conv;
   viewing = null;
   persistConvs();
@@ -963,12 +1029,25 @@ function closeDialog(dialog) {
   if (typeof dialog.close === "function") dialog.close(); else dialog.removeAttribute("open");
 }
 
-el.openHistory.onclick = () => { viewing = null; renderHistory(); openDialog(el.historyDialog); };
-el.openUsage.onclick = () => { renderUsageTable(); openDialog(el.usageDialog); };
-for (const dialog of [el.historyDialog, el.usageDialog]) {
-  // a click on the dimmed backdrop (the dialog element itself, not its content) closes it, like Esc does
-  dialog.addEventListener("click", (e) => { if (e.target === dialog) closeDialog(dialog); });
+let settingsTab = "history";
+
+// The gear at the top right: history, what the agent knows, the costs. Each tab is filled when it is opened.
+function showTab(name) {
+  settingsTab = name;
+  for (const key of Object.keys(el.panels)) {
+    el.panels[key].hidden = key !== name;
+    el.tabs[key].classList.toggle("active", key === name);
+    el.tabs[key].setAttribute("aria-selected", key === name ? "true" : "false");
+  }
+  if (name === "history") { viewing = null; renderHistory(); }
+  else if (name === "usage") renderUsageTable();
+  else loadAbout();
 }
+
+el.openSettings.onclick = () => { showTab(settingsTab); openDialog(el.settingsDialog); };
+for (const key of Object.keys(el.tabs)) el.tabs[key].onclick = () => showTab(key);
+// a click on the dimmed backdrop (the dialog element itself, not its content) closes it, like Esc does
+el.settingsDialog.addEventListener("click", (e) => { if (e.target === el.settingsDialog) closeDialog(el.settingsDialog); });
 document.querySelectorAll("[data-close]").forEach((b) => {
   b.onclick = () => closeDialog(document.getElementById(b.dataset.close));
 });
@@ -1170,11 +1249,9 @@ setInterval(() => {
 function bargeSens() { return Number(load("bargeSens") ?? 2); }
 
 // What the agent knows about itself and the place (who it is, where, what event). It lives in the server's database, the
-// same for every call and device, and is read and written only with the password (the header X-Access-Password).
-// The page keeps the password in this browser until «Заблокувати» (or until the server refuses it).
+// same for every call and device; the page reads it when the «Знання» tab opens and writes it with «Зберегти».
 const ABOUT_MAX = 4000;
-let aboutPass = load("aboutPass") || "";
-let aboutSaved = ""; // what the server holds: to tell unsaved edits
+let aboutSaved = null; // what the server holds (null: not read yet): to tell unsaved edits
 
 function showAboutCount() { el.aboutCount.textContent = el.about.value.length + " / " + ABOUT_MAX; }
 
@@ -1187,42 +1264,37 @@ function aboutStatus(text, bad) {
 async function aboutCall(method, body) {
   const res = await fetch(BACKEND + "/api/knowledge", {
     method, body: body === undefined ? undefined : JSON.stringify(body),
-    headers: { "X-Access-Password": aboutPass, "Content-Type": "application/json" },
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.detail || "Помилка " + res.status), { status: res.status });
   return data;
 }
 
-function showAboutEditor(data) {
-  el.aboutLock.hidden = true;
-  el.aboutEditor.hidden = false;
-  el.about.value = aboutSaved = data.text || "";
-  el.aboutStorage.hidden = data.persistent !== false;
-  showAboutCount();
-  aboutStatus("");
+// A login that has lapsed or been refused ends the session; anything else is shown where the text is.
+function aboutFailed(prefix, e) {
+  if (e.status === 401 || e.status === 503) logout(e.message);
+  else aboutStatus(prefix + e.message, true);
 }
 
-function lockAbout(message) {
-  aboutPass = "";
-  save("aboutPass", "");
-  el.aboutEditor.hidden = true;
-  el.aboutLock.hidden = false;
-  el.about.value = aboutSaved = "";
-  el.aboutPass.value = "";
+function lockedAbout() {
+  el.about.value = "";
+  aboutSaved = null;
   el.aboutStorage.hidden = true;
-  aboutStatus(message || "", !!message);
+  aboutStatus("");
+  showAboutCount();
 }
 
-async function unlockAbout() {
-  aboutPass = el.aboutPass.value || aboutPass;
+async function loadAbout() {
+  aboutStatus("Завантажую…");
   try {
-    showAboutEditor(await aboutCall("GET"));
-    save("aboutPass", aboutPass);
-    el.aboutPass.value = "";
+    const data = await aboutCall("GET");
+    el.about.value = aboutSaved = data.text || "";
+    el.aboutStorage.hidden = data.persistent !== false;
+    showAboutCount();
+    aboutStatus("");
   } catch (e) {
-    if (e.status === 401 || e.status === 403) lockAbout(e.message);
-    else aboutStatus("Не вдалося відкрити знання: " + e.message, true);
+    aboutFailed("Не вдалося завантажити знання: ", e);
   }
 }
 
@@ -1235,8 +1307,7 @@ async function saveAbout() {
     el.aboutStorage.hidden = data.persistent !== false;
     aboutStatus("Збережено: агент знає це в кожній наступній відповіді (" + (data.storage === "postgres" ? "база Postgres" : "файл SQLite") + ").");
   } catch (e) {
-    if (e.status === 401 || e.status === 403) lockAbout(e.message);
-    else aboutStatus("Не збережено: " + e.message, true);
+    aboutFailed("Не збережено: ", e);
   } finally {
     el.aboutSave.disabled = false;
   }
@@ -1244,13 +1315,9 @@ async function saveAbout() {
 
 el.about.oninput = () => {
   showAboutCount();
-  if (el.about.value !== aboutSaved) aboutStatus("Є незбережені зміни: натисніть «Зберегти».");
+  if (aboutSaved !== null && el.about.value !== aboutSaved) aboutStatus("Є незбережені зміни: натисніть «Зберегти».");
 };
-el.aboutUnlock.onclick = unlockAbout;
-el.aboutPass.onkeydown = (e) => { if (e.key === "Enter") unlockAbout(); };
 el.aboutSave.onclick = saveAbout;
-el.aboutHide.onclick = () => lockAbout("");
-if (aboutPass) unlockAbout(); // a password kept from before: the knowledge opens by itself
 
 el.greet.checked = load("greet") !== "0";
 el.greet.onchange = () => save("greet", el.greet.checked ? "1" : "0");
@@ -1502,4 +1569,5 @@ showConversation(current); // after a reload the conversation is still here
 renderHistory();
 refreshDevices();
 renderUsageTable();
-init();
+// Logged in before (a token is kept): straight in. Otherwise the password is asked for.
+if (token) { showApp(); init(); } else showLogin();

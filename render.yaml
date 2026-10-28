@@ -26,7 +26,7 @@ services:
         value: Europe/Kyiv
       - key: DATABASE_URL # Neon Postgres (postgresql://…?sslmode=require), as in Eva; empty = a SQLite file every deploy wipes
         sync: false
-      - key: ACCESS_PASSWORD # for the agent's knowledge; unset or empty = the knowledge is closed to everyone
+      - key: ACCESS_PASSWORD # the site's password; unset or empty = nobody can log in
         sync: false
       - key: FRONTEND_ORIGINS # e.g. https://diff-voice-agent.vercel.app (comma-separated)
         sync: false

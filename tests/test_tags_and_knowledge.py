@@ -213,3 +213,11 @@ def test_with_knowledge_the_base_does_not_call_her_an_assistant_or_an_ai_and_the
 def test_the_prompt_forbids_filler():
     p = prompt()
     assert "БЕЗ ЗАЙВОГО" in p and "перед пошуком чи інструментом не кажи нічого" in p and "двадцяти п'яти слів" in p
+
+
+def test_she_talks_like_an_acquaintance_not_a_service():
+    for key in ("eva", "taras", "kishka"):
+        p = build_system_prompt(search=False, persona=Persona(character=key), now="x")
+        assert "а не як сервіс" in p and "не чекаєш завдань" in p, key
+    taras = build_system_prompt(search=False, persona=Persona(character="taras"), now="x")
+    assert "never sit and wait to be given tasks" in taras and "small favour" not in taras

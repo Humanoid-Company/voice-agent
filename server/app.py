@@ -141,6 +141,7 @@ async def ws_call(ws: WebSocket) -> None:
             history=first.get("history"),
             tune=first.get("tune") is not False,
             greet=first.get("greet") is not False,
+            about=first.get("about") or "",
         )
         try:
             await session.start()

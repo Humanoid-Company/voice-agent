@@ -276,8 +276,9 @@ def emotion_text(key: str) -> str:
     return EMOTIONS.get(key, EMOTIONS[DEFAULT_EMOTION])[1]
 
 
-# The emotion level moves the same knob: calm a little steadier, emotional a little livelier.
-EMOTION_TONE = {"calm": 0.9, "normal": 1.0, "emotional": 1.1}
+# The emotion level moves the same knob: calm a little steadier, emotional livelier (Respeecher has no emotion
+# control, only these sampling parameters; Soniox gets emotion tags in the text instead, see tags.py).
+EMOTION_TONE = {"calm": 0.9, "normal": 1.0, "emotional": 1.25}
 TONE_RANGE = (0.8, 1.35)  # the product is kept in this range: further out the synthesis may start to break
 
 

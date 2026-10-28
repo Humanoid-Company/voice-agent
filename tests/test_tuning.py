@@ -40,8 +40,8 @@ def test_the_delivery_starts_tuned_from_the_voices_own_temperature():
     async def go():
         s, out = tuned()
         await s.start()
-        assert s.tts.sampling == {"temperature": 0.88}  # 0.8 x 1.1 (the plain character, emotional)
-        assert last(out) == {"type": "tuning", "active": True, "reason": "", "base": 0.8, "factor": 1.1, "value": 0.88}
+        assert s.tts.sampling == {"temperature": 1.0}  # 0.8 x 1.25 (the plain character, emotional)
+        assert last(out) == {"type": "tuning", "active": True, "reason": "", "base": 0.8, "factor": 1.25, "value": 1.0}
 
     asyncio.run(go())
 
@@ -51,7 +51,7 @@ def test_a_character_and_an_emotion_move_the_temperature_and_never_the_voice():
         s, out = tuned()
         await s.start()
         voice, tts = s.voice, s.tts
-        for character, value in (("tolik", 0.792), ("kishka", 1.056), ("taras", 0.748), ("eva", 0.88)):
+        for character, value in (("tolik", 0.9), ("kishka", 1.08), ("taras", 0.85), ("eva", 1.0)):
             await s.on_client({"type": "style", "character": character})
             assert s.tts.sampling == {"temperature": value} and last(out)["value"] == value, character
         await s.on_client({"type": "style", "emotion": "calm"})
@@ -74,7 +74,7 @@ def test_the_switch_turns_the_tuning_off_and_back_on():
         await s.on_client({"type": "style", "character": "kishka"})  # off: the character does not move it
         assert s.tts.sampling == {}
         await s.on_client({"type": "style", "tune": True})
-        assert s.tts.sampling == {"temperature": 1.056} and last(out)["active"] is True
+        assert s.tts.sampling == {"temperature": 1.08} and last(out)["active"] is True
 
     asyncio.run(go())
 
@@ -84,9 +84,9 @@ def test_a_new_voice_is_tuned_from_its_own_base_and_one_without_a_base_is_left_a
         s, out = tuned()
         await s.start()
         await s.on_client({"type": "voice", "provider": "respeecher", "voice": "kseniia"})
-        assert s.tts.voice == "kseniia" and s.tts.sampling == {"temperature": 0.55}  # 0.5 x 1.1
+        assert s.tts.voice == "kseniia" and s.tts.sampling == {"temperature": 0.625}  # 0.5 x 1.25
         await s.on_client({"type": "voice", "provider": "respeecher", "voice": "olesia"})
-        assert s.tts.sampling == {"temperature": 0.88}
+        assert s.tts.sampling == {"temperature": 1.0}
         s._voices_for = None  # the provider listed no defaults
         await s._retune()
         assert s.tts.sampling == {} and last(out)["reason"] == "no_base" and last(out)["active"] is False

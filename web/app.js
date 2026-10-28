@@ -15,7 +15,7 @@ const el = {
   tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"), engine: $("engine"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
-  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"),
+  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"), about: $("about"), aboutCount: $("aboutCount"),
   usageTable: $("usageTable"), openHistory: $("openHistory"), openUsage: $("openUsage"),
   historyDialog: $("historyDialog"), usageDialog: $("usageDialog"),
 };
@@ -635,7 +635,7 @@ async function start() {
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked,
+      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked, about: el.about.value,
       engine: pcmTap ? "realtime" : "browser" });
     live = true;
     paused = false;
@@ -1152,6 +1152,20 @@ setInterval(() => {
 // ---------------------------------------------------------------- how easily the voice interrupts her
 
 function bargeSens() { return Number(load("bargeSens") ?? 2); }
+
+// What the agent knows about itself and the place (who it is, where, what event): kept here, sent when a call starts
+// and whenever it is edited, and in his prompt from the next answer on.
+const ABOUT_MAX = 4000;
+
+function showAboutCount() { el.aboutCount.textContent = el.about.value.length + " / " + ABOUT_MAX; }
+
+el.about.value = load("about") || "";
+showAboutCount();
+el.about.oninput = () => {
+  save("about", el.about.value);
+  showAboutCount();
+  send({ type: "about", text: el.about.value });
+};
 
 el.greet.checked = load("greet") !== "0";
 el.greet.onchange = () => save("greet", el.greet.checked ? "1" : "0");

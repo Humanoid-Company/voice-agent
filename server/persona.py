@@ -54,6 +54,14 @@ def find_language(query: str) -> str | None:
     return next((code for code, (_, _, names) in LANGUAGES.items() if any(n in q for n in names)), None)
 
 
+ABOUT_MAX_CHARS = 4000
+
+
+def sanitize_about(raw: object) -> str:
+    """The knowledge the owner wrote about the agent and the place: text only, bounded. It is data for the model."""
+    return raw.strip()[:ABOUT_MAX_CHARS] if isinstance(raw, str) else ""
+
+
 def sanitize_name(raw: str) -> str | None:
     name = re.sub(r"\s+", " ", (raw or "").strip())
     return name if _NAME_RE.match(name) else None

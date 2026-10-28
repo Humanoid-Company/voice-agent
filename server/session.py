@@ -38,10 +38,12 @@ from .persona import (
     find_language,
     find_voice,
     now_text,
+    sanitize_about,
     sanitize_name,
 )
 from .prompt import build_system_prompt, greeting_note
 from .sentences import SentenceSplitter
+from .tags import TagStripper, strip_tags
 from .usage import Usage
 
 log = logging.getLogger(__name__)
@@ -139,9 +141,11 @@ class VoiceSession:
         tune: bool = True,
         ears: Any = None,
         greet: bool = False,
+        about: str = "",
     ) -> None:
         self.llm = ears or llm
         self._greet = greet  # speak first when the call starts
+        self.about = sanitize_about(about)  # what the owner wrote about the agent and the place: in every answer's prompt
         # Realtime ears: the model hears the microphone itself and tells when the user stopped (see realtime.py);
         # the browser's recognizer then only supplies interim words for barge-in and the on-screen text.
         self.ears = ears
@@ -265,6 +269,8 @@ class VoiceSession:
                 await self.set_character(str(msg["character"]))
             if msg.get("emotion") in EMOTIONS:
                 await self.set_emotion(str(msg["emotion"]))
+        elif kind == "about":  # the knowledge box on the page: from the next answer on
+            self.about = sanitize_about(msg.get("text"))
         elif kind == "history":  # the page opened another conversation, or started a new one
             await self.interrupt(reason="history")
             self.history = sanitize_history(msg.get("history"))
@@ -424,6 +430,8 @@ class VoiceSession:
                 now=now_text(self.cfg.timezone),
                 overheard=self._take_overheard(),
                 greeting=greeting_note(returning=bool(self.history)) if greeting else "",
+                about=self.about,
+                provider=self.provider,
             ),
             extra_tools=TOOLS,
             run_tool=self.run_tool,
@@ -432,18 +440,27 @@ class VoiceSession:
             on_audio=self._on_audio,
         )
 
+        stripper = TagStripper()
+
         async def produce() -> None:
+            # The voice gets the text as the model wrote it (a Soniox voice acts on [warm]-style tags); the page, the
+            # history and the echo check get it without the tags.
+            async def show(clean: str) -> None:
+                if clean:
+                    full.append(clean)
+                    self._recent = "".join(full)[-400:]
+                    await self._j({"type": "assistant_delta", "text": clean})
+
             try:
                 async for delta in self.llm.stream(self.history, ctx):
                     if delta == SEGMENT_END:  # a tool is about to run: say what we have now, not after it
                         for s in splitter.flush():
                             sentences.put_nowait(s)
                         delta = " "
-                    full.append(delta)
-                    self._recent = "".join(full)[-400:]
-                    await self._j({"type": "assistant_delta", "text": delta})
+                    await show(stripper.feed(delta))
                     for s in splitter.feed(delta):
                         sentences.put_nowait(s)
+                await show(stripper.flush())
                 for s in splitter.flush():
                     sentences.put_nowait(s)
             finally:
@@ -454,11 +471,16 @@ class VoiceSession:
             while (sentence := await sentences.get()) is not None:
                 await self._apply_pending()  # a new voice / language: between sentences, never inside one
                 await self._set_state("speaking")
-                self.usage.chars[self.provider] = self.usage.chars.get(self.provider, 0) + len(sentence)
-                async for chunk in self.tts.synthesize(sentence):
+                plain = strip_tags(sentence)
+                voiced = sentence if self.provider == "soniox" else plain  # only Soniox understands the tags
+                if not voiced:
+                    continue
+                self.usage.chars[self.provider] = self.usage.chars.get(self.provider, 0) + len(voiced)
+                async for chunk in self.tts.synthesize(voiced):
                     self._last_audio_at = time.monotonic()
                     await self._send_bytes(chunk)
-                self._spoken.append(sentence)
+                if plain:
+                    self._spoken.append(plain)
             await producer  # surfaces an LLM error
             await self._apply_pending()
             self._turn_done = True

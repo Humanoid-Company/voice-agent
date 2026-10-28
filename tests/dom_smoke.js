@@ -378,4 +378,10 @@ check("the second press clears the chat, the history entry and the agent's memor
   current === null && convs.length === before - 1 && E("clearChat").textContent === "Очистити"
   && sent.some(function (m) { return m.type === "history" && m.history.length === 0; })
   && E("log").innerHTML.indexOf("empty") >= 0);
+// the knowledge about the agent: kept in the browser, shown with a counter, sent to the server as it is edited
+sent.length = 0;
+E("about").value = "Ти робот Тарас на стенді в Києві.";
+E("about").oninput();
+check("the knowledge is saved in the browser and counted", store["about"] === "Ти робот Тарас на стенді в Києві." && E("aboutCount").textContent === "33 / 4000");
+check("and sent to the server for the next answer", sent.some(function (m) { return m.type === "about" && m.text === "Ти робот Тарас на стенді в Києві."; }));
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

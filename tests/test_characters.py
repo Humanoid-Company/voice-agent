@@ -216,3 +216,14 @@ def test_ready_tells_the_page_the_character_and_the_emotion():
         assert ready["character"] == "kishka" and ready["emotion"] == "normal"
 
     asyncio.run(go())
+
+
+def test_every_character_gets_eva_s_common_rules_but_only_the_plain_one_is_friendly():
+    common = ("Як іде розмова", "Допомагаєш мовою, а не текстом", "Не вгадуй її стать", "Результат роботи інструмента",
+              "Ти нічого не читаєш і не гортаєш сама")  # fmt: skip
+    for key in CHARACTERS:
+        p = build_system_prompt(search=True, persona=Persona(character=key), now="x")
+        for rule in common:
+            assert rule in p, (key, rule)
+        assert ("Твоя манера: тепла й приязна" in p) == (key == "eva"), key  # a named character brings its own manner
+        assert "дві-три події" in p  # news with substance, not a vague review

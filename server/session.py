@@ -165,6 +165,9 @@ class VoiceSession:
         self._cut: dict | None = None
         self._vad_speaking = False  # Realtime's VAD hears the user right now
         self._rt_waiting: dict[str, asyncio.Task] = {}  # phrases to answer, until their item exists (fallback timers)
+        # Phrases that ended while she was busy: item id -> the words (None until the transcript comes). Not lost: what is
+        # more than a «угу» is answered as soon as she is free (_answer_late).
+        self._late: dict[str, str | None] = {}
         self._barge_task: asyncio.Task | None = None
         self.tts = tts
         self.cfg = cfg or Config()
@@ -349,6 +352,7 @@ class VoiceSession:
     async def _open_ears(self) -> None:
         await self.ears.close()
         self._rt_users.clear()
+        self._late.clear()
         self._cancel_waiting()
         self.ears.on_speech_started = self._on_speech_started
         self.ears.on_speech_stopped = self._on_speech_stopped
@@ -400,10 +404,9 @@ class VoiceSession:
             await self._j({"type": "user_drop", "reason": "stop", "text": self._last_interim})
             return
         if self.state in ("thinking", "speaking") or (self._turn and not self._turn.done()):
-            # She was busy and this was short: not an interruption (that takes _VAD_BARGE_S of voice). Said so on the page,
-            # so that a phrase that got no answer does not look like a deaf agent.
-            text = self._last_interim if time.monotonic() - self._last_interim_at < 4.0 else ""
-            await self._j({"type": "user_drop", "reason": "busy", "text": text})
+            # She was busy and this was short: not an interruption (that takes _VAD_BARGE_S of voice). Not dropped: its
+            # words decide (_on_user_text), and what is more than a «угу» is answered when she is free.
+            self._late[item_id] = None
             return
         if item_id not in self._rt_waiting:  # answered when its item exists (_on_user_item), or after _ITEM_WAIT_S anyway
             self._rt_waiting[item_id] = asyncio.create_task(self._item_fallback(item_id))
@@ -427,7 +430,10 @@ class VoiceSession:
             return
         if task is not asyncio.current_task():
             task.cancel()
-        if self.paused or self.state in ("thinking", "speaking") or (self._turn and not self._turn.done()):
+        if self.paused:
+            return
+        if self.state in ("thinking", "speaking") or (self._turn and not self._turn.done()):
+            self._late[item_id] = None  # the item came while she was busy: kept, not lost
             return
         entry = {"role": "user", "content": ""}  # the transcript arrives later (_on_user_text)
         self._rt_users[item_id] = entry
@@ -436,6 +442,9 @@ class VoiceSession:
             self._turn = asyncio.create_task(self._run_turn())
 
     async def _on_user_text(self, item_id: str, text: str) -> None:
+        if item_id in self._late:
+            await self._judge_late(item_id, text)
+            return
         entry = self._rt_users.pop(item_id, None)
         if entry is None:  # a phrase we did not answer
             return
@@ -458,6 +467,30 @@ class VoiceSession:
             return
         entry["content"] = clean
         await self._j({"type": "user", "text": clean, "final": True})
+
+    async def _judge_late(self, item_id: str, text: str) -> None:
+        clean = self._without_echo(text) if text.strip() else ""
+        if not clean or classify_interjection(clean, assistant_recent=self._recent) in ("backchannel", "echo"):
+            self._late.pop(item_id, None)
+            await self._j({"type": "user_drop", "reason": "busy", "text": text})
+            return
+        self._late[item_id] = clean
+        await self._answer_late()
+
+    async def _answer_late(self) -> None:
+        """Answer the phrases said while she was busy, all in one turn, once she is free."""
+        if self.paused or self.state != "listening" or (self._turn and not self._turn.done()):
+            return  # called again when she is free (_set_state)
+        ready = [(i, t) for i, t in self._late.items() if t]
+        if not ready:
+            return
+        for i, _ in ready:
+            del self._late[i]
+        for _, t in ready:
+            await self._j({"type": "user", "text": t, "final": True})
+            self.history.append({"role": "user", "content": t})
+        async with self._lock:
+            self._turn = asyncio.create_task(self._run_turn())
 
     async def _on_ears_error(self, message: str) -> None:
         await self._j({"type": "error", "message": message})
@@ -611,6 +644,7 @@ class VoiceSession:
     async def interrupt(self, *, reason: str = "", text: str = "") -> None:
         """Cut the answer off. `reason` (stop / takeover: the user's voice, with their words in `text`; button;
         sound; pause; history) goes to the page, which keeps what the user tried in the conversation record."""
+        self._late.clear()  # the user is speaking over her: the phrase that follows is answered with all that was said
         async with self._lock:
             task, self._turn = self._turn, None
             if task and not task.done():
@@ -940,6 +974,15 @@ class VoiceSession:
         if state != self.state:
             self.state = state
             await self._j({"type": "state", "state": state})
+            if state == "listening" and any(self._late.values()):
+                asyncio.create_task(self._answer_late_soon())
+
+    async def _answer_late_soon(self) -> None:
+        for _ in range(20):  # the turn that just ended is finishing
+            if not (self._turn and not self._turn.done()):
+                break
+            await asyncio.sleep(0.05)
+        await self._answer_late()
 
     async def _j(self, msg: dict) -> None:
         with contextlib.suppress(Exception):  # the browser is gone; close() follows

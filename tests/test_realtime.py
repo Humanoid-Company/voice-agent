@@ -777,7 +777,7 @@ def test_an_empty_transcript_does_not_cancel_the_answer_the_model_heard_the_audi
     asyncio.run(go())
 
 
-def test_a_short_phrase_while_she_is_busy_is_reported_as_dropped_not_silently_lost(monkeypatch):
+def test_a_backchannel_while_she_is_busy_is_reported_as_dropped(monkeypatch):
     async def go():
         conn = FakeConn()
         s, out = vad_session(monkeypatch, conn, delay=5.0)  # no barge-in: the phrase is short
@@ -786,8 +786,37 @@ def test_a_short_phrase_while_she_is_busy_is_reported_as_dropped_not_silently_lo
         conn.push(type="input_audio_buffer.speech_started")
         conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
         await pump()
+        conn.push(type="conversation.item.input_audio_transcription.completed", item_id="u1", transcript="угу")
+        await pump()
         drops = [m for m in out if m["type"] == "user_drop"]
         assert drops and drops[-1]["reason"] == "busy" and "response.create" not in conn.kinds()
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_a_real_phrase_said_while_she_is_busy_is_answered_when_she_is_free(monkeypatch):
+    async def go():
+        conn = FakeConn()
+        s, out = vad_session(monkeypatch, conn, delay=5.0)
+        await s.start()
+        s.state = "speaking"
+        conn.push(type="input_audio_buffer.speech_started")
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        await pump()
+        conn.push(type="conversation.item.input_audio_transcription.completed", item_id="u1", transcript="А ще розкажи про погоду завтра")
+        await pump()
+        assert s._turn is None and "response.create" not in conn.kinds()  # still busy: kept, not lost
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Завтра сонячно.")
+        await s._set_state("listening")
+        for _ in range(30):
+            await asyncio.sleep(0.05)
+            if s._turn:
+                break
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert " ".join(s.tts.said) == "Завтра сонячно."
+        assert {"type": "user", "text": "А ще розкажи про погоду завтра", "final": True} in out
+        assert s.history[0] == {"role": "user", "content": "А ще розкажи про погоду завтра"}
         await s.close()
 
     asyncio.run(go())

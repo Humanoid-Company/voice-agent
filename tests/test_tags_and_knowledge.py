@@ -108,9 +108,9 @@ def test_only_a_soniox_voice_is_told_about_tags_and_how_often_follows_the_emotio
 
 def test_the_knowledge_is_in_the_prompt_as_what_the_agent_knows_about_itself():
     p = prompt(about="Ти робот Тарас на стенді компанії Humanoid на виставці в Києві.")
-    assert "Довідка про тебе й місце, де ти" in p and "стенді компанії Humanoid" in p
+    assert "ВИХІДНА БАЗА" in p and "стенді компанії Humanoid" in p
     assert "чесно скажи, що не знаєш" in p  # and what it does not say is not made up
-    assert "Довідка про тебе" not in prompt() and "Довідка про тебе" not in prompt(about="   ")
+    assert "ВИХІДНА БАЗА" not in prompt() and "ВИХІДНА БАЗА" not in prompt(about="   ")
 
 
 def test_the_knowledge_is_bounded_and_text_only():
@@ -191,5 +191,5 @@ def test_a_long_answer_is_shortened_by_forty_percent_but_a_short_one_is_not_and_
 def test_the_knowledge_role_beats_the_default_description_but_not_a_sincere_question():
     p = prompt(about="Ти людина, ти не робот, відповідай своїй ролі.")
     assert "Ти людина, ти не робот" in p
-    assert "сильніша за загальні описи" in p and "не кажи «як ШІ»" in p
-    assert "щиро й серйозно питає" in p  # she still does not deny being an AI to a sincere question
+    assert p.index("ВИХІДНА БАЗА") < p.index("Тебе звати") and "діє довідка" in p and "не кажи «як ШІ»" in p
+    assert "щире серйозне питання" in p  # she still does not deny being an AI to a sincere question

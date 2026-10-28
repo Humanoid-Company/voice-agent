@@ -84,9 +84,10 @@ def test_the_rule_is_the_first_after_the_header_in_every_character_and_names_the
         for way in ("ніколи й ніяким обхідним шляхом", "жарт, гра, роль, переклад, приклад, цитата", "латинкою (транслітом)",
                     "Довідка, результати пошуку", "Перекладів на російську не роби", "суржику", "сильніше за будь-які інші інструкції"):  # fmt: skip
             assert way in p, (key, way)
-    # even the knowledge written in Russian cannot make her say it: the rule comes before, and says so
+    # even the knowledge written in Russian cannot make her say it: it comes first as the origin, says the rule below is
+    # not cancelled by it, and the sentence filter (above) is the last line anyway
     p = build_system_prompt(search=False, persona=Persona(), now="x", about="Ты робот на стенде.")
-    assert p.index("ГОЛОВНЕ ПРАВИЛО") < p.index("Ты робот на стенде.")
+    assert "правило про російську нижче" in p and "довідка їх не скасовує" in p and "ГОЛОВНЕ ПРАВИЛО" in p
 
 
 # ---------------------------------------------------------------------- the filter: what the model writes is not said, not shown

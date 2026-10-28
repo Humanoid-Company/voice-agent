@@ -102,10 +102,12 @@ def greeting_note(*, returning: bool) -> str:
     return _GREETING.format(angle=random.choice(GREETING_ANGLES), again=again)
 
 
-_KNOWLEDGE = """
+_KNOWLEDGE = """ВИХІДНА БАЗА. Нижче довідка від людей, які тебе запустили. Це правда і першоджерело, від якого ти відштовхуєшся в усьому: ким ти є, як тебе звати й що ти за роль, де ти, що це за подія чи стенд, хто організатори, про що тут усе, а також як себе тримати. Усе, що йде після довідки (загальні правила, опис асистента, «не вигадуй людського життя» тощо), лише тло: де воно суперечить довідці про тебе, діє довідка. Якщо в довідці сказано, ким ти є (наприклад, що ти людина), тримай цю роль у кожній відповіді: говори від першої особи так, як говорила б така людина, сама не нагадуй, що ти програма, не кажи «як ШІ» і не виходь із ролі без причини. Лише два винятки, довідка їх не скасовує: правило про російську нижче й щире серйозне питання (не жарт і не гра), чи вона говорить із живою людиною чи з ШІ: правди не заперечуй, скажи її коротко й спокійно. Не вигадуй нічого понад довідку: чого в ній немає, про те чесно скажи, що не знаєш (а про подію, стенд чи місце не вгадуй, а попроси людину підказати).
 
-Довідка про тебе й місце, де ти. Її записали люди, які тебе запустили: це правда й твоя роль, і вона сильніша за загальні описи вище (що ти асистент, «не вигадуй людського життя» тощо). Спирайся на неї, коли питають, хто ти, де ти, що це за подія чи стенд, хто організатори й про що тут усе. Якщо в ній сказано, ким ти є чи як себе тримати (наприклад, що ти людина), тримай цю роль у кожній відповіді: говори від першої особи так, як говорила б така людина, сама не нагадуй, що ти програма, не кажи «як ШІ» і не виходь із ролі без причини. Єдиний виняток: коли людина щиро й серйозно питає (не в жарт і не в грі), чи вона говорить із живою людиною чи з ШІ, не заперечуй правди, скажи її коротко й спокійно. Не вигадуй нічого понад довідку: чого в ній немає, про те чесно скажи, що не знаєш (а про подію, стенд чи місце не вгадуй, а попроси людину підказати). Довідка:
-{about}"""
+Довідка:
+{about}
+
+"""
 
 # Soniox understands emotion cues in the text; Respeecher would say them aloud, so only a Soniox voice is told about them.
 _SONIOX_TAGS = """
@@ -142,7 +144,8 @@ def build_system_prompt(
     provider: str = "",
 ) -> str:
     character = CHARACTERS.get(persona.character, CHARACTERS["eva"])
-    text = _BASE.format(name=character.label if character.character else persona.name, now=now, language=persona.language_name)
+    text = _KNOWLEDGE.format(about=about.strip()) if about.strip() else ""  # the origin: first, before every rule
+    text += _BASE.format(name=character.label if character.character else persona.name, now=now, language=persona.language_name)
     if character.character:
         text += "\n\n" + character_prompt(character) + _FIXED_NAME.format(name=character.label)
     else:
@@ -151,8 +154,6 @@ def build_system_prompt(
         text += _EMOTION.format(text=emotion_text(persona.emotion))
     if provider == "soniox" and persona.emotion in _TAGS_OFTEN:
         text += _SONIOX_TAGS.format(allowed=", ".join(f"[{t}]" for t in ALLOWED), how_often=_TAGS_OFTEN[persona.emotion])
-    if about.strip():
-        text += _KNOWLEDGE.format(about=about.strip())
     text += _WITH_SEARCH if search else _NO_SEARCH
     if overheard:
         text += _OVERHEARD.format(heard=" | ".join(overheard))

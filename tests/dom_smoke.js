@@ -119,6 +119,15 @@ onMessage({ data: JSON.stringify({ type: "error", message: "Не вдалося 
 check("a failed change brings the button back", E("voiceApply").disabled === false && E("voiceApply").textContent === "Застосувати голос" && E("voiceApply").hidden === false);
 E("voice").value = "Daniel"; E("voice").onchange();
 check("choosing the active voice again hides the button", E("voiceApply").hidden === true);
+logEvent("user", "привіт"); // a conversation exists
+check("a conversation is current", current !== null);
+sent.length = 0;
+E("voiceApply").onclick();
+check("applying the voice already speaking keeps the conversation", current !== null && !sent.some(function (m) { return m.type === "history"; }));
+E("voice").value = "Maya"; E("voice").onchange();
+E("voiceApply").onclick();
+check("applying another voice starts a new conversation (the old one stays in the history)", current === null && convs.length >= 1 && sent.some(function (m) { return m.type === "history" && m.history.length === 0; }) && sent.some(function (m) { return m.type === "voice" && m.voice === "Maya"; }));
+E("voice").value = "Daniel"; E("voice").onchange();
 
 // the server ends the call
 onMessage({ data: JSON.stringify({ type: "end" }) });

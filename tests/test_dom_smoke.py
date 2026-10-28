@@ -47,3 +47,10 @@ def test_the_lines_that_change_ten_times_a_second_have_a_fixed_height_so_a_phone
             expr = re.sub(r'" \+ n\([^)]*\) \+ "', "99.9", line.split("text = ", 1)[1])
             texts.append(expr[expr.index('"') + 1 : expr.rindex('"')])
     assert len(texts) >= 8 and max(len(t) for t in texts) <= 105, max(texts, key=len)
+
+
+def test_a_new_deploy_starts_a_new_conversation():
+    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    server = (ROOT / "server" / "app.py").read_text(encoding="utf-8")
+    assert '"version": VERSION' in server and "RENDER_GIT_COMMIT" in server
+    assert 'load("deployVersion") !== cfg.version' in app and "newConversation()" in app[app.index("deployVersion") :][:200]

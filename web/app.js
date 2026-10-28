@@ -109,6 +109,10 @@ async function init() {
       if (document.visibilityState === "visible") fetch(BACKEND + "/healthz").catch(() => {});
     }, 10 * 60 * 1000);
     providers = cfg.providers;
+    if (cfg.version && load("deployVersion") !== cfg.version) { // a new deploy: a new conversation, not the old one
+      save("deployVersion", cfg.version);
+      if (current) newConversation();
+    }
     if (cfg.missing.length) showProblem("На сервері не задано: " + cfg.missing.join(", "));
     el.provider.innerHTML = "";
     for (const p of providers) el.provider.add(new Option(p.label, p.id));
@@ -1087,6 +1091,8 @@ el.provider.onchange = () => {
 };
 el.voice.onchange = () => { stopPreview(); save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); };
 function applyVoice() {
+  const changed = live && (el.provider.value !== activeVoice.provider || el.voice.value !== activeVoice.voice);
+  if (changed && current) newConversation(); // another voice: a new conversation (the old one stays in the history)
   el.voiceApply.hidden = false;
   el.voiceApply.disabled = true;
   el.voiceApply.textContent = "Застосовую…";

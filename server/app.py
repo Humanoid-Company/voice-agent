@@ -39,6 +39,9 @@ about = AboutKnowledge(about_store)  # what every call knows about the agent and
 # Render's proxy, so it counts as inbound traffic). It cannot wake a sleeping server: the first visitor does
 # that (the page waits for it). 0 = off. Render sets RENDER_EXTERNAL_URL itself.
 KEEP_AWAKE_S = float(os.getenv("KEEP_AWAKE_MINUTES", "10")) * 60
+
+# The deploy this server runs (Render sets the commit): the page starts a new conversation when it changes.
+VERSION = (os.getenv("RENDER_GIT_COMMIT") or os.getenv("VERCEL_GIT_COMMIT_SHA") or "")[:12]  # empty elsewhere: nothing is reset
 SELF_URL = (os.getenv("PUBLIC_BACKEND_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 
 
@@ -85,6 +88,7 @@ async def api_config() -> dict:
     ]
     missing = [] if cfg.openai_api_key else ["OPENAI_API_KEY"]
     return {
+        "version": VERSION,  # changes with every deploy: the page then starts a new conversation
         "providers": providers,
         "characters": characters_payload(providers),
         "missing": missing + ([] if providers else ["RESPEECHER_API_KEY or SONIOX_API_KEY"]),

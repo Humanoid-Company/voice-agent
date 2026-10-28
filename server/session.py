@@ -27,7 +27,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .characters import CHARACTERS, EMOTIONS, find_character, tone_factor
+from .characters import CHARACTERS, EMOTIONS, tone_factor
 from .config import Config
 from .heard import heard_part
 from .interrupt_intent import classify_interjection, strip_echo
@@ -109,13 +109,6 @@ TOOLS = [
         "Change the language the assistant speaks and listens in, only when the user asks for it («говори англійською»).",
         {"language": {"type": "string", "description": "Language name or code: " + ", ".join(LANGUAGES)}},
         ["language"],
-    ),
-    _fn(
-        "change_character",
-        "Switch to another character when the user asks for it by name («поклич Анатолія», «хочу поговорити з Лесею», «давай Тараса», «поклич Кішку», «хочу поговорити з котом», "
-        "«давай знову як Єва»). Characters: " + ", ".join(f"{c.label}" for c in CHARACTERS.values()) + ".",
-        {"character": {"type": "string", "description": "The character's name as the user said it"}},
-        ["character"],
     ),
     _fn(
         "change_emotion",
@@ -658,11 +651,6 @@ class VoiceSession:
     async def run_tool(self, name: str, args: dict) -> str:
         if name == "change_voice":
             return await self._tool_change_voice(args)
-        if name == "change_character":
-            key = find_character(str(args.get("character") or ""))
-            if not key:
-                return "Такого персонажа немає. Є: " + ", ".join(c.label for c in CHARACTERS.values()) + "."
-            return await self.set_character(key)
         if name == "change_emotion":
             level = str(args.get("level") or "")
             if level not in EMOTIONS:

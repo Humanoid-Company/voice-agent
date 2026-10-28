@@ -1123,10 +1123,10 @@ function setRecLang(code) {
 
 // ---------------------------------------------------------------- the character and the emotion
 
-// The character is a manner (its own name, how it talks); the emotion is how alive the delivery is. The voice is a
-// separate choice, any voice, and never changes by itself: not with the character, not when the character is asked
-// for by voice («поклич Тараса»). What follows the character and the emotion is only how the same voice is delivered
-// (the «Підлаштовувати звучання» switch), and the voice list marks the voices that suit the character.
+// The character is a manner (its own name, how it talks); the emotion is how alive the delivery is. The character is
+// picked only in this menu (not by voice). Picking it puts the voice it has for the SELECTED provider in the selectors
+// (the provider stays); a voice picked by hand stays until the next character. The emotion and the character also set how
+// the voice is delivered (the «Підлаштовувати звучання» switch), and the voice list marks the voices that suit the character.
 function parseCharacter(value) {
   // An old stored choice can be «tolik|respeecher|voice» (when the menu had a voice per entry) or «kit».
   const id = String(value || "eva").split("|")[0];

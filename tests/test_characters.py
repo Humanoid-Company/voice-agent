@@ -7,7 +7,6 @@ from server.characters import (
     EMOTIONS,
     character_prompt,
     characters_payload,
-    find_character,
     normalize_character_id,
 )
 from server.persona import Persona
@@ -22,13 +21,23 @@ RESPEECHER_UK = {
 }  # fmt: skip
 
 
-def test_a_character_is_found_by_the_way_people_call_it():
-    assert find_character("поклич Толіка") == "tolik" and find_character("Толік") == "tolik"
-    assert find_character("хочу поговорити з кішкою") == "kishka" and find_character("Кішка") == "kishka"
-    assert find_character("поклич кота") == "kishka" and find_character("котик") == "kishka"  # the old name still works
-    assert find_character("давай знову як Єва") == "eva" and find_character("tolik") == "tolik"
-    assert find_character("Гарольд") is None and find_character("") is None
+def test_a_character_cannot_be_asked_for_by_voice_any_more():
+    """«Забери зміну персонажа по голосу»: the character is changed only in the menu on the page."""
+    import server.characters as chars
+    from server.session import TOOLS
 
+    assert "change_character" not in [t["function"]["name"] for t in TOOLS]  # not offered to the model
+    assert not hasattr(chars, "find_character") and not hasattr(CHARACTERS["tolik"], "aliases")  # nothing to be called by
+    p = build_system_prompt(search=True, persona=Persona(), now="x")
+    assert "change_character" not in p
+    assert "лише людина, в меню «Характер» на сторінці" in p and "не вдавай, що змінила" in p  # and the model says so
+    assert "Невідомий інструмент" in asyncio.run(_run_tool("change_character", {"character": "tolik"}))
+
+
+async def _run_tool(name, args):
+    s, _out = make()
+    await s.start()
+    return await s.run_tool(name, args)
 
 def test_the_cat_is_a_she_cat_now_and_an_old_stored_choice_follows():
     assert "kit" not in CHARACTERS and CHARACTERS["kishka"].label == "Кішка" and CHARACTERS["kishka"].feminine
@@ -135,15 +144,15 @@ def test_a_character_brings_its_voice_on_the_provider_that_speaks_and_the_plain_
         _voices(monkeypatch)
         s, out = make()  # Respeecher, olesia
         await s.start()
-        result = await s.run_tool("change_character", {"character": "Толіка"})
+        result = await s.set_character("tolik")
         assert "Тепер ти Толік" in result and s.persona.character == "tolik" and s.persona.name == "Толік"
         assert "голос" in result and (s.provider, s.voice) == ("respeecher", "dmytro-conversation")
         p = of(out, "persona")[-1]
         assert p["character"] == "tolik" and p["name"] == "Толік" and "хуліган" in p["description"]
         assert of(out, "voice")[-1]["voice"] == "dmytro-conversation"
-        await s.run_tool("change_character", {"character": "кішку"})
+        await s.set_character("kishka")
         assert s.persona.name == "Кішка" and (s.provider, s.voice) == ("respeecher", "roksolana-conversation")
-        await s.run_tool("change_character", {"character": "Єва"})  # the plain character has no voice: it is left as it is
+        await s.set_character("eva")  # the plain character has no voice: it is left as it is
         assert s.persona.character == "eva" and (s.provider, s.voice) == ("respeecher", "roksolana-conversation")
 
     asyncio.run(go())
@@ -154,8 +163,8 @@ def test_on_soniox_the_same_characters_bring_soniox_voices_and_the_provider_neve
         _voices(monkeypatch)
         s, out = make(provider="soniox", voice="Daniel")
         await s.start()
-        for who, voice in (("Тараса", "Taras"), ("Лесю", "Yana"), ("Степана", "Bohdan"), ("Марію", "Nina"), ("Кішку", "Emma"), ("Толіка", "Andrei")):
-            await s.run_tool("change_character", {"character": who})
+        for who, voice in (("taras", "Taras"), ("lesya", "Yana"), ("stepan", "Bohdan"), ("mariia", "Nina"), ("kishka", "Emma"), ("tolik", "Andrei")):
+            await s.set_character(who)
             assert (s.provider, s.voice) == ("soniox", voice), who  # one character, the voice follows the provider
 
     asyncio.run(go())
@@ -186,13 +195,13 @@ def test_a_voice_the_provider_does_not_have_or_that_already_speaks_is_left_alone
         s, out = make(provider="soniox", voice="Daniel")
         await s.start()
         made = len(out["made"])
-        result = await s.run_tool("change_character", {"character": "Толіка"})
+        result = await s.set_character("tolik")
         assert s.persona.character == "tolik" and s.voice == "Daniel" and "голос" not in result and len(out["made"]) == made
-        await s.run_tool("change_character", {"character": "Тараса"})
+        await s.set_character("taras")
         assert s.voice == "Taras"
         made = len(out["made"])
-        result = await s.run_tool("change_character", {"character": "Лесю"})  # Yana
-        again = await s.run_tool("change_character", {"character": "Лесю"})  # Yana already speaks: nothing to switch
+        result = await s.set_character("lesya")  # Yana
+        again = await s.set_character("lesya")  # Yana already speaks: nothing to switch
         assert s.voice == "Yana" and "голос" in result and "голос" not in again and len(out["made"]) == made + 1
 
     asyncio.run(go())
@@ -204,9 +213,9 @@ def test_back_to_the_plain_character_restores_its_name_and_still_keeps_the_voice
         old_tts = s.tts
         await s.start()
         await s.run_tool("set_assistant_name", {"name": "Лесі"})
-        await s.run_tool("change_character", {"character": "tolik"})
+        await s.set_character("tolik")
         assert s.persona.name == "Толік"
-        result = await s.run_tool("change_character", {"character": "Єва"})
+        result = await s.set_character("eva")
         assert "знову просто" in result and s.persona.name == "Лесі" and s.persona.character == "eva"
         assert s.tts is old_tts and not out["made"]
 
@@ -216,7 +225,7 @@ def test_a_character_name_cannot_be_changed_by_voice():
     async def go():
         s, out = make()
         await s.start()
-        await s.run_tool("change_character", {"character": "kishka"})
+        await s.set_character("kishka")
         result = await s.run_tool("set_assistant_name", {"name": "Барсик"})
         assert "не можна змінити" in result and s.persona.name == "Кішка"
 
@@ -227,26 +236,24 @@ def test_a_ukrainian_only_character_keeps_the_language_and_pulls_it_back():
     async def go():
         s, out = make(provider="soniox", voice="Daniel", language="en")
         await s.start()
-        result = await s.run_tool("change_character", {"character": "tolik"})
+        result = await s.set_character("tolik")
         assert "українську" in result and s.persona.language == "uk"
         assert of(out, "language")[-1]["code"] == "uk"
         refusal = await s.run_tool("change_language", {"language": "англійською"})
         assert "говорить лише українською" in refusal and s.persona.language == "uk"
-        await s.run_tool("change_character", {"character": "Єва"})
+        await s.set_character("eva")
         assert "Мову змінено" in await s.run_tool("change_language", {"language": "en"})
 
     asyncio.run(go())
 
 
-def test_unknown_character_and_the_same_one_are_handled():
+def test_the_same_character_again_changes_nothing():
     async def go():
         s, out = make()
         await s.start()
-        assert "немає" in await s.run_tool("change_character", {"character": "Дарт Вейдер"})
-        assert "Ти вже Єва" in await s.run_tool("change_character", {"character": "eva"})
+        assert "Ти вже Єва" in await s.set_character("eva")
 
     asyncio.run(go())
-
 
 def test_emotion_by_voice_changes_the_next_prompt():
     async def go():
@@ -343,3 +350,10 @@ def test_a_character_tells_its_voice_per_provider_to_the_page():
     one_missing = [{"id": "respeecher", "label": "R", "voices": [{"id": "yevhen-audiobook", "label": "x"}]}]
     assert {c["id"]: c for c in characters_payload(one_missing)}["tolik"]["voice_for"] == {"respeecher": "yevhen-audiobook"}  # the first that is there
     assert {c["id"]: c for c in characters_payload([])}["taras"]["voice_for"] == {}
+
+
+def test_the_seven_characters_and_their_names():
+    assert list(CHARACTERS) == ["eva", "tolik", "kishka", "taras", "lesya", "mariia", "stepan"]
+    assert [c.label for c in CHARACTERS.values()] == ["Єва", "Толік", "Кішка", "Тарас", "Леся", "Марія", "Степан"]
+    assert normalize_character_id("tolik") == "tolik" and normalize_character_id("kit") == "kishka"  # an old stored choice follows
+    assert normalize_character_id("milana") == "eva" and normalize_character_id("<script>") == "eva"

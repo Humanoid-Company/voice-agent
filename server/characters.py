@@ -3,13 +3,12 @@
 Ported from the Eva project (voice/options.py, voice/blunt_prompt.py): the same characters with the same limits.
 A character is a manner and a role, never instead of the answer. The voice itself (the TTS voice) is picked
 separately, but a character is one character whichever provider speaks: it has its own voice for each provider (the
-first it lists for that provider), and picking the character, from the menu or by voice, switches on the voice it has for the
+first it lists for that provider), and picking the character in the menu switches on the voice it has for the
 provider that is selected now (the provider itself never changes). No two characters share a voice on any provider; a character has a few voices per provider that fit it,
 marked in the voice list; picking another one by hand is the user's own change and stays until the next character.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 DEFAULT_CHARACTER = "eva"
@@ -37,7 +36,6 @@ class Character:
     # the way of doing it, not the words: what makes a character more than a manner of speech.
     situations: tuple[tuple[str, str], ...] = ()
     ukrainian_only: bool = False  # the jokes and curses are Ukrainian: the language cannot be changed under it
-    aliases: tuple[str, ...] = ()  # how the user may name it aloud («поклич Толіка»)
     # Voices that suit it, per provider (the first of a provider is the one that goes on with the character): marked ★ in the voice list
     voices: tuple[CharacterVoice, ...] = ()
     # How lively the synthesizer's delivery is for this character, as a factor of the voice's own `temperature`
@@ -163,7 +161,6 @@ CHARACTERS: dict[str, Character] = {
             DEFAULT_CHARACTER, "Єва",
             "Звичайна приязна помічниця: жива, природна, без маски.",
             True, "",
-            aliases=("єва", "єво", "ева", "eva", "звичайна", "звичайний", "нейтральна"),
         ),
         Character(
             "tolik", "Толік",
@@ -182,7 +179,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("respeecher", "ihoreo-conversation", "Ігорео"),
                 CharacterVoice("respeecher", "yevhen-audiobook", "Євген"),
             ),
-            aliases=("толік", "толіка", "толіку", "толіком", "толікові", "толі", "толя", "толю", "толик", "tolik", "хуліган", "хулігана", "хуліганом"),
         ),
         Character(
             "kishka", "Кішка",
@@ -201,7 +197,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("respeecher", "roksolana-conversation", "Роксолана"),
                 CharacterVoice("respeecher", "olesia-conversation", "Олеся"),
             ),
-            aliases=("кішка", "кішку", "кішко", "кішки", "кішці", "кішкою", "кіт", "кота", "коте", "коту", "котом", "котові", "коті", "котик", "котика", "котику", "котиком", "котяра", "котяру", "котярою", "собака", "собаку", "собаки", "собаці", "собакою", "робособака", "робособаку", "kishka", "kit", "cat"),
         ),
         Character(
             "taras", "Тарас",
@@ -264,7 +259,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("respeecher", "oleksandr-radio", "Олександр (радіо)"),
                 CharacterVoice("respeecher", "oleksandr-commercial", "Олександр (реклама)"),
             ),
-            aliases=("тарас", "тараса", "тарасе", "тарасу", "тарасом", "тарасику", "taras", "лавелас", "лавеласа", "альфа", "альфу"),
         ),
         Character(
             "lesya", "Леся",
@@ -289,7 +283,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("respeecher", "kseniia-conversation", "Ксенія"),
                 CharacterVoice("respeecher", "olesia-announcement", "Олеся (оголошення)"),
             ),
-            aliases=("леся", "лесю", "лесі", "лесею", "леся українка", "lesya"),
         ),
         Character(
             "mariia", "Марія",
@@ -313,7 +306,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("respeecher", "mariia-audiobook", "Марія (аудіокнига)"),
                 CharacterVoice("respeecher", "olesia-media", "Олеся (медіа)"),
             ),
-            aliases=("марія", "марію", "марії", "марією", "марійка", "марійку", "марійко", "mariia", "maria"),
         ),
         Character(
             "stepan", "Степан",
@@ -337,7 +329,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("respeecher", "ihoreo-media", "Ігорео (медіа)"),
                 CharacterVoice("respeecher", "yevhen-commercial", "Євген (реклама)"),
             ),
-            aliases=("степан", "степана", "степану", "степаном", "степане", "стьопа", "stepan"),
         ),
     )
 }
@@ -370,22 +361,6 @@ def character_prompt(c: Character) -> str:
         lines = "\n".join(f"- {s}" for s in c.samples)
         text += f"\nHow you sound (tone reference only — never repeat these lines verbatim):\n{lines}"
     return text
-
-
-def find_character(query: str) -> str | None:
-    q = re.sub(r"\s+", " ", (query or "").strip().lower())
-    if not q:
-        return None
-    if q in CHARACTERS:
-        return q
-    words = set(re.findall(r"[\w'’ʼ-]+", q))
-    for c in CHARACTERS.values():
-        if q == c.label.lower():
-            return c.id
-        # «поклич Толіка» / «хочу кішку»: a one-word alias is a whole word of the phrase, a longer one a part of it
-        if any((" " in a and a in q) or a in words for a in c.aliases):
-            return c.id
-    return None
 
 
 # The emotion level: how alive the delivery is. The synthesizers have no «emotion» knob that we know of, so the

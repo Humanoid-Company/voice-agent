@@ -112,6 +112,12 @@
           <select id="speakerSelect"><option value="">За замовчуванням</option></select>
         </div>
       </div>
+      <label for="engine">Слух</label>
+      <select id="engine">
+        <option value="realtime">Realtime: модель сама слухає звук</option>
+        <option value="browser">Розпізнавання браузера (Google, безплатно)</option>
+      </select>
+      <p class="hint">Realtime чує голос і інтонацію, а не лише текст, і сам визначає кінець вашої фрази; відповідь озвучує вибраний голос. Слухання платне (за кожну секунду звуку). Розпізнавання браузера безплатне, але гірше розуміє й частіше обриває фразу. Діє з наступної розмови.</p>
       <label for="bargeSens">Чутливість перебивання голосом</label>
       <select id="bargeSens">
         <option value="0">Низька: лише гучний голос</option>

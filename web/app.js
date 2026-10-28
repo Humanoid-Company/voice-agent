@@ -12,7 +12,7 @@ const el = {
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
   voiceApply: $("voiceApply"), character: $("character"), emotion: $("emotion"), characterInfo: $("characterInfo"),
-  tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"),
+  tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"), engine: $("engine"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
   historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
@@ -37,6 +37,8 @@ let playCtx = null;
 let playGain = null; // all assistant audio goes through it: barge-in ducks and mutes here
 let gate = null; // echo-aware noise gate (gate.js), optional
 let gateTrack = null; // the gate's output: the microphone, shut while she is audible
+let pcmTap = null; // pcm.js: the gated microphone as PCM16 24 kHz, for the Realtime engine
+let realtime = false; // this call's ears are Realtime (the server said so in "ready")
 let micStream = null;
 let curState = "idle";
 let micMuted = false; // the user turned the microphone off: nothing is heard until they turn it on
@@ -508,6 +510,22 @@ async function setupGate() {
   }
 }
 
+// The Realtime engine hears the same sound as the recognizer: the gate's output (the microphone itself without a gate).
+async function setupPcmTap() {
+  pcmTap = null;
+  if (el.engine.value !== "realtime" || !playCtx.audioWorklet) return;
+  await playCtx.audioWorklet.addModule("pcm.js");
+  const node = new AudioWorkletNode(playCtx, "pcm-tap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+  node.port.onmessage = (e) => {
+    if (realtime && !micMuted && !paused && ws && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+  };
+  (gate || (micSource = micSource || playCtx.createMediaStreamSource(micStream))).connect(node);
+  const mute = playCtx.createGain(); // a node nobody listens to is not run by some browsers: it goes nowhere audible
+  mute.gain.value = 0;
+  node.connect(mute).connect(playCtx.destination);
+  pcmTap = node;
+}
+
 // ---------------------------------------------------------------- socket
 
 function send(obj) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
@@ -519,6 +537,7 @@ function onMessage(ev) {
     case "ready":
       ttsRate = m.sample_rate;
       ready = true;
+      realtime = m.engine === "realtime";
       if (m.name) el.assistantName.textContent = m.name;
       if (m.character) showStyle(m.character, m.emotion);
       if (m.recognition) setRecLang(m.recognition);
@@ -572,13 +591,15 @@ async function start() {
     micStream = await getMic();
     refreshDevices(); // the names are known now
     await setupGate();
+    await setupPcmTap();
 
     ws = new WebSocket(WS_URL);
     ws.binaryType = "arraybuffer";
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked });
+      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked,
+      engine: pcmTap ? "realtime" : "browser" });
     live = true;
     paused = false;
     activeVoice = { provider: el.provider.value, voice: el.voice.value };
@@ -612,6 +633,8 @@ function stop(problem) {
   micSource = null;
   gate = null;
   gateTrack = null;
+  pcmTap = null;
+  realtime = false;
   playGain = null;
   playCtx?.close(); playCtx = null;
   userBubble = botBubble = null;
@@ -1064,6 +1087,9 @@ setInterval(() => {
 // ---------------------------------------------------------------- how easily the voice interrupts her
 
 function bargeSens() { return Number(load("bargeSens") ?? 2); }
+
+el.engine.value = load("engine") === "browser" ? "browser" : "realtime";
+el.engine.onchange = () => save("engine", el.engine.value);
 
 el.bargeSens.value = String(bargeSens());
 el.bargeSens.onchange = () => {

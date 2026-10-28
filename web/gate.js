@@ -1,8 +1,11 @@
 // Echo-aware noise gate, ported from the Eva web client.
 // Input 0: the microphone. Input 1: what the assistant is playing (measured only, never passed on).
-// Output: the microphone, 250 ms late, shut while the assistant is audible, so that the speech recognizer fed
+// Output 0: the microphone, 250 ms late, shut while the assistant is audible, so that the speech recognizer fed
 // with it never hears her. It opens only for the person at the microphone. It also tells the page when the
 // assistant is audible and when that person speaks.
+// Output 1: the same microphone for the Realtime model. It is shut only while she is audible (and ~0.2 s after) and
+// not opened by the person; otherwise it passes at full level. Output 0 is also turned down by 14 dB when she is
+// silent and for 0.3 s after her, which cut the first words of a quiet start or of an answer given at once.
 //
 // The assistant's echo in the mic is learned: how loud the mic is per unit of playback while only the
 // assistant talks. High on laptop speakers, near zero in headphones. The user's voice counts as «near» only
@@ -38,8 +41,10 @@ class EchoGate extends AudioWorkletProcessor {
     this.voice = 0;
     this.speaking = false; this.nearFrames = 0; this.nearQuietFor = 1;
     this.audible = false; this.outQuietFor = 1;
+    this.gain1 = 1; // output 1, see above
     // Starts as «loud speakers»; drops within a second or two when there is no echo (headset).
     this.echo = 0.5;
+    this.echoMax = 0.5; // what the person's own quiet attempts to talk over her must not push the estimate past
   }
 
   judge(level, outLevel) {
@@ -57,7 +62,10 @@ class EchoGate extends AudioWorkletProcessor {
     // Learn the echo while the gate is shut (the user isn't talking over the assistant).
     if (audible && !this.open && this.outEnv > 0.01) {
       const ratio = level / this.outEnv;
-      this.echo += (ratio - this.echo) * (ratio < this.echo ? 0.1 : 0.03);
+      // Slower up than down, and never above the «loud speakers» start: the user's own voice, below the bar, was read as
+      // echo, which raised the bar further, so that during a long answer the harder they tried the less they counted.
+      this.echo += (ratio - this.echo) * (ratio < this.echo ? 0.1 : 0.01);
+      this.echo = Math.min(this.echo, this.echoMax);
     }
     if (level > threshold) { this.loud += 1; this.quietFor = 0; }
     else { this.quietFor += 0.02; if (level < threshold * 0.6) this.loud = 0; }
@@ -97,6 +105,7 @@ class EchoGate extends AudioWorkletProcessor {
     const mic = inputs[0] && inputs[0][0];
     const remote = inputs[1] && inputs[1][0];
     const out = outputs[0] && outputs[0][0];
+    const out1 = outputs[1] && outputs[1][0];
     const n = (mic || remote || out || []).length;
     for (let i = 0; i < n; i++) {
       const x = mic ? mic[i] : 0;
@@ -114,6 +123,10 @@ class EchoGate extends AudioWorkletProcessor {
       const closed = this.audible ? 0 : 0.2;
       this.gain += ((this.open ? 1 : closed) - this.gain) * (this.open ? 0.004 : 0.0005);
       if (out) out[i] = delayed * this.gain;
+      if (out1) {
+        this.gain1 += ((this.outQuietFor < 0.2 && !this.open ? 0 : 1) - this.gain1) * 0.01; // ~2 ms at 48 kHz
+        out1[i] = delayed * this.gain1;
+      }
     }
     return true;
   }

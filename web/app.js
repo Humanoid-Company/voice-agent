@@ -528,7 +528,7 @@ async function setupGate() {
   try {
     await playCtx.audioWorklet.addModule("gate.js");
     const node = new AudioWorkletNode(playCtx, "echo-gate", {
-      numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1],
+      numberOfInputs: 2, numberOfOutputs: 2, outputChannelCount: [1, 1], // output 1: the microphone for Realtime
       processorOptions: { near: Number(params.get("near")) || 0.06, sens: bargeSens() }, // ?near=0.04 more sensitive, 0.09 less
     });
     node.port.onmessage = (e) => onGate(e.data);
@@ -555,7 +555,10 @@ async function setupPcmTap() {
   node.port.onmessage = (e) => {
     if (realtime && !micMuted && !paused && ws && ws.readyState === WebSocket.OPEN) ws.send(e.data);
   };
-  (gate || (micSource = micSource || playCtx.createMediaStreamSource(micStream))).connect(node);
+  // Realtime hears output 1 of the gate (shut only while she is audible), not the recognizer's output 0, which turns the
+  // microphone down by 14 dB and shuts it for 0.3 s after her: that cut the first words.
+  if (gate) gate.connect(node, 1, 0);
+  else (micSource = micSource || playCtx.createMediaStreamSource(micStream)).connect(node);
   const mute = playCtx.createGain(); // a node nobody listens to is not run by some browsers: it goes nowhere audible
   mute.gain.value = 0;
   node.connect(mute).connect(playCtx.destination);

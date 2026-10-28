@@ -594,3 +594,79 @@ def test_a_silent_model_ends_the_turn_with_an_error(monkeypatch):
         await llm.close()
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------------- Realtime's VAD as an interruption
+
+
+def vad_session(monkeypatch, conn, delay=0.05):
+    import server.session as sess
+
+    monkeypatch.setattr(sess, "_VAD_BARGE_S", delay)
+    return make_session(conn)
+
+
+def test_a_voice_that_goes_on_while_she_speaks_interrupts_her(monkeypatch):
+    async def go():
+        conn = FakeConn()
+        s, out = vad_session(monkeypatch, conn)
+        await s.start()
+        s.state, s._spoken, s._turn_done = "speaking", ["Перше речення."], False
+        conn.push(type="input_audio_buffer.speech_started")
+        await asyncio.sleep(0.15)  # the voice goes on: no speech_stopped
+        assert any(m["type"] == "clear" and m["reason"] == "sound" for m in out) and s.state == "listening"
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_a_short_sound_or_a_listeners_ugu_does_not(monkeypatch):
+    async def go():
+        conn = FakeConn()
+        s, out = vad_session(monkeypatch, conn)
+        await s.start()
+        s.state = "speaking"
+        conn.push(type="input_audio_buffer.speech_started")
+        await asyncio.sleep(0.01)
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")  # over before the timer: a cough
+        await asyncio.sleep(0.12)
+        assert not any(m["type"] == "clear" for m in out) and s.state == "speaking"
+        # «угу» heard by the browser's recognizer just before: not an interruption however long it sounded
+        await s.on_heard("угу", False)
+        conn.push(type="input_audio_buffer.speech_started")
+        await asyncio.sleep(0.15)
+        assert not any(m["type"] == "clear" for m in out)
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_going_on_while_she_thinks_cancels_the_answer_and_the_whole_phrase_is_answered(monkeypatch):
+    async def go():
+        conn = FakeConn()
+        s, out = vad_session(monkeypatch, conn)
+        await s.start()
+        created = []
+
+        def create(event):
+            created.append(event)
+            if len(created) == 1:
+                conn.push(type="response.created", response={"id": "r1"})  # thinking: no text yet
+            else:
+                answer_events(conn, "r2", "Відповідаю на все.")
+
+        conn.on_create = create
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u1")
+        await asyncio.sleep(0.02)
+        assert s.state == "thinking"
+        conn.push(type="input_audio_buffer.speech_started")  # the user adds to the phrase
+        await asyncio.sleep(0.15)
+        assert s._turn is None or s._turn.done() or s.state == "listening"
+        assert "response.cancel" in conn.kinds()
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u2")  # the phrase ends: one answer to all of it
+        await pump(60)
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert len(created) == 2 and " ".join(s.tts.said) == "Відповідаю на все."
+        await s.close()
+
+    asyncio.run(go())

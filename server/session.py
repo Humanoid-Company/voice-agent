@@ -48,6 +48,10 @@ from .usage import Usage
 
 log = logging.getLogger(__name__)
 
+# Realtime heard the user go on speaking this long while she was busy: that is an interruption, whatever the browser's
+# recognizer managed to hear (it is fed silence through a long answer and restarts, so it is often late or deaf then). Her
+# own echo does not count: the microphone Realtime gets is shut while she is audible, and only a louder voice opens it.
+_VAD_BARGE_S = 0.6
 _ECHO_TAIL_S = 3.0  # right after the assistant stopped, its tail may still come back through the mic
 _ECHO_STRIP_S = 8.0  # her last words may be glued to the user's reply for this long after she stopped
 _OVERHEARD_MAX = 20  # what is kept from a pause
@@ -152,6 +156,9 @@ class VoiceSession:
         self.realtime = ears is not None
         self._rt_users: dict[str, dict] = {}  # Realtime audio item id -> the history entry waiting for its transcript
         self._last_interim = ""
+        self._last_interim_at = 0.0
+        self._vad_speaking = False  # Realtime's VAD hears the user right now
+        self._barge_task: asyncio.Task | None = None
         self.tts = tts
         self.cfg = cfg or Config()
         self.provider, self.voice = provider, voice
@@ -228,6 +235,7 @@ class VoiceSession:
     async def close(self) -> None:
         if self._turn and not self._turn.done():
             self._turn.cancel()
+        self._cancel_barge()
         for task in list(self._bg):
             task.cancel()
         if self._prepared:
@@ -294,6 +302,7 @@ class VoiceSession:
             return
         if text:
             self._last_interim = text
+            self._last_interim_at = time.monotonic()
             await self._j({"type": "user", "text": text, "final": False})
             if self.state in ("thinking", "speaking"):
                 self._during_turn = True
@@ -332,6 +341,7 @@ class VoiceSession:
     async def _open_ears(self) -> None:
         await self.ears.close()
         self._rt_users.clear()
+        self.ears.on_speech_started = self._on_speech_started
         self.ears.on_speech_stopped = self._on_speech_stopped
         self.ears.on_user_text = self._on_user_text
         self.ears.on_error = self._on_ears_error
@@ -342,9 +352,36 @@ class VoiceSession:
         if self.ears and not self.paused:
             await self.ears.feed(pcm)
 
+    async def _on_speech_started(self) -> None:
+        """Realtime hears the user begin. While she is busy a voice that goes on is an interruption (a short sound,
+        «угу» or a cough, is over before the timer ends); the phrase is answered when it ends (_on_speech_stopped)."""
+        self._vad_speaking = True
+        if self.paused or self.state not in ("thinking", "speaking"):
+            return
+        self._cancel_barge()
+        self._barge_task = asyncio.create_task(self._barge_after(_VAD_BARGE_S))
+
+    def _cancel_barge(self) -> None:
+        if self._barge_task and not self._barge_task.done() and self._barge_task is not asyncio.current_task():
+            self._barge_task.cancel()
+        self._barge_task = None
+
+    async def _barge_after(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        if not self._vad_speaking or self.paused or self.state not in ("thinking", "speaking"):
+            return
+        text = self._last_interim if time.monotonic() - self._last_interim_at < 4.0 else ""
+        if text and classify_interjection(text, assistant_recent=self._recent) in ("backchannel", "echo"):
+            return  # a listener's «угу» or her own echo, however long it sounded
+        log.info("barge-in (Realtime heard the user go on): %r", text)
+        self._barge_task = None
+        await self.interrupt(reason="sound", text=text)
+
     async def _on_speech_stopped(self, item_id: str) -> None:
         """Realtime heard the user finish a phrase: answer it, unless she was busy (then the words the browser
         recognized decided whether it was an interruption) or the user said «стоп»."""
+        self._vad_speaking = False
+        self._cancel_barge()
         if self.paused:
             return
         skip = self._skip_reply

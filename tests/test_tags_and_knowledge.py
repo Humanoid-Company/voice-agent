@@ -208,3 +208,8 @@ def test_with_knowledge_the_base_does_not_call_her_an_assistant_or_an_ai_and_the
         assert "щире серйозне питання" in p, key  # the one exception stays
     plain = build_system_prompt(search=True, persona=Persona(), now="x")
     assert "Ти — голосовий асистент" in plain and "чесно скажи, що так" in plain and "Нагадування: довідка" not in plain
+
+
+def test_the_prompt_forbids_filler():
+    p = prompt()
+    assert "БЕЗ ЗАЙВОГО" in p and "перед пошуком чи інструментом не кажи нічого" in p and "двадцяти п'яти слів" in p

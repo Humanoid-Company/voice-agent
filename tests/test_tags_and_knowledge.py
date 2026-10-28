@@ -193,3 +193,8 @@ def test_the_knowledge_role_beats_the_default_description_but_not_a_sincere_ques
     assert "Ти людина, ти не робот" in p
     assert p.index("ВИХІДНА БАЗА") < p.index("Тебе звати") and "діє довідка" in p and "не кажи «як ШІ»" in p
     assert "щире серйозне питання" in p  # she still does not deny being an AI to a sincere question
+
+
+def test_the_prompt_tells_how_to_perform_verse_songs_and_prose():
+    p = prompt()
+    assert "це виступ, а не розмова" in p and "окремим реченням" in p and "не співаєш" in p

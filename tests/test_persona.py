@@ -12,7 +12,7 @@ VOICES = [
 
 def test_languages_by_code_and_by_the_words_people_say():
     assert find_language("en") == "en" and find_language("англійською") == "en" and find_language("Німецькою, будь ласка") == "de"
-    assert find_language("по-русски") == "ru" and find_language("klingon") is None and find_language("") is None
+    assert find_language("по-русски") is None and find_language("klingon") is None and find_language("") is None
     assert Persona(language="en").recognition == "en-US" and Persona().language_name == "українська"
 
 

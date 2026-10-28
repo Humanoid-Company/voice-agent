@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -43,8 +44,9 @@ from .persona import (
     sanitize_name,
 )
 from .prompt import build_system_prompt, greeting_note
+from .russian import asks_for_russian, is_russian, refusal
 from .sentences import SentenceSplitter
-from .tags import TagStripper, strip_tags
+from .tags import strip_tags
 from .usage import Usage
 
 log = logging.getLogger(__name__)
@@ -519,29 +521,43 @@ class VoiceSession:
             on_audio=self._on_audio,
         )
 
-        stripper = TagStripper()
+        kept_back: list[str] = []  # sentences the model wrote in Russian: never said, never shown
+        said: list[str] = []
 
         async def produce() -> None:
             # The voice gets the text as the model wrote it (a Soniox voice acts on [warm]-style tags); the page, the
-            # history and the echo check get it without the tags.
-            async def show(clean: str) -> None:
+            # history and the echo check get it without the tags. Sentence by sentence: a Russian sentence (server/russian.py)
+            # is neither said nor shown, whatever the model was told or asked.
+            async def release(sentence: str) -> None:
+                # The splitter glues short sentences together: each part is judged alone, so a Russian one takes only itself.
+                parts = [p for p in re.split(r"(?<=[.!?…])\s+", sentence) if p.strip()]
+                good = [p for p in parts if not is_russian(p)]
+                if len(good) < len(parts):
+                    log.warning("Russian was kept back: %r", sentence[:80])
+                    kept_back.extend(p for p in parts if is_russian(p))
+                if not good:
+                    return
+                sentence = " ".join(good)
+                said.append(sentence)
+                sentences.put_nowait(sentence)
+                clean = strip_tags(sentence)
                 if clean:
-                    full.append(clean)
+                    full.append(clean + " ")
                     self._recent = "".join(full)[-400:]
-                    await self._j({"type": "assistant_delta", "text": clean})
+                    await self._j({"type": "assistant_delta", "text": clean + " "})
 
             try:
                 async for delta in self.llm.stream(self.history, ctx):
                     if delta == SEGMENT_END:  # a tool is about to run: say what we have now, not after it
                         for s in splitter.flush():
-                            sentences.put_nowait(s)
-                        delta = " "
-                    await show(stripper.feed(delta))
+                            await release(s)
+                        continue
                     for s in splitter.feed(delta):
-                        sentences.put_nowait(s)
-                await show(stripper.flush())
+                        await release(s)
                 for s in splitter.flush():
-                    sentences.put_nowait(s)
+                    await release(s)
+                if kept_back and not said:  # all of it was Russian: say why there is nothing else
+                    await release(refusal(self.persona.language))
             finally:
                 sentences.put_nowait(None)
 
@@ -564,6 +580,8 @@ class VoiceSession:
                     self._spoken.append(plain)
                     self._turn_audio.append((plain, seconds))
             await producer  # surfaces an LLM error
+            if kept_back and self.ears:  # the model's own memory must not keep what was not said
+                await self.ears.replace_spoken(" ".join(said))
             await self._apply_pending()
             self._turn_done = True
             answer = "".join(full).strip()
@@ -692,6 +710,8 @@ class VoiceSession:
         return f"Тепер тебе звати {name}. Коротко підтвердь."
 
     async def _tool_change_language(self, args: dict) -> str:
+        if asks_for_russian(str(args.get("language") or "")):
+            return "Російською ти не говориш ніколи й за жодних умов. Відмов коротко й спокійно, українською, і запропонуй іншу мову."
         code = find_language(str(args.get("language") or ""))
         if not code:
             return "Такої мови немає. Доступні: " + ", ".join(v[0] for v in LANGUAGES.values()) + "."

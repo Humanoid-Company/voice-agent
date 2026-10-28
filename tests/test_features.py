@@ -46,7 +46,7 @@ VOICES = {
     ("respeecher", "uk"): [{"id": "olesia", "label": "Олеся (female)"}, {"id": "kseniia", "label": "Ксенія (female)"}],
     ("respeecher", "en"): [{"id": "samantha", "label": "Samantha (female)"}],
     ("soniox", "uk"): [{"id": "Daniel", "label": "Daniel (male)"}],
-    ("soniox", "ru"): [{"id": "Daniel", "label": "Daniel (male)"}],
+    ("soniox", "de"): [{"id": "Daniel", "label": "Daniel (male)"}],
     ("soniox", "en"): [{"id": "Daniel", "label": "Daniel (male)"}],
 }
 
@@ -234,12 +234,12 @@ def test_a_provider_that_cannot_speak_the_language_says_so():
     async def go():
         s, out = make()
         await s.start()
-        result = await s.run_tool("change_language", {"language": "російською"})
+        result = await s.run_tool("change_language", {"language": "німецькою"})
         assert "говорить лише" in result and s.persona.language == "uk" and not of(out, "language")
         s2, out2 = make(provider="soniox", voice="Daniel")
         await s2.start()
-        assert "Мову змінено" in await s2.run_tool("change_language", {"language": "ru"})
-        assert s2.persona.language == "ru"
+        assert "Мову змінено" in await s2.run_tool("change_language", {"language": "de"})
+        assert s2.persona.language == "de"
 
     asyncio.run(go())
 

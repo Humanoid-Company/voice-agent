@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 LANGUAGES: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "uk": ("українська", "uk-UA", ("ukrainian", "українськ", "украинск")),
     "en": ("англійська", "en-US", ("english", "англійськ", "английск")),
-    "ru": ("російська", "ru-RU", ("russian", "російськ", "русск", "по-русски")),
     "pl": ("польська", "pl-PL", ("polish", "польськ", "польск")),
     "de": ("німецька", "de-DE", ("german", "deutsch", "німецьк", "немецк")),
     "fr": ("французька", "fr-FR", ("french", "français", "французьк", "французск")),

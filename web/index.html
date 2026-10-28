@@ -103,9 +103,21 @@
 
     <section class="card">
       <h2>Знання агента</h2>
-      <p class="hint">Напишіть, хто він і що за робот, де він і що це за подія чи стенд, про що розповідати, хто організатори, що можна обіцяти, а що ні. Агент спиратиметься на це у відповідях і не вигадуватиме понад написане. Діє з наступної відповіді, зберігається в цьому браузері.</p>
-      <textarea id="about" rows="7" maxlength="4000" placeholder="Наприклад: Ти робот-помічник Тарас компанії Humanoid. Ми на виставці у Києві, стенд № 12: показуємо голосових агентів, які розмовляють українською. Якщо питають про ціни, скажи, що детальніше розповість менеджер на стенді."></textarea>
-      <p id="aboutCount" class="hint">0 / 4000</p>
+      <p class="hint">Тут пишуть, хто він і що за робот, де він і що це за подія чи стенд, про що розповідати, хто організатори, що можна обіцяти, а що ні. Агент спирається на це у відповідях і не вигадує понад написане. Знання зберігаються в базі на сервері й діють у кожній розмові на будь-якому пристрої, одразу після збереження. Побачити й змінити їх можна лише з паролем.</p>
+      <div id="aboutLock" class="row">
+        <input id="aboutPass" type="password" placeholder="Пароль" autocomplete="current-password" aria-label="Пароль до знань">
+        <button id="aboutUnlock" class="btn" type="button">Відкрити</button>
+      </div>
+      <div id="aboutEditor" hidden>
+        <textarea id="about" rows="7" maxlength="4000" placeholder="Наприклад: Ти робот-помічник Тарас компанії Humanoid. Ми на виставці у Києві, стенд № 12: показуємо голосових агентів, які розмовляють українською. Якщо питають про ціни, скажи, що детальніше розповість менеджер на стенді."></textarea>
+        <div class="row">
+          <button id="aboutSave" class="btn primary" type="button">Зберегти</button>
+          <button id="aboutHide" class="btn ghost" type="button" title="Забути пароль у цьому браузері й сховати знання">Заблокувати</button>
+          <span id="aboutCount" class="hint">0 / 4000</span>
+        </div>
+      </div>
+      <p id="aboutStatus" class="hint" hidden></p>
+      <p id="aboutStorage" class="hint err-text" hidden>База на сервері не підключена (немає DATABASE_URL): знання лежать у файлі, який наступний деплой на Render зітре. Підключіть Postgres на Neon, як в Eva.</p>
     </section>
 
     <section class="card">

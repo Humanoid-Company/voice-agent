@@ -118,7 +118,7 @@ def test_the_knowledge_is_bounded_and_text_only():
     assert len(sanitize_about("я" * 10_000)) == ABOUT_MAX_CHARS
 
 
-def test_the_page_can_change_the_knowledge_in_the_middle_of_a_call():
+def test_the_knowledge_is_read_from_its_source_for_every_answer():
     async def go():
         prompts = []
 
@@ -129,18 +129,52 @@ def test_the_page_can_change_the_knowledge_in_the_middle_of_a_call():
                 prompts.append(ctx.system_prompt)
                 yield "Добре."
 
+        class Source:
+            text = "Старе знання."
+
+            async def get(self):
+                return self.text
+
         async def nothing(_):
             pass
 
-        s = VoiceSession(llm=LLM(), tts=FakeTTS(), send_json=nothing, send_bytes=nothing, about="Старе знання.")
+        source = Source()
+        s = VoiceSession(llm=LLM(), tts=FakeTTS(), send_json=nothing, send_bytes=nothing, about_source=source)
         await s.start()
         await s.on_heard("привіт", True)
         await asyncio.gather(s._turn, return_exceptions=True)
         await s.on_client({"type": "played"})
-        await s.on_client({"type": "about", "text": "Нове знання."})
+        source.text = "Нове знання."  # saved on the page (or by another device) between two answers
         await s.on_heard("а тепер?", True)
         await asyncio.gather(s._turn, return_exceptions=True)
         assert "Старе знання." in prompts[0] and "Нове знання." in prompts[1] and "Старе знання." not in prompts[1]
+
+    asyncio.run(go())
+
+
+def test_a_knowledge_source_that_breaks_never_stops_an_answer():
+    async def go():
+        prompts = []
+
+        class LLM:
+            searchable = False
+
+            async def stream(self, history, ctx=None):
+                prompts.append(ctx.system_prompt)
+                yield "Добре."
+
+        class Broken:
+            async def get(self):
+                raise RuntimeError("db down")
+
+        async def nothing(_):
+            pass
+
+        s = VoiceSession(llm=LLM(), tts=FakeTTS(), send_json=nothing, send_bytes=nothing, about="Запасне.", about_source=Broken())
+        await s.start()
+        await s.on_heard("привіт", True)
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert len(prompts) == 1 and "Запасне." in prompts[0]
 
     asyncio.run(go())
 

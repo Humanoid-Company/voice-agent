@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 import os
@@ -11,15 +12,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .about_store import AboutKnowledge, AboutStore
 from .characters import CHARACTERS, DEFAULT_EMOTION, EMOTIONS, characters_payload, normalize_character_id
 from .config import Config
+from .db import StoreError
 from .llm import OpenAILLM
-from .persona import SUPPORTED, Persona
+from .persona import ABOUT_MAX_CHARS, SUPPORTED, Persona, sanitize_about
 from .preview import PreviewError, VoicePreviews
 from .realtime import RealtimeLLM
 from .session import VoiceSession
@@ -30,6 +33,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("app")
 
 cfg = Config()
+about_store = AboutStore(cfg.database_url, cfg.sqlite_path)
+about = AboutKnowledge(about_store)  # what every call knows about the agent and the place
 
 # Free Render sleeps after ~15 min without inbound requests. While running, ping our own public URL (through
 # Render's proxy, so it counts as inbound traffic). It cannot wake a sleeping server: the first visitor does
@@ -70,7 +75,7 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 
 @app.get("/healthz")
 async def healthz() -> dict:
-    return {"ok": True}
+    return {"ok": True, "knowledge": about_store.kind, "persistent": about_store.persistent}
 
 
 @app.get("/api/config")
@@ -88,6 +93,41 @@ async def api_config() -> dict:
 
 
 previews = VoicePreviews()
+
+
+async def _require_password(given: str | None) -> None:
+    """The knowledge is behind one shared password. A wrong one waits a moment, so guessing is slow."""
+    if not cfg.access_password:
+        raise HTTPException(status_code=403, detail="Зміна знань вимкнена: на сервері не задано ACCESS_PASSWORD.")
+    if not hmac.compare_digest((given or "").encode(), cfg.access_password.encode()):
+        log.warning("knowledge: wrong password")
+        await asyncio.sleep(0.7)
+        raise HTTPException(status_code=401, detail="Невірний пароль.")
+
+
+def _knowledge_payload(text: str) -> dict:
+    return {"text": text, "max": ABOUT_MAX_CHARS, "storage": about_store.kind, "persistent": about_store.persistent}
+
+
+@app.get("/api/knowledge")
+async def get_knowledge(x_access_password: str | None = Header(default=None)) -> dict:
+    await _require_password(x_access_password)
+    try:
+        text = await asyncio.to_thread(about_store.get)
+    except StoreError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return _knowledge_payload(text)
+
+
+@app.put("/api/knowledge")
+async def put_knowledge(body: dict, x_access_password: str | None = Header(default=None)) -> dict:
+    await _require_password(x_access_password)
+    text = sanitize_about(body.get("text"))
+    try:
+        await about.save(text)
+    except StoreError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return _knowledge_payload(text)
 
 
 @app.get("/api/preview")
@@ -141,7 +181,7 @@ async def ws_call(ws: WebSocket) -> None:
             history=first.get("history"),
             tune=first.get("tune") is not False,
             greet=first.get("greet") is not False,
-            about=first.get("about") or "",
+            about_source=about,
         )
         try:
             await session.start()

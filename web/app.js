@@ -15,7 +15,8 @@ const el = {
   tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"), engine: $("engine"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
-  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"), about: $("about"), aboutCount: $("aboutCount"),
+  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"), about: $("about"), aboutCount: $("aboutCount"), aboutPass: $("aboutPass"), aboutUnlock: $("aboutUnlock"), aboutLock: $("aboutLock"),
+  aboutEditor: $("aboutEditor"), aboutSave: $("aboutSave"), aboutHide: $("aboutHide"), aboutStatus: $("aboutStatus"), aboutStorage: $("aboutStorage"),
   usageTable: $("usageTable"), openHistory: $("openHistory"), openUsage: $("openUsage"),
   historyDialog: $("historyDialog"), usageDialog: $("usageDialog"),
 };
@@ -650,7 +651,7 @@ async function start() {
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked, about: el.about.value,
+      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked,
       engine: pcmTap ? "realtime" : "browser" });
     live = true;
     paused = false;
@@ -1168,19 +1169,88 @@ setInterval(() => {
 
 function bargeSens() { return Number(load("bargeSens") ?? 2); }
 
-// What the agent knows about itself and the place (who it is, where, what event): kept here, sent when a call starts
-// and whenever it is edited, and in his prompt from the next answer on.
+// What the agent knows about itself and the place (who it is, where, what event). It lives in the server's database, the
+// same for every call and device, and is read and written only with the password (the header X-Access-Password).
+// The page keeps the password in this browser until «Заблокувати» (or until the server refuses it).
 const ABOUT_MAX = 4000;
+let aboutPass = load("aboutPass") || "";
+let aboutSaved = ""; // what the server holds: to tell unsaved edits
 
 function showAboutCount() { el.aboutCount.textContent = el.about.value.length + " / " + ABOUT_MAX; }
 
-el.about.value = load("about") || "";
-showAboutCount();
-el.about.oninput = () => {
-  save("about", el.about.value);
+function aboutStatus(text, bad) {
+  el.aboutStatus.hidden = !text;
+  el.aboutStatus.textContent = text;
+  el.aboutStatus.classList.toggle("err-text", !!bad);
+}
+
+async function aboutCall(method, body) {
+  const res = await fetch(BACKEND + "/api/knowledge", {
+    method, body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { "X-Access-Password": aboutPass, "Content-Type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.detail || "Помилка " + res.status), { status: res.status });
+  return data;
+}
+
+function showAboutEditor(data) {
+  el.aboutLock.hidden = true;
+  el.aboutEditor.hidden = false;
+  el.about.value = aboutSaved = data.text || "";
+  el.aboutStorage.hidden = data.persistent !== false;
   showAboutCount();
-  send({ type: "about", text: el.about.value });
+  aboutStatus("");
+}
+
+function lockAbout(message) {
+  aboutPass = "";
+  save("aboutPass", "");
+  el.aboutEditor.hidden = true;
+  el.aboutLock.hidden = false;
+  el.about.value = aboutSaved = "";
+  el.aboutPass.value = "";
+  el.aboutStorage.hidden = true;
+  aboutStatus(message || "", !!message);
+}
+
+async function unlockAbout() {
+  aboutPass = el.aboutPass.value || aboutPass;
+  try {
+    showAboutEditor(await aboutCall("GET"));
+    save("aboutPass", aboutPass);
+    el.aboutPass.value = "";
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) lockAbout(e.message);
+    else aboutStatus("Не вдалося відкрити знання: " + e.message, true);
+  }
+}
+
+async function saveAbout() {
+  el.aboutSave.disabled = true;
+  aboutStatus("Зберігаю…");
+  try {
+    const data = await aboutCall("PUT", { text: el.about.value });
+    aboutSaved = data.text || "";
+    el.aboutStorage.hidden = data.persistent !== false;
+    aboutStatus("Збережено: агент знає це в кожній наступній відповіді (" + (data.storage === "postgres" ? "база Postgres" : "файл SQLite") + ").");
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) lockAbout(e.message);
+    else aboutStatus("Не збережено: " + e.message, true);
+  } finally {
+    el.aboutSave.disabled = false;
+  }
+}
+
+el.about.oninput = () => {
+  showAboutCount();
+  if (el.about.value !== aboutSaved) aboutStatus("Є незбережені зміни: натисніть «Зберегти».");
 };
+el.aboutUnlock.onclick = unlockAbout;
+el.aboutPass.onkeydown = (e) => { if (e.key === "Enter") unlockAbout(); };
+el.aboutSave.onclick = saveAbout;
+el.aboutHide.onclick = () => lockAbout("");
+if (aboutPass) unlockAbout(); // a password kept from before: the knowledge opens by itself
 
 el.greet.checked = load("greet") !== "0";
 el.greet.onchange = () => save("greet", el.greet.checked ? "1" : "0");

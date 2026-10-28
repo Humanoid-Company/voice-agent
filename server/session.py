@@ -147,10 +147,12 @@ class VoiceSession:
         ears: Any = None,
         greet: bool = False,
         about: str = "",
+        about_source: Any = None,
     ) -> None:
         self.llm = ears or llm
         self._greet = greet  # speak first when the call starts
         self.about = sanitize_about(about)  # what the owner wrote about the agent and the place: in every answer's prompt
+        self._about_source = about_source  # ...kept in the database for every call and device (about_store.py)
         # Realtime ears: the model hears the microphone itself and tells when the user stopped (see realtime.py);
         # the browser's recognizer then only supplies interim words for barge-in and the on-screen text.
         self.ears = ears
@@ -284,8 +286,6 @@ class VoiceSession:
                 await self.set_character(str(msg["character"]))
             if msg.get("emotion") in EMOTIONS:
                 await self.set_emotion(str(msg["emotion"]))
-        elif kind == "about":  # the knowledge box on the page: from the next answer on
-            self.about = sanitize_about(msg.get("text"))
         elif kind == "history":  # the page opened another conversation, or started a new one
             await self.interrupt(reason="history")
             self.history = sanitize_history(msg.get("history"))
@@ -474,7 +474,7 @@ class VoiceSession:
                 now=now_text(self.cfg.timezone),
                 overheard=self._take_overheard(),
                 greeting=greeting_note(returning=bool(self.history)) if greeting else "",
-                about=self.about,
+                about=await self._about(),
                 provider=self.provider,
             ),
             extra_tools=TOOLS,
@@ -581,6 +581,17 @@ class VoiceSession:
             self._awaiting_played = False
             await self._j({"type": "clear", "reason": reason, "text": text})
             await self._set_state("listening")
+
+    async def _about(self) -> str:
+        """The knowledge for this answer: the database's (renewed every half minute and on every save) or, without one, the
+        text the session was given."""
+        if self._about_source is None:
+            return self.about
+        try:
+            return await self._about_source.get()
+        except Exception:  # the knowledge must never stop an answer
+            log.exception("knowledge unavailable")
+            return self.about
 
     async def _trim_to_heard(self, seconds: object) -> None:
         """After a cut-off: her memory of the answer ends where the user stopped hearing it, so that «продовжуй» goes on

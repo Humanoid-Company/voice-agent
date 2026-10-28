@@ -378,12 +378,34 @@ check("the second press clears the chat, the history entry and the agent's memor
   current === null && convs.length === before - 1 && E("clearChat").textContent === "Очистити"
   && sent.some(function (m) { return m.type === "history" && m.history.length === 0; })
   && E("log").innerHTML.indexOf("empty") >= 0);
-// the knowledge about the agent: kept in the browser, shown with a counter, sent to the server as it is edited
-sent.length = 0;
+// the knowledge about the agent: in the server's database, behind a password
+var kbCalls = [], KB = { text: "Ти робот Тарас на стенді.", persistent: true, storage: "postgres" };
+fetch = function (url, opt) {
+  var pass = opt && opt.headers && opt.headers["X-Access-Password"];
+  kbCalls.push({ url: url, method: (opt && opt.method) || "GET", pass: pass, body: opt && opt.body });
+  if (pass !== "test-password") return Promise.resolve({ ok: false, status: 401, json: function () { return Promise.resolve({ detail: "Невірний пароль." }); } });
+  if (opt.method === "PUT") KB.text = JSON.parse(opt.body).text;
+  return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ text: KB.text, persistent: KB.persistent, storage: KB.storage }); } });
+};
+E("aboutPass").value = "wrong"; E("aboutUnlock").onclick(); drainMicrotasks();
+check("a wrong password opens nothing and says so", E("aboutEditor").hidden === true && E("aboutStatus").textContent === "Невірний пароль." && store["aboutPass"] === "");
+E("aboutPass").value = "test-password"; E("aboutUnlock").onclick(); drainMicrotasks();
+check("the right password opens the text from the server", E("aboutEditor").hidden === false && E("about").value === "Ти робот Тарас на стенді." && store["aboutPass"] === "test-password"
+  && kbCalls[kbCalls.length - 1].pass === "test-password" && kbCalls[kbCalls.length - 1].url === "https://x.test/api/knowledge");
 E("about").value = "Ти робот Тарас на стенді в Києві.";
 E("about").oninput();
-check("the knowledge is saved in the browser and counted", store["about"] === "Ти робот Тарас на стенді в Києві." && E("aboutCount").textContent === "33 / 4000");
-check("and sent to the server for the next answer", sent.some(function (m) { return m.type === "about" && m.text === "Ти робот Тарас на стенді в Києві."; }));
+check("edits are counted and flagged as unsaved, not sent yet", E("aboutCount").textContent === "33 / 4000" && E("aboutStatus").textContent.indexOf("незбережені") >= 0 && KB.text === "Ти робот Тарас на стенді.");
+E("aboutSave").onclick(); drainMicrotasks();
+check("«Зберегти» writes it to the server", KB.text === "Ти робот Тарас на стенді в Києві." && E("aboutStatus").textContent.indexOf("Збережено") >= 0 && E("aboutSave").disabled === false);
+KB.persistent = false; E("aboutSave").onclick(); drainMicrotasks();
+check("a database that a deploy wipes is flagged", E("aboutStorage").hidden === false);
+KB.persistent = true; E("aboutSave").onclick(); drainMicrotasks();
+check("and the flag goes when it is a real database", E("aboutStorage").hidden === true);
+E("aboutHide").onclick();
+check("«Заблокувати» forgets the password and hides the text", E("aboutEditor").hidden === true && E("about").value === "" && store["aboutPass"] === "");
+sent.length = 0;
+check("the text never travels in a call's messages", !sent.some(function (m) { return "about" in m; }));
+
 // a cut-off tells the server how much of the answer had really played
 live = true; ready = true; ws = { readyState: 1, send: function (m) { sent.push(JSON.parse(m)); }, close: function () {} };
 playCtx = { currentTime: 3.0 };

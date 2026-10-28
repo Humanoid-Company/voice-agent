@@ -357,3 +357,11 @@ def test_the_seven_characters_and_their_names():
     assert [c.label for c in CHARACTERS.values()] == ["Єва", "Толік", "Кішка", "Тарас", "Леся", "Марія", "Степан"]
     assert normalize_character_id("tolik") == "tolik" and normalize_character_id("kit") == "kishka"  # an old stored choice follows
     assert normalize_character_id("milana") == "eva" and normalize_character_id("<script>") == "eva"
+
+
+def test_taras_does_not_announce_he_is_an_ai_on_his_own():
+    from server.persona import Persona
+    from server.prompt import build_system_prompt
+
+    p = build_system_prompt(search=False, persona=Persona(character="taras"), now="x", about="Ти людина.")
+    assert "you are an AI" not in p

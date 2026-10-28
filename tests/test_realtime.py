@@ -6,7 +6,7 @@ import base64
 import json
 
 from server.config import Config
-from server.llm import TurnContext
+from server.llm import SEGMENT_END, TurnContext
 from server.realtime import RealtimeLLM, flat_tool
 from server.session import VoiceSession
 from server.usage import Usage
@@ -63,7 +63,7 @@ def answer_events(conn, rid, text, *, output=None, usage=None, item="item_a"):
 
 
 async def collect(llm, ctx=None):
-    return "".join([d async for d in llm.stream([], ctx or TurnContext(system_prompt="sys"))])
+    return "".join([d async for d in llm.stream([], ctx or TurnContext(system_prompt="sys"))]).replace(SEGMENT_END, "")
 
 
 def test_session_is_text_only_with_manual_turns():
@@ -421,6 +421,49 @@ def test_audio_is_not_sent_on_pause():
         await s.on_client({"type": "pause", "background": True})
         await s.on_audio(b"\x00\x01")
         assert conn.kinds().count("input_audio_buffer.append") == 1
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_the_line_before_a_search_is_spoken_while_the_search_runs():
+    """«Секунду.» used to wait in the splitter and sound after the result, glued to it."""
+
+    async def go():
+        spoken_first = asyncio.Event()
+        order = []
+
+        class SearchingLLM:
+            searchable = True
+
+            async def stream(self, history, ctx):
+                yield "Секунду."  # shorter than a sentence: the splitter would glue it to what follows
+                yield SEGMENT_END
+                order.append("search started")
+                await asyncio.wait_for(spoken_first.wait(), 2)  # the search can only end if she already spoke
+                order.append("search done")
+                yield "Ось що знайшла."
+
+        class WatchingTTS(FakeTTS):
+            async def synthesize(self, text):
+                order.append("said: " + text)
+                spoken_first.set()
+                async for chunk in super().synthesize(text):
+                    yield chunk
+
+        out = []
+
+        async def sj(m):
+            out.append(m)
+
+        async def sb(_b):
+            pass
+
+        s = VoiceSession(llm=SearchingLLM(), tts=WatchingTTS(), send_json=sj, send_bytes=sb)
+        await s.start()
+        await s.on_heard("що цікавого сталось", True)
+        await asyncio.wait_for(s._turn, 5)
+        assert order == ["search started", "said: Секунду.", "search done", "said: Ось що знайшла."], order
         await s.close()
 
     asyncio.run(go())

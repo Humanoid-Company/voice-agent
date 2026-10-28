@@ -30,7 +30,7 @@ from typing import Any
 from .characters import CHARACTERS, EMOTIONS, find_character, tone_factor
 from .config import Config
 from .interrupt_intent import classify_interjection, strip_echo
-from .llm import TurnContext
+from .llm import SEGMENT_END, TurnContext
 from .persona import (
     LANGUAGES,
     SUPPORTED,
@@ -429,6 +429,10 @@ class VoiceSession:
         async def produce() -> None:
             try:
                 async for delta in self.llm.stream(self.history, ctx):
+                    if delta == SEGMENT_END:  # a tool is about to run: say what we have now, not after it
+                        for s in splitter.flush():
+                            sentences.put_nowait(s)
+                        delta = " "
                     full.append(delta)
                     self._recent = "".join(full)[-400:]
                     await self._j({"type": "assistant_delta", "text": delta})

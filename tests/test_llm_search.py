@@ -3,7 +3,7 @@ import asyncio
 from types import SimpleNamespace as NS
 
 from server.config import Config
-from server.llm import MAX_SEARCHES_PER_TURN, OpenAILLM, TurnContext
+from server.llm import MAX_SEARCHES_PER_TURN, SEGMENT_END, OpenAILLM, TurnContext
 
 
 def text_chunk(text):
@@ -46,7 +46,21 @@ class FakeClient:
 
 async def collect(llm, ctx=None, history=None):
     ctx = ctx or TurnContext(system_prompt="sys")
-    return "".join([d async for d in llm.stream(history or [{"role": "user", "content": "курс долара?"}], ctx)])
+    deltas = [d async for d in llm.stream(history or [{"role": "user", "content": "курс долара?"}], ctx)]
+    return "".join(deltas).replace(SEGMENT_END, "")
+
+
+def test_what_was_said_before_a_tool_is_cut_off_from_what_comes_after():
+    async def search(query, days):
+        return "курс 41"
+
+    client = FakeClient([[text_chunk("Зараз гляну."), tool_chunk(0, "c1", "web_search", '{"query": "курс"}')], [text_chunk("Курс 41.")]])
+    llm = OpenAILLM(Config(openai_api_key="k"), client=client, search=search)
+
+    async def run():
+        return [d async for d in llm.stream([{"role": "user", "content": "курс?"}], TurnContext(system_prompt="s"))]
+
+    assert asyncio.run(run()) == ["Зараз гляну.", SEGMENT_END, "Курс 41."]
 
 
 def make(rounds, searches):

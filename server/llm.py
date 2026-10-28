@@ -18,6 +18,10 @@ MAX_SEARCHES_PER_TURN = 2
 MAX_TOOL_ROUNDS = 4  # model -> tools -> model ...: a model that keeps calling tools is cut off
 # Said aloud while the search runs, unless the model already said something before calling the tool.
 _CUES = ("Хвилинку, дивлюсь.", "Зараз подивлюсь.", "Секунду, шукаю.")
+# Yielded by `stream()` where the text so far must be spoken NOW: right before a tool runs. The splitter would
+# otherwise hold «Зараз гляну новини.» (no word after it, or shorter than a sentence) until the search is over,
+# and it would be said after the result, glued to it.
+SEGMENT_END = " "
 
 WEB_SEARCH_TOOL = {
     "type": "function",
@@ -116,6 +120,7 @@ class OpenAILLM:
             rounds += 1
             if not text.strip() and any(c["name"] == "web_search" for c in calls.values()):
                 yield random.choice(_CUES) + " "  # the answer's first words, spoken while we search
+            yield SEGMENT_END
             messages.append(
                 {
                     "role": "assistant",

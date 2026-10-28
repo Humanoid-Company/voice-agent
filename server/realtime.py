@@ -21,7 +21,7 @@ from openai import AsyncOpenAI
 
 from . import web_search as ws
 from .config import Config
-from .llm import _CUES, MAX_SEARCHES_PER_TURN, MAX_TOOL_ROUNDS, WEB_SEARCH_TOOL, SearchFn, TurnContext
+from .llm import _CUES, MAX_SEARCHES_PER_TURN, MAX_TOOL_ROUNDS, SEGMENT_END, WEB_SEARCH_TOOL, SearchFn, TurnContext
 
 log = logging.getLogger("realtime")
 
@@ -263,6 +263,7 @@ class RealtimeLLM:
                     return
                 if not text.strip() and any(c.get("name") == "web_search" for c in calls):
                     yield random.choice(_CUES) + " "
+                yield SEGMENT_END  # what was said before the tool is spoken while the tool runs
                 for call in calls:
                     if call.get("name") == "web_search":
                         searches += 1

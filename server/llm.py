@@ -3,6 +3,7 @@ end of call) through the turn context. The text deltas feed the sentence splitte
 from __future__ import annotations
 
 import json
+import logging
 import random
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -13,6 +14,8 @@ from openai import AsyncOpenAI
 from . import web_search as ws
 from .config import Config
 
+log = logging.getLogger(__name__)
+
 _MAX_HISTORY = 30
 MAX_SEARCHES_PER_TURN = 2
 MAX_TOOL_ROUNDS = 4  # model -> tools -> model ...: a model that keeps calling tools is cut off
@@ -21,16 +24,21 @@ _CUES = ("Хвилинку, дивлюсь.", "Зараз подивлюсь.", 
 # Yielded by `stream()` where the text so far must be spoken NOW: right before a tool runs. The splitter would
 # otherwise hold «Зараз гляну новини.» (no word after it, or shorter than a sentence) until the search is over,
 # and it would be said after the result, glued to it.
-SEGMENT_END = " "
+SEGMENT_END = "\u2029"
+# The answer to a search asked for after the limit (a model may ask several at once): not run, not billed.
+SEARCH_LIMIT_NOTE = "Ліміт пошуку на це питання вичерпано: відповідай з того, що вже знайдено або знаєш."
 
 WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "web_search",
         "description": (
-            "Search the public web for current or externally verifiable information: news, exchange rates, "
-            "weather, schedules, match scores, recent releases, prices, anything that may have changed. "
-            "Do not use for general knowledge, advice, translation or writing. "
+            "Search the public web for what changes or is too recent to know: news, exchange rates, weather, "
+            "schedules, match scores, recent releases, prices, what a company or a person is doing now, software "
+            "versions. Not for history, geography, science, famous people's lives, definitions, how things work, "
+            "advice, translation or writing: answer those yourself. The query names exactly what was asked about "
+            "(a person: the full name), in the language that finds it best. A question with two parts gets both "
+            "queries at once. Search again only if the results lack the answer itself, never for more detail. "
             "recency_days limits results to roughly the last N days (1 for «сьогодні»)."
         ),
         "parameters": {
@@ -38,13 +46,18 @@ WEB_SEARCH_TOOL = {
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
                 "recency_days": {"type": "integer", "description": "Only the last N days"},
+                "topic": {
+                    "type": "string",
+                    "enum": list(ws.TOPICS),
+                    "description": "news for news and current events (with dates); finance for prices and rates; else general",
+                },
             },
             "required": ["query"],
         },
     },
 }
 
-SearchFn = Callable[[str, int | None], Awaitable[str]]
+SearchFn = Callable[[str, int | None, str | None], Awaitable[str]]  # query, recency_days, topic
 
 
 @dataclass
@@ -72,9 +85,9 @@ class OpenAILLM:
         self.searchable = bool(search or cfg.web_search_api_key)
         self._timeout = cfg.web_search_timeout_s
 
-        async def default_search(query: str, recency_days: int | None) -> str:
+        async def default_search(query: str, recency_days: int | None, topic: str | None = None) -> str:
             return await ws.web_search(
-                query, api_key=cfg.web_search_api_key, recency_days=recency_days, timeout_s=self._timeout
+                query, api_key=cfg.web_search_api_key, recency_days=recency_days, topic=topic, timeout_s=self._timeout
             )
 
         self._search: SearchFn = search or default_search
@@ -132,22 +145,35 @@ class OpenAILLM:
                 }
             )
             for c in calls.values():
-                if c["name"] == "web_search":
-                    searches += 1
-                    if ctx.on_search:
-                        ctx.on_search()
-                messages.append({"role": "tool", "tool_call_id": c["id"], "content": await self._run_tool(c, ctx)})
+                if c["name"] == "web_search" and searches >= MAX_SEARCHES_PER_TURN:
+                    output = SEARCH_LIMIT_NOTE  # several searches asked for at once: only the first ones run
+                else:
+                    if c["name"] == "web_search":
+                        searches += 1
+                        if ctx.on_search:
+                            ctx.on_search()
+                    output = await run_tool_call(c["name"], c["args"], ctx, self._search)
+                messages.append({"role": "tool", "tool_call_id": c["id"], "content": output})
 
-    async def _run_tool(self, call: dict, ctx: TurnContext) -> str:
-        try:
-            args = json.loads(call["args"] or "{}")
-        except ValueError:
-            return "Некоректні аргументи інструмента."
-        if not isinstance(args, dict):
-            return "Некоректні аргументи інструмента."
-        if call["name"] == "web_search":
-            days = args.get("recency_days")
-            return await self._search(str(args.get("query") or ""), days if isinstance(days, int) else None)
+
+async def run_tool_call(name: str, raw_args: str, ctx: TurnContext, search: SearchFn) -> str:
+    """One tool call as text for the model. A tool that breaks is reported to the model, not raised: one broken
+    tool must not end the whole answer."""
+    try:
+        args = json.loads(raw_args or "{}")
+    except ValueError:
+        return "Некоректні аргументи інструмента."
+    if not isinstance(args, dict):
+        return "Некоректні аргументи інструмента."
+    try:
+        if name == "web_search":
+            days, topic = args.get("recency_days"), args.get("topic")
+            return await search(
+                str(args.get("query") or ""), days if isinstance(days, int) else None, topic if topic in ws.TOPICS else None
+            )
         if ctx.run_tool:
-            return await ctx.run_tool(call["name"], args)
-        return "Невідомий інструмент."
+            return await ctx.run_tool(name, args)
+    except Exception as e:
+        log.exception("tool %s failed", name)
+        return f"Інструмент не спрацював ({type(e).__name__}). Скажи про це коротко."
+    return "Невідомий інструмент."

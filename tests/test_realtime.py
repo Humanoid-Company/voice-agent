@@ -173,7 +173,7 @@ def test_web_search_says_a_cue_and_is_limited_per_turn():
         conn = FakeConn()
         searched = []
 
-        async def search(query, days):
+        async def search(query, days, topic=None):
             searched.append(query)
             return "результат"
 
@@ -465,5 +465,132 @@ def test_the_line_before_a_search_is_spoken_while_the_search_runs():
         await asyncio.wait_for(s._turn, 5)
         assert order == ["search started", "said: Секунду.", "search done", "said: Ось що знайшла."], order
         await s.close()
+
+    asyncio.run(go())
+
+
+def _call(i, name="web_search", args=None):
+    return {"type": "function_call", "name": name, "call_id": f"c{i}", "arguments": json.dumps(args or {"query": f"q{i}"})}
+
+
+def test_after_the_tool_rounds_are_used_up_the_model_must_answer_in_text():
+    async def go():
+        conn = FakeConn()
+        llm = make_llm(conn, search=lambda q, d, t=None: asyncio.sleep(0, "ok"))
+        await llm.open()
+        n = {"i": 0}
+
+        def create(event):
+            n["i"] += 1
+            if event.get("response", {}).get("tool_choice") == "none":
+                answer_events(conn, f"r{n['i']}", "Ось відповідь")
+            else:
+                answer_events(conn, f"r{n['i']}", "", output=[_call(n["i"], "noop", {})])
+
+        conn.on_create = create
+        assert await collect(llm) == "Ось відповідь "  # it used to end in silence
+        creates = [e for e in conn.sent if e["type"] == "response.create"]
+        assert len(creates) == 5 and "response" not in creates[0] and creates[-1]["response"] == {"tool_choice": "none"}
+        await llm.close()
+
+    asyncio.run(go())
+
+
+def test_a_search_over_the_limit_is_not_run_and_not_counted():
+    async def go():
+        conn = FakeConn()
+        searched, counted = [], []
+
+        async def search(query, days, topic=None):
+            searched.append(query)
+            return "результат"
+
+        llm = make_llm(conn, search=search)
+        await llm.open()
+        n = {"i": 0}
+
+        def create(_e):
+            n["i"] += 1
+            if n["i"] == 1:
+                answer_events(conn, "r1", "", output=[_call(1), _call(2), _call(3)])
+            else:
+                answer_events(conn, "r2", "Ось")
+
+        conn.on_create = create
+        await collect(llm, TurnContext(system_prompt="s", on_search=lambda: counted.append(1)))
+        assert searched == ["q1", "q2"] and len(counted) == 2
+        outs = {e["item"]["call_id"]: e["item"]["output"] for e in conn.sent if e["type"] == "conversation.item.create" and e["item"]["type"] == "function_call_output"}
+        assert "Ліміт пошуку" in outs["c3"] and outs["c1"] == "результат"
+        await llm.close()
+
+    asyncio.run(go())
+
+
+def test_a_tool_that_breaks_is_reported_not_raised():
+    async def go():
+        conn = FakeConn()
+        llm = make_llm(conn)
+        await llm.open()
+        n = {"i": 0}
+
+        async def boom(name, args):
+            raise ValueError("x")
+
+        def create(_e):
+            n["i"] += 1
+            answer_events(conn, f"r{n['i']}", "" if n["i"] == 1 else "Не вийшло", output=[_call(1, "change_voice", {})] if n["i"] == 1 else [])
+
+        conn.on_create = create
+        assert await collect(llm, TurnContext(system_prompt="s", run_tool=boom)) == "Не вийшло "
+        out = [e["item"]["output"] for e in conn.sent if e["type"] == "conversation.item.create" and e["item"]["type"] == "function_call_output"]
+        assert "не спрацював (ValueError)" in out[0]
+        await llm.close()
+
+    asyncio.run(go())
+
+
+def test_cut_off_while_a_tool_runs_leaves_no_call_without_an_answer():
+    async def go():
+        conn = FakeConn()
+        started = asyncio.Event()
+
+        async def slow(query, days, topic=None):
+            started.set()
+            await asyncio.sleep(60)
+
+        llm = make_llm(conn, search=slow)
+        await llm.open()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "", output=[_call(1)])
+
+        async def run():
+            async for _ in llm.stream([], TurnContext(system_prompt="s")):
+                pass
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        outs = [e["item"] for e in conn.sent if e["type"] == "conversation.item.create" and e["item"]["type"] == "function_call_output"]
+        assert [o["call_id"] for o in outs] == ["c1"] and "Скасовано" in outs[0]["output"]
+        await llm.close()
+
+    asyncio.run(go())
+
+
+def test_a_silent_model_ends_the_turn_with_an_error(monkeypatch):
+    async def go():
+        import server.realtime as rt
+
+        monkeypatch.setattr(rt, "_RESPONSE_TIMEOUT_S", 0.05)
+        conn = FakeConn()  # never answers
+        llm = make_llm(conn)
+        await llm.open()
+        try:
+            await collect(llm)
+        except RuntimeError as e:
+            assert "не відповів" in str(e)
+        else:
+            raise AssertionError("no error")
+        await llm.close()
 
     asyncio.run(go())

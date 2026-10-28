@@ -226,4 +226,4 @@ def test_every_character_gets_eva_s_common_rules_but_only_the_plain_one_is_frien
         for rule in common:
             assert rule in p, (key, rule)
         assert ("Твоя манера: тепла й приязна" in p) == (key == "eva"), key  # a named character brings its own manner
-        assert "дві-три події" in p  # news with substance, not a vague review
+        assert "дві-три найсвіжіші події" in p  # news with substance, not a vague review

@@ -51,7 +51,7 @@ async def collect(llm, ctx=None, history=None):
 
 
 def test_what_was_said_before_a_tool_is_cut_off_from_what_comes_after():
-    async def search(query, days):
+    async def search(query, days, topic=None):
         return "курс 41"
 
     client = FakeClient([[text_chunk("Зараз гляну."), tool_chunk(0, "c1", "web_search", '{"query": "курс"}')], [text_chunk("Курс 41.")]])
@@ -64,7 +64,7 @@ def test_what_was_said_before_a_tool_is_cut_off_from_what_comes_after():
 
 
 def make(rounds, searches):
-    async def fake_search(query, days):
+    async def fake_search(query, days, topic=None):
         searches.append((query, days))
         return "- НБУ (bank.gov.ua): 41,5 грн"
 
@@ -141,3 +141,39 @@ def test_usage_is_reported_and_a_runaway_tool_loop_is_cut_off():
     out = asyncio.run(collect(OpenAILLM(Config(openai_api_key="k"), client=client), ctx))
     assert out == "Все." and seen == [(10, 2)] * 5
     assert "tools" in client.calls[3] and "tools" not in client.calls[4]  # after 4 rounds: no tools, it has to answer
+
+
+def test_searches_asked_for_at_once_beyond_the_limit_are_refused_not_run():
+    searches = []
+    three = [tool_chunk(i, f"c{i}", "web_search", f'{{"query": "q{i}"}}') for i in range(3)]
+    llm, client = make([three, [text_chunk("Ось.")]], searches)
+    used = []
+    ctx = TurnContext(system_prompt="s", on_search=lambda: used.append(1))
+    asyncio.run(collect(llm, ctx))
+    assert [q for q, _ in searches] == ["q0", "q1"] and len(used) == 2  # the third is neither run nor billed
+    replies = [m["content"] for m in client.calls[1]["messages"] if m["role"] == "tool"]
+    assert "Ліміт пошуку" in replies[2]
+
+
+def test_a_tool_that_breaks_is_reported_to_the_model_not_raised():
+    async def boom(name, args):
+        raise ValueError("x")
+
+    tool = {"type": "function", "function": {"name": "change_voice", "parameters": {"type": "object", "properties": {}}}}
+    client = FakeClient([[tool_chunk(0, "c1", "change_voice", "{}")], [text_chunk("Не вийшло.")]])
+    llm = OpenAILLM(Config(openai_api_key="k"), client=client)
+    out = asyncio.run(collect(llm, TurnContext(system_prompt="s", extra_tools=[tool], run_tool=boom)))
+    assert out == "Не вийшло."
+    assert "не спрацював (ValueError)" in client.calls[1]["messages"][-1]["content"]
+
+
+def test_the_topic_reaches_the_search():
+    got = []
+
+    async def search(query, days, topic=None):
+        got.append((query, days, topic))
+        return "ok"
+
+    client = FakeClient([[tool_chunk(0, "c1", "web_search", '{"query": "новини", "recency_days": 1, "topic": "news"}')], [text_chunk("Ось.")]])
+    asyncio.run(collect(OpenAILLM(Config(openai_api_key="k"), client=client, search=search)))
+    assert got == [("новини", 1, "news")]

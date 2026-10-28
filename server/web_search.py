@@ -12,7 +12,8 @@ log = logging.getLogger(__name__)
 _URL = "https://api.tavily.com/search"
 _MAX_QUERY = 400
 _MAX_RESULTS = 5
-_SNIPPET = 260
+_SNIPPET = 500  # Tavily's own chunk is about that long; cut shorter, the news came out as a vague review
+TOPICS = ("general", "news", "finance")  # «news» is for current events and adds the publication date
 
 
 def _source(url: str) -> str:
@@ -20,14 +21,23 @@ def _source(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-async def web_search(query: str, *, api_key: str, recency_days: int | None = None, timeout_s: float = 9.0) -> str:
+def _time_range(days: int) -> str:
+    """Tavily filters by `time_range` (it has no `days`): the smallest range that still holds the last `days`."""
+    return "day" if days <= 1 else "week" if days <= 7 else "month" if days <= 31 else "year"
+
+
+async def web_search(
+    query: str, *, api_key: str, recency_days: int | None = None, topic: str | None = None, timeout_s: float = 9.0
+) -> str:
     """Search and return a compact plain-text digest for the model (title, source, date, snippet)."""
     q = re.sub(r"\s+", " ", (query or "").strip())[:_MAX_QUERY]
     if not q:
         return "Порожній пошуковий запит."
     payload: dict = {"api_key": api_key, "query": q, "max_results": _MAX_RESULTS, "search_depth": "basic"}
+    if topic in TOPICS:
+        payload["topic"] = topic
     if recency_days and recency_days > 0:
-        payload["days"] = int(recency_days)
+        payload["time_range"] = _time_range(int(recency_days))
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
             resp = await client.post(_URL, json=payload, headers={"Authorization": f"Bearer {api_key}"})

@@ -21,12 +21,25 @@ from openai import AsyncOpenAI
 
 from . import web_search as ws
 from .config import Config
-from .llm import _CUES, MAX_SEARCHES_PER_TURN, MAX_TOOL_ROUNDS, SEGMENT_END, WEB_SEARCH_TOOL, SearchFn, TurnContext
+from .llm import (
+    _CUES,
+    MAX_SEARCHES_PER_TURN,
+    MAX_TOOL_ROUNDS,
+    SEARCH_LIMIT_NOTE,
+    SEGMENT_END,
+    WEB_SEARCH_TOOL,
+    SearchFn,
+    TurnContext,
+    run_tool_call,
+)
 
 log = logging.getLogger("realtime")
 
 _SEED_HISTORY = 30
-_SEARCH_LIMIT_NOTE = "Ліміт пошуку на це питання вичерпано: відповідай з того, що вже знаєш."
+# No event of the answer for this long: the connection is alive but the model is not answering. Better an error the
+# user sees than a call that stays «thinking» for ever.
+_RESPONSE_TIMEOUT_S = 30.0
+_CANCELLED_NOTE = "Скасовано: людина перебила, результат не потрібен."
 
 Handler = Callable[..., Awaitable[None]]
 
@@ -82,9 +95,10 @@ class RealtimeLLM:
         self._connect = connect or (lambda: sdk_connect(cfg))
         self.searchable = bool(search or cfg.web_search_api_key)
 
-        async def default_search(query: str, recency_days: int | None) -> str:
+        async def default_search(query: str, recency_days: int | None, topic: str | None = None) -> str:
             return await ws.web_search(
-                query, api_key=cfg.web_search_api_key, recency_days=recency_days, timeout_s=cfg.web_search_timeout_s
+                query, api_key=cfg.web_search_api_key, recency_days=recency_days, topic=topic,
+                timeout_s=cfg.web_search_timeout_s,
             )
 
         self._search: SearchFn = search or default_search
@@ -237,13 +251,20 @@ class RealtimeLLM:
         self._turn_q = queue = asyncio.Queue()
         self._items = []
         searches = rounds = 0
+        unanswered: list[str] = []  # calls of the model whose output has not been sent yet
         try:
             while True:
                 self._response_id, self._awaiting_created = "", True
-                await self._send({"type": "response.create"})
+                create: dict = {"type": "response.create"}
+                if rounds >= MAX_TOOL_ROUNDS:
+                    create["response"] = {"tool_choice": "none"}  # it kept calling tools: now it has to answer
+                await self._send(create)
                 text, calls, done = "", [], None
                 while done is None:
-                    ev = await queue.get()
+                    try:
+                        ev = await asyncio.wait_for(queue.get(), _RESPONSE_TIMEOUT_S)
+                    except TimeoutError:
+                        raise RuntimeError("Realtime не відповів вчасно. Спробуйте ще раз.") from None
                     kind = ev["type"]
                     if kind == "error":
                         raise RuntimeError(ev["message"])
@@ -259,30 +280,35 @@ class RealtimeLLM:
                 if not calls:
                     return
                 rounds += 1
-                if rounds > MAX_TOOL_ROUNDS:
-                    return
+                unanswered = [c.get("call_id", "") for c in calls]
                 if not text.strip() and any(c.get("name") == "web_search" for c in calls):
                     yield random.choice(_CUES) + " "
                 yield SEGMENT_END  # what was said before the tool is spoken while the tool runs
                 for call in calls:
-                    if call.get("name") == "web_search":
-                        searches += 1
-                        if ctx.on_search:
-                            ctx.on_search()
-                    output = _SEARCH_LIMIT_NOTE if call.get("name") == "web_search" and searches > MAX_SEARCHES_PER_TURN \
-                        else await self._run_tool(call, ctx)
-                    await self._send(
-                        {
-                            "type": "conversation.item.create",
-                            "item": {"type": "function_call_output", "call_id": call.get("call_id", ""), "output": output},
-                        }
-                    )
+                    if call.get("name") == "web_search" and searches >= MAX_SEARCHES_PER_TURN:
+                        output = SEARCH_LIMIT_NOTE  # asked for after the limit: not run, not counted
+                    else:
+                        if call.get("name") == "web_search":
+                            searches += 1
+                            if ctx.on_search:
+                                ctx.on_search()
+                        output = await run_tool_call(call.get("name", ""), call.get("arguments") or "", ctx, self._search)
+                    await self._send_output(call.get("call_id", ""), output)
+                    unanswered.remove(call.get("call_id", ""))
         finally:
             if self._response_open:  # a cancelled turn must stop the generation (and the bill)
                 self._response_open = False
                 with contextlib.suppress(Exception):
                     await self._send({"type": "response.cancel"})
+            for call_id in unanswered:  # cut off while a tool ran: a call left without output confuses the next answer
+                with contextlib.suppress(Exception):
+                    await self._send_output(call_id, _CANCELLED_NOTE)
             self._turn_q = None
+
+    async def _send_output(self, call_id: str, output: str) -> None:
+        await self._send(
+            {"type": "conversation.item.create", "item": {"type": "function_call_output", "call_id": call_id, "output": output}}
+        )
 
     def _report_usage(self, usage: dict, ctx: TurnContext) -> None:
         details = usage.get("input_token_details") or {}
@@ -292,21 +318,6 @@ class RealtimeLLM:
             ctx.on_usage(max(0, total_in - audio_in), int(usage.get("output_tokens") or 0))
         if ctx.on_audio and audio_in:
             ctx.on_audio(audio_in)
-
-    async def _run_tool(self, call: dict, ctx: TurnContext) -> str:
-        try:
-            args = json.loads(call.get("arguments") or "{}")
-        except ValueError:
-            return "Некоректні аргументи інструмента."
-        if not isinstance(args, dict):
-            return "Некоректні аргументи інструмента."
-        name = call.get("name", "")
-        if name == "web_search":
-            days = args.get("recency_days")
-            return await self._search(str(args.get("query") or ""), days if isinstance(days, int) else None)
-        if ctx.run_tool:
-            return await ctx.run_tool(name, args)
-        return "Невідомий інструмент."
 
     async def replace_spoken(self, heard: str) -> None:
         """After a cut-off: the model wrote the whole answer faster than it was spoken. Keep in its conversation only

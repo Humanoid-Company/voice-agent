@@ -11,13 +11,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .about_store import AboutKnowledge, AboutStore
-from .auth import make_token, password_ok, valid_token
 from .characters import CHARACTERS, DEFAULT_EMOTION, EMOTIONS, characters_payload, normalize_character_id
 from .config import Config
 from .db import StoreError
@@ -78,29 +77,8 @@ async def healthz() -> dict:
     return {"ok": True, "knowledge": about_store.kind, "persistent": about_store.persistent}
 
 
-def _require_login(token: str | None) -> None:
-    """Everything but /healthz and the static page needs the token that /api/login gives."""
-    if not cfg.access_password:
-        raise HTTPException(status_code=503, detail="Вхід вимкнено: на сервері не задано ACCESS_PASSWORD.")
-    if not valid_token(cfg.access_password, token):
-        raise HTTPException(status_code=401, detail="Потрібен вхід.")
-
-
-@app.post("/api/login")
-async def api_login(body: dict) -> dict:
-    """The site's one password for a token (30 days). A wrong password waits a moment, so guessing is slow."""
-    if not cfg.access_password:
-        raise HTTPException(status_code=503, detail="Вхід вимкнено: на сервері не задано ACCESS_PASSWORD.")
-    if not password_ok(cfg.access_password, body.get("password")):
-        log.warning("login: wrong password")
-        await asyncio.sleep(0.7)
-        raise HTTPException(status_code=401, detail="Невірний пароль.")
-    return {"token": make_token(cfg.access_password)}
-
-
 @app.get("/api/config")
-async def api_config(x_access_token: str | None = Header(default=None)) -> dict:
-    _require_login(x_access_token)
+async def api_config() -> dict:
     full = await tts_providers(cfg)
     providers = [  # what the page needs of a voice: its id and its name (the sampling defaults stay on the server)
         {**p, "voices": [{"id": v["id"], "label": v["label"]} for v in p["voices"]]} for p in full
@@ -121,8 +99,7 @@ def _knowledge_payload(text: str) -> dict:
 
 
 @app.get("/api/knowledge")
-async def get_knowledge(x_access_token: str | None = Header(default=None)) -> dict:
-    _require_login(x_access_token)
+async def get_knowledge() -> dict:
     try:
         text = await asyncio.to_thread(about_store.get)
     except StoreError as e:
@@ -131,8 +108,7 @@ async def get_knowledge(x_access_token: str | None = Header(default=None)) -> di
 
 
 @app.put("/api/knowledge")
-async def put_knowledge(body: dict, x_access_token: str | None = Header(default=None)) -> dict:
-    _require_login(x_access_token)
+async def put_knowledge(body: dict) -> dict:
     text = sanitize_about(body.get("text"))
     try:
         await about.save(text)
@@ -142,15 +118,13 @@ async def put_knowledge(body: dict, x_access_token: str | None = Header(default=
 
 
 @app.get("/api/preview")
-async def api_preview(provider: str, voice: str, language: str = "uk", t: str | None = None) -> Response:
-    """A sample of a voice for the page's «Прослухати» (WAV; the browser keeps it). The token is in the query: an audio
-    element cannot send headers."""
-    _require_login(t)
+async def api_preview(provider: str, voice: str, language: str = "uk") -> Response:
+    """A sample of a voice for the page's «Прослухати» (WAV; the browser keeps it)."""
     try:
         wav = await previews.get(cfg, provider, voice, language, make_tts=make_tts, list_voices=list_voices)
     except PreviewError as e:
         raise HTTPException(status_code=e.status, detail=e.message) from e
-    return Response(wav, media_type="audio/wav", headers={"Cache-Control": "private, max-age=86400"})
+    return Response(wav, media_type="audio/wav", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.websocket("/ws")
@@ -160,9 +134,6 @@ async def ws_call(ws: WebSocket) -> None:
     try:
         # The first message picks the voice: {"type": "start", "provider": "...", "voice": "...", "language": "uk"}
         first = json.loads(await ws.receive_text())
-        if not valid_token(cfg.access_password, first.get("token")):
-            await ws.send_json({"type": "error", "message": "Потрібен вхід: увійдіть знову.", "auth": True})
-            return
         provider = str(first.get("provider", ""))
         language = str(first.get("language") or "uk")
         character = normalize_character_id(first.get("character"))

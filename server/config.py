@@ -68,11 +68,8 @@ class Config:
     price_soniox_per_1k_chars: float = field(default_factory=lambda: _float("PRICE_SONIOX_PER_1K_CHARS", 0.0))
     price_search: float = field(default_factory=lambda: _float("PRICE_SEARCH", 0.008))
 
-    # The database (Postgres on Neon, like Eva's; empty = a SQLite file that a deploy on Render wipes) and the password
-    # for reading and editing what the agent knows about itself: only from the environment (ACCESS_PASSWORD), never in the
-    # code. Not set = nobody can read or change it.
+    # The database (Postgres on Neon, like Eva's; empty = a SQLite file that a deploy on Render wipes).
     database_url: str = field(default_factory=lambda: os.getenv("DATABASE_URL", ""))
     sqlite_path: str = field(default_factory=lambda: os.getenv("AGENT_SQLITE", "data/agent.db"))
-    access_password: str = field(default_factory=lambda: os.getenv("ACCESS_PASSWORD", ""))
 
     frontend_origins: list[str] = field(default_factory=lambda: _list("FRONTEND_ORIGINS", ""))

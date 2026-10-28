@@ -16,18 +16,16 @@ def test_page_logic_in_a_fake_dom():
     assert "FAIL " not in out.stdout, out.stdout
 
 
-def test_the_markup_asks_for_the_password_first_and_keeps_history_knowledge_and_costs_behind_the_gear():
+def test_the_site_has_no_password_and_history_knowledge_and_costs_are_behind_the_gear():
     html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
-    assert html.index('id="login"') < html.index('id="app"')  # the password comes first
-    assert '<main class="wrap" id="app" hidden>' in html  # the app is not shown before it
-    assert 'id="loginPass" type="password"' in html and 'id="loginBtn"' in html
+    assert 'type="password"' not in html and 'id="login"' not in html and 'id="logout"' not in html
+    assert '<main class="wrap">' in html  # the app is there at once
     assert 'id="openSettings"' in html and "⚙" in html  # the gear at the top right
     for tab in ("history", "knowledge", "usage"):
         assert f'data-tab="{tab}"' in html
     assert 'id="openHistory"' not in html and 'id="openUsage"' not in html  # the two buttons are gone
-    assert 'id="logout"' in html
-    # the knowledge is no longer a card of the page: it lives in the settings, and has no password of its own
-    main = html[html.index('id="app"') : html.index("</main>")]
-    assert 'id="about"' not in main and "aboutPass" not in html
+    main = html[html.index('<main class="wrap">') : html.index("</main>")]
+    assert 'id="about"' not in main  # the knowledge is not a card of the page: it is in the settings
     assert 'id="panelKnowledge"' in html and 'id="about"' in html
-    assert "localStorage" not in html
+    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8").lower()
+    assert "x-access" not in app and "/api/login" not in app and "logout" not in app

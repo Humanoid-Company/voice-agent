@@ -165,12 +165,6 @@ summary { cursor: pointer; font-weight: 600; font-size: 1.05rem; }
 }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 .panel[hidden] { display: none; }
-.panel-foot { justify-content: flex-end; margin-top: 16px; }
-.login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.login[hidden] { display: none; }
-.login-card { width: 100%; max-width: 360px; }
-.login-card h1 { margin-top: 0; }
-.login-card input { margin-top: 8px; }
 
 /* the conversation record */
 .memory-row { margin-bottom: 12px; }

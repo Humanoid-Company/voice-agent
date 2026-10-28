@@ -1,6 +1,6 @@
 """What the agent knows about itself and the place (who it is, where, what event): one text for the whole backend, kept in the
 database (server/db.py: Postgres on Neon when DATABASE_URL is set, else a SQLite file that a deploy on Render wipes), so that
-every device and every call has it. Edited on the page behind a password; read by every call."""
+every device and every call has it. Edited on the page (settings, «Знання»); read by every call."""
 from __future__ import annotations
 
 import asyncio

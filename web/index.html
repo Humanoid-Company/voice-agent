@@ -9,17 +9,7 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <div id="login" class="login">
-    <div class="card login-card">
-      <h1>Голосовий агент</h1>
-      <p class="hint">Введіть пароль, щоб увійти.</p>
-      <input id="loginPass" type="password" placeholder="Пароль" autocomplete="current-password" aria-label="Пароль" autofocus>
-      <button id="loginBtn" class="btn primary wide" type="button">Увійти</button>
-      <p id="loginError" class="hint err-text" hidden></p>
-    </div>
-  </div>
-
-  <main class="wrap" id="app" hidden>
+  <main class="wrap">
     <header class="page-head">
       <div>
         <h1>Голосовий агент</h1>
@@ -208,10 +198,6 @@
     <div id="panelUsage" class="panel" role="tabpanel" hidden>
     <div id="usageTable" class="usage-table"></div>
     <p class="hint">Орієнтовно, у доларах: токени моделі, символи голосу й пошуки за цінами з налаштувань сервера (ціна Soniox там 0, якщо її не задано). Рахується в цьому браузері й не передається на сервер, тож інші пристрої й браузери тут не враховані.</p>
-    </div>
-
-    <div class="row panel-foot">
-      <button id="logout" class="btn ghost small-btn" type="button" title="Забути вхід у цьому браузері">Вийти</button>
     </div>
   </dialog>
 </body>

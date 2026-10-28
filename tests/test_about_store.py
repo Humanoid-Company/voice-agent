@@ -1,14 +1,12 @@
-"""The agent's knowledge in the database, behind a password: the store (SQLite here, Postgres in production through the same
+"""The agent's knowledge in the database: the store (SQLite here, Postgres in production through the same
 SqlStore as Eva's), the cache calls read, and the API."""
 import asyncio
-from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
 
 import server.app as app_module
 from server.about_store import AboutKnowledge, AboutStore
-from server.auth import make_token
 from server.db import StoreError
 from server.persona import ABOUT_MAX_CHARS
 
@@ -87,40 +85,14 @@ def client(tmp_path, monkeypatch):
     st = store(tmp_path, "api.db")
     monkeypatch.setattr(app_module, "about_store", st)
     monkeypatch.setattr(app_module, "about", AboutKnowledge(st))
-    monkeypatch.setattr(app_module, "cfg", replace(app_module.cfg, access_password=PASSWORD))
-
-    async def quick(_s):
-        pass
-
-    monkeypatch.setattr(app_module.asyncio, "sleep", quick)  # a wrong password waits; not in tests
     return TestClient(app_module.app), st
 
 
-PASSWORD = "test-password"  # what the fixture sets as ACCESS_PASSWORD
-PW = {"X-Access-Token": make_token(PASSWORD)}  # a logged-in page
-
-
-def test_without_a_login_nothing_is_read_or_written(client):
+def test_the_text_is_saved_and_read_back(client):
     c, st = client
-    bad = (
-        {},
-        {"X-Access-Token": "wrong"},
-        {"X-Access-Token": ""},
-        {"X-Access-Token": make_token("another-password")},  # signed with a different key
-        {"X-Access-Token": make_token(PASSWORD, now=0)},  # long expired
-        {"X-Access-Password": PASSWORD},  # the raw password is not a token
-    )
-    for headers in bad:
-        assert c.get("/api/knowledge", headers=headers).status_code == 401, headers
-        assert c.put("/api/knowledge", json={"text": "зламано"}, headers=headers).status_code == 401, headers
-    assert st.get() == ""
-
-
-def test_with_a_login_the_text_is_saved_and_read_back(client):
-    c, st = client
-    r = c.put("/api/knowledge", json={"text": "  Ти робот Тарас.  "}, headers=PW)
+    r = c.put("/api/knowledge", json={"text": "  Ти робот Тарас.  "})
     assert r.status_code == 200 and r.json()["text"] == "Ти робот Тарас."
-    got = c.get("/api/knowledge", headers=PW).json()
+    got = c.get("/api/knowledge").json()
     assert got["text"] == "Ти робот Тарас." and got["storage"] == "sqlite" and got["max"] == ABOUT_MAX_CHARS
     assert got["persistent"] is True  # not on Render here
     assert st.get() == "Ти робот Тарас."
@@ -128,17 +100,15 @@ def test_with_a_login_the_text_is_saved_and_read_back(client):
 
 def test_the_text_is_bounded_and_text_only(client):
     c, st = client
-    assert len(c.put("/api/knowledge", json={"text": "я" * 9000}, headers=PW).json()["text"]) == ABOUT_MAX_CHARS
-    assert c.put("/api/knowledge", json={"text": 5}, headers=PW).json()["text"] == ""  # not text: nothing is kept
-    assert c.put("/api/knowledge", json={}, headers=PW).json()["text"] == ""
+    assert len(c.put("/api/knowledge", json={"text": "я" * 9000}).json()["text"]) == ABOUT_MAX_CHARS
+    assert c.put("/api/knowledge", json={"text": 5}).json()["text"] == ""  # not text: nothing is kept
+    assert c.put("/api/knowledge", json={}).json()["text"] == ""
 
 
-def test_a_blank_password_setting_closes_the_site_for_everyone(client, monkeypatch):
+def test_a_saved_text_reaches_the_calls(client):
     c, _ = client
-    monkeypatch.setattr(app_module, "cfg", replace(app_module.cfg, access_password=""))
-    assert c.get("/api/knowledge", headers=PW).status_code == 503
-    assert c.post("/api/login", json={"password": ""}).status_code == 503
-    assert c.get("/api/knowledge", headers={"X-Access-Token": make_token("")}).status_code == 503
+    c.put("/api/knowledge", json={"text": "Ми на виставці."})
+    assert asyncio.run(app_module.about.get()) == "Ми на виставці."
 
 
 def test_a_database_that_is_down_is_a_clear_error_not_a_crash(client, monkeypatch):
@@ -149,21 +119,24 @@ def test_a_database_that_is_down_is_a_clear_error_not_a_crash(client, monkeypatc
 
     monkeypatch.setattr(st, "get", boom)
     monkeypatch.setattr(st, "put", boom)
-    assert c.get("/api/knowledge", headers=PW).status_code == 503
-    r = c.put("/api/knowledge", json={"text": "x"}, headers=PW)
+    assert c.get("/api/knowledge").status_code == 503
+    r = c.put("/api/knowledge", json={"text": "x"})
     assert r.status_code == 503 and "недоступна" in r.json()["detail"]
 
 
-def test_healthz_stays_open_and_says_where_the_knowledge_lives(client):
+def test_healthz_says_where_the_knowledge_lives(client):
     c, _ = client
-    body = c.get("/healthz").json()  # Render's health check and the keep-awake ping carry no token
+    body = c.get("/healthz").json()
     assert body["ok"] is True and body["knowledge"] == "sqlite" and "persistent" in body
 
 
-def test_without_the_setting_the_knowledge_is_locked_and_there_is_no_default_password(monkeypatch):
-    from server.config import Config
+def test_there_is_no_password_or_login_anywhere_in_the_server():
+    """The site is open: nothing asks for a password, and nothing in the server can."""
+    from pathlib import Path
 
-    monkeypatch.delenv("ACCESS_PASSWORD", raising=False)
-    assert Config().access_password == ""  # not set: closed for everyone, whatever is sent
-    monkeypatch.setenv("ACCESS_PASSWORD", "from-the-environment")
-    assert Config().access_password == "from-the-environment"
+    assert not Path("server/auth.py").exists()
+    routes = {r.path for r in app_module.app.routes}
+    assert "/api/login" not in routes
+    for path in Path("server").glob("*.py"):
+        text = path.read_text(encoding="utf-8").lower()
+        assert "access_password" not in text and "x-access" not in text, path

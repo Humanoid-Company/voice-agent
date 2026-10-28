@@ -6,10 +6,6 @@ const BACKEND = (params.get("backend") || (window.APP_CONFIG && window.APP_CONFI
 const WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
 
 const $ = (id) => document.getElementById(id);
-// The site is behind one password: it is exchanged once (POST /api/login) for a signed token, which every request carries.
-let token = (() => { try { return localStorage.getItem("token") || ""; } catch (e) { return ""; } })();
-const authHeaders = () => (token ? { "X-Access-Token": token } : {});
-
 const el = {
   dot: $("dot"), status: $("status"), problem: $("problem"), provider: $("provider"), voice: $("voice"),
   recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), newChat: $("newChat"),
@@ -21,8 +17,7 @@ const el = {
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
   historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"), about: $("about"), aboutCount: $("aboutCount"),
   aboutSave: $("aboutSave"), aboutStatus: $("aboutStatus"), aboutStorage: $("aboutStorage"),
-  usageTable: $("usageTable"), openSettings: $("openSettings"), settingsDialog: $("settingsDialog"), logout: $("logout"),
-  login: $("login"), loginPass: $("loginPass"), loginBtn: $("loginBtn"), loginError: $("loginError"), app: $("app"),
+  usageTable: $("usageTable"), openSettings: $("openSettings"), settingsDialog: $("settingsDialog"),
   tabs: { history: $("tabHistory"), knowledge: $("tabKnowledge"), usage: $("tabUsage") },
   panels: { history: $("panelHistory"), knowledge: $("panelKnowledge"), usage: $("panelUsage") },
 };
@@ -89,12 +84,9 @@ async function wakeBackend() {
   let waiting = false;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(BACKEND + "/api/config", { headers: authHeaders() });
-      if (res.status === 401 || res.status === 503) throw Object.assign(new Error((await res.json().catch(() => ({}))).detail || "Потрібен вхід."), { auth: true });
+      const res = await fetch(BACKEND + "/api/config");
       if (res.ok) { if (waiting) setState("idle"); return await res.json(); }
-    } catch (e) {
-      if (e.auth) throw e; // the login is not valid: no use waiting
-    }
+    } catch (e) { /* still waking up */ }
     if (!waiting) {
       waiting = true;
       el.dot.className = "dot think";
@@ -105,11 +97,7 @@ async function wakeBackend() {
   return null;
 }
 
-let inited = false;
-
 async function init() {
-  if (inited) return;
-  inited = true;
   setState("idle");
   if (!SpeechRec) showProblem("Цей браузер не вміє розпізнавати мову. Відкрийте сторінку в Chrome, Edge або Safari.");
   try {
@@ -132,62 +120,10 @@ async function init() {
     el.talk.disabled = !ok;
     if (!ok) el.provider.innerHTML = "<option>Немає ключів</option>";
   } catch (e) {
-    inited = false; // the next login starts it again
-    if (e.auth) { logout(e.message); return; }
     showProblem("Бекенд недоступний: " + BACKEND);
   }
 }
 
-// ---------------------------------------------------------------- the login
-
-function showLogin(message) {
-  el.app.hidden = true;
-  el.login.hidden = false;
-  el.loginError.hidden = !message;
-  el.loginError.textContent = message || "";
-}
-
-function showApp() {
-  el.login.hidden = true;
-  el.app.hidden = false;
-}
-
-async function doLogin() {
-  const password = el.loginPass.value;
-  if (!password) return;
-  el.loginBtn.disabled = true;
-  try {
-    const res = await fetch(BACKEND + "/api/login", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { showLogin(data.detail || "Не вдалося увійти (" + res.status + ")."); return; }
-    token = data.token;
-    save("token", token);
-    el.loginPass.value = "";
-    showApp();
-    init();
-  } catch (e) {
-    showLogin("Сервер недоступний: " + BACKEND);
-  } finally {
-    el.loginBtn.disabled = false;
-  }
-}
-
-// Out: the token is forgotten, a running call is ended, and the password is asked for again.
-function logout(message) {
-  token = "";
-  save("token", "");
-  inited = false;
-  if (live) stop("");
-  closeDialog(el.settingsDialog);
-  lockedAbout();
-  showLogin(message || "");
-}
-
-el.loginBtn.onclick = doLogin;
-el.loginPass.onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
-el.logout.onclick = () => logout("");
 
 function showProblem(text) { el.problem.textContent = text; el.problem.hidden = !text; }
 
@@ -230,7 +166,7 @@ function stopPreview() {
 function togglePreview() {
   if (preview) { stopPreview(); return; }
   if (live || !el.voice.value) return;
-  const query = new URLSearchParams({ provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), t: token });
+  const query = new URLSearchParams({ provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2) });
   // The server makes the sample once per voice (the first listen takes a moment) and the browser keeps it.
   const audio = new Audio(BACKEND + "/api/preview?" + query);
   preview = audio;
@@ -689,7 +625,7 @@ function onMessage(ev) {
       botBubble = null;
       break;
     }
-    case "error": if (m.auth) { logout(m.message); break; } showProblem(m.message); bubble("system", m.message); resetVoiceApply(); break;
+    case "error": showProblem(m.message); bubble("system", m.message); resetVoiceApply(); break;
   }
 }
 
@@ -717,7 +653,7 @@ async function start() {
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked, token,
+      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked,
       engine: pcmTap ? "realtime" : "browser" });
     live = true;
     paused = false;
@@ -1264,25 +1200,11 @@ function aboutStatus(text, bad) {
 async function aboutCall(method, body) {
   const res = await fetch(BACKEND + "/api/knowledge", {
     method, body: body === undefined ? undefined : JSON.stringify(body),
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.detail || "Помилка " + res.status), { status: res.status });
   return data;
-}
-
-// A login that has lapsed or been refused ends the session; anything else is shown where the text is.
-function aboutFailed(prefix, e) {
-  if (e.status === 401 || e.status === 503) logout(e.message);
-  else aboutStatus(prefix + e.message, true);
-}
-
-function lockedAbout() {
-  el.about.value = "";
-  aboutSaved = null;
-  el.aboutStorage.hidden = true;
-  aboutStatus("");
-  showAboutCount();
 }
 
 async function loadAbout() {
@@ -1294,7 +1216,7 @@ async function loadAbout() {
     showAboutCount();
     aboutStatus("");
   } catch (e) {
-    aboutFailed("Не вдалося завантажити знання: ", e);
+    aboutStatus("Не вдалося завантажити знання: " + e.message, true);
   }
 }
 
@@ -1307,7 +1229,7 @@ async function saveAbout() {
     el.aboutStorage.hidden = data.persistent !== false;
     aboutStatus("Збережено: агент знає це в кожній наступній відповіді (" + (data.storage === "postgres" ? "база Postgres" : "файл SQLite") + ").");
   } catch (e) {
-    aboutFailed("Не збережено: ", e);
+    aboutStatus("Не збережено: " + e.message, true);
   } finally {
     el.aboutSave.disabled = false;
   }
@@ -1569,5 +1491,4 @@ showConversation(current); // after a reload the conversation is still here
 renderHistory();
 refreshDevices();
 renderUsageTable();
-// Logged in before (a token is kept): straight in. Otherwise the password is asked for.
-if (token) { showApp(); init(); } else showLogin();
+init();

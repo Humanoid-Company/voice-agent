@@ -1,5 +1,5 @@
 // Runs web/app.js against a fake DOM: load-time errors (undefined names, TDZ), message handling, meter, history.
-var store = { token: "test-token", convs: JSON.stringify([{ id: "old1", t: 1000, u: 2000, title: "старе", msgs: [{ r: "user", t: "привіт" }, { r: "assistant", t: "добрий день" }] }]) };
+var store = { convs: JSON.stringify([{ id: "old1", t: 1000, u: 2000, title: "старе", msgs: [{ r: "user", t: "привіт" }, { r: "assistant", t: "добрий день" }] }]) };
 var made = {};
 function E(id) {
   var e = made[id];
@@ -379,20 +379,17 @@ check("the second press clears the chat, the history entry and the agent's memor
   current === null && convs.length === before - 1 && E("clearChat").textContent === "Очистити"
   && sent.some(function (m) { return m.type === "history" && m.history.length === 0; })
   && E("log").innerHTML.indexOf("empty") >= 0);
-// the knowledge about the agent: in the server's database; every request carries the token of the login
+// the knowledge about the agent: in the server's database, read when its tab opens and written with «Зберегти»
 var kbCalls = [], KB = { text: "Ти робот Тарас на стенді.", persistent: true, storage: "postgres" };
-var gone = { ok: false, status: 401, json: function () { return Promise.resolve({ detail: "Потрібен вхід." }); } };
 fetch = function (url, opt) {
-  var h = (opt && opt.headers) || {};
-  kbCalls.push({ url: url, method: (opt && opt.method) || "GET", token: h["X-Access-Token"], body: opt && opt.body });
-  if (h["X-Access-Token"] !== "test-token") return Promise.resolve(gone);
-  if (opt.method === "PUT") KB.text = JSON.parse(opt.body).text;
+  kbCalls.push({ url: url, method: (opt && opt.method) || "GET", body: opt && opt.body });
+  if (opt && opt.method === "PUT") KB.text = JSON.parse(opt.body).text;
   return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ text: KB.text, persistent: KB.persistent, storage: KB.storage }); } });
 };
 E("openSettings").onclick();
 E("tabKnowledge").onclick(); drainMicrotasks();
-check("the knowledge tab shows its panel and loads the text with the token", E("panelKnowledge").hidden === false && E("about").value === "Ти робот Тарас на стенді."
-  && kbCalls[kbCalls.length - 1].token === "test-token" && kbCalls[kbCalls.length - 1].url === "https://x.test/api/knowledge");
+check("the knowledge tab shows its panel and loads the text from the server", E("panelKnowledge").hidden === false && E("about").value === "Ти робот Тарас на стенді."
+  && kbCalls[kbCalls.length - 1].url === "https://x.test/api/knowledge");
 E("about").value = "Ти робот Тарас на стенді в Києві.";
 E("about").oninput();
 check("edits are counted and flagged as unsaved, not sent yet", E("aboutCount").textContent === "33 / 4000" && E("aboutStatus").textContent.indexOf("незбережені") >= 0 && KB.text === "Ти робот Тарас на стенді.");
@@ -402,36 +399,12 @@ KB.persistent = false; E("aboutSave").onclick(); drainMicrotasks();
 check("a database that a deploy wipes is flagged", E("aboutStorage").hidden === false);
 KB.persistent = true; E("aboutSave").onclick(); drainMicrotasks();
 check("and the flag goes when it is a real database", E("aboutStorage").hidden === true);
+fetch = function () { return Promise.resolve({ ok: false, status: 503, json: function () { return Promise.resolve({ detail: "База знань недоступна." }); } }); };
+E("aboutSave").onclick(); drainMicrotasks();
+check("a database that is down is said where the text is, nothing else happens", E("aboutStatus").textContent === "Не збережено: База знань недоступна." && E("settingsDialog").open === true);
+E("settingsDialog").close();
 sent.length = 0;
 check("the text never travels in a call's messages", !sent.some(function (m) { return "about" in m; }));
-
-// the login: a refused token ends the session and the password is asked for; a right password gets a new token
-var loginCalls = [];
-fetch = function (url, opt) {
-  var body = opt && opt.body ? JSON.parse(opt.body) : null;
-  loginCalls.push({ url: url, method: (opt && opt.method) || "GET", body: body, token: ((opt && opt.headers) || {})["X-Access-Token"] });
-  if (url.indexOf("/api/login") >= 0) {
-    if (body.password === "test-password") return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ token: "fresh-token" }); } });
-    return Promise.resolve({ ok: false, status: 401, json: function () { return Promise.resolve({ detail: "Невірний пароль." }); } });
-  }
-  if (((opt && opt.headers) || {})["X-Access-Token"] !== "fresh-token") return Promise.resolve(gone);
-  return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(CONFIG); } });
-};
-E("tabKnowledge").onclick(); drainMicrotasks(); // the token of this page is not accepted any more (the password was changed)
-check("a refused token ends the session: the login shows, the app hides, the token is forgotten",
-  E("login").hidden === false && E("app").hidden === true && token === "" && store["token"] === "" && E("settingsDialog").open === false
-  && E("loginError").textContent === "Потрібен вхід." && E("about").value === "");
-E("loginPass").value = "wrong"; E("loginBtn").onclick(); drainMicrotasks();
-check("a wrong password says so and lets nobody in", E("login").hidden === false && E("app").hidden === true && E("loginError").textContent === "Невірний пароль." && token === "");
-E("loginPass").value = "test-password"; E("loginBtn").onclick(); drainMicrotasks();
-check("a right password opens the app with a new token, kept for the next visit", E("login").hidden === true && E("app").hidden === false && token === "fresh-token" && store["token"] === "fresh-token" && E("loginPass").value === "");
-check("and the page starts up with that token", loginCalls.some(function (c) { return c.url.indexOf("/api/config") >= 0 && c.token === "fresh-token"; }));
-E("logout").onclick();
-check("«Вийти» forgets the login", E("login").hidden === false && E("app").hidden === true && token === "" && store["token"] === "");
-// the server refuses a call that carries no valid login: the page goes back to the password
-live = true; ready = true; ws = { readyState: 1, send: function () {}, close: function () {} };
-onMessage({ data: JSON.stringify({ type: "error", message: "Потрібен вхід: увійдіть знову.", auth: true }) });
-check("a call refused for its login ends and asks for the password", live === false && E("login").hidden === false && E("loginError").textContent === "Потрібен вхід: увійдіть знову.");
 
 // a cut-off tells the server how much of the answer had really played
 live = true; ready = true; ws = { readyState: 1, send: function (m) { sent.push(JSON.parse(m)); }, close: function () {} };

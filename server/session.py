@@ -137,8 +137,15 @@ class VoiceSession:
         voices_for: Callable[[str, str], Awaitable[list[dict]]] | None = None,
         history: list[dict] | None = None,
         tune: bool = True,
+        ears: Any = None,
     ) -> None:
-        self.llm = llm
+        self.llm = ears or llm
+        # Realtime ears: the model hears the microphone itself and tells when the user stopped (see realtime.py);
+        # the browser's recognizer then only supplies interim words for barge-in and the on-screen text.
+        self.ears = ears
+        self.realtime = ears is not None
+        self._rt_users: dict[str, dict] = {}  # Realtime audio item id -> the history entry waiting for its transcript
+        self._last_interim = ""
         self.tts = tts
         self.cfg = cfg or Config()
         self.provider, self.voice = provider, voice
@@ -184,7 +191,7 @@ class VoiceSession:
         self.overheard: list[str] = []
 
         # the meter
-        self.usage = Usage()
+        self.usage = Usage(realtime=self.realtime)
         self._active_s = 0.0
         self._active_since: float | None = time.monotonic()
 
@@ -192,9 +199,12 @@ class VoiceSession:
 
     async def start(self) -> None:
         await self.tts.connect()
+        if self.ears:
+            await self._open_ears()
         await self._j(
             {
                 "type": "ready",
+                "engine": "realtime" if self.realtime else "browser",
                 "sample_rate": self.tts.sample_rate,
                 "name": self.persona.name,
                 "language": self.persona.language,
@@ -214,6 +224,8 @@ class VoiceSession:
         if self._prepared:
             await self._prepared[1].close()
             self._prepared = None
+        if self.ears:
+            await self.ears.close()
         await self.tts.close()
 
     # ------------------------------------------------------------------ input
@@ -252,6 +264,8 @@ class VoiceSession:
             await self.interrupt(reason="history")
             self.history = sanitize_history(msg.get("history"))
             self._recent = ""
+            if self.ears:
+                await self._open_ears()  # a new Realtime conversation, seeded with this one
 
     async def on_heard(self, text: str, final: bool) -> None:
         """What the browser's speech recognition heard: interim text, or the final text of an utterance."""
@@ -268,6 +282,7 @@ class VoiceSession:
             await self._j({"type": "user_drop", "reason": "echo", "text": raw})
             return
         if text:
+            self._last_interim = text
             await self._j({"type": "user", "text": text, "final": False})
             if self.state in ("thinking", "speaking"):
                 self._during_turn = True
@@ -276,7 +291,9 @@ class VoiceSession:
                     log.info("barge-in (%s): %r", intent, text)
                     await self.interrupt(reason=intent, text=text)
                     self._skip_reply = intent == "stop"
-        if final:
+        if final and self.realtime:
+            self._final = ""  # the end of the phrase and its text come from Realtime (_on_speech_stopped)
+        elif final:
             await self._on_endpoint()
 
     async def _on_endpoint(self) -> None:
@@ -298,6 +315,61 @@ class VoiceSession:
         self.history.append({"role": "user", "content": text})
         async with self._lock:
             self._turn = asyncio.create_task(self._run_turn())
+
+    # ------------------------------------------------------------------ Realtime ears
+
+    async def _open_ears(self) -> None:
+        await self.ears.close()
+        self._rt_users.clear()
+        self.ears.on_speech_stopped = self._on_speech_stopped
+        self.ears.on_user_text = self._on_user_text
+        self.ears.on_error = self._on_ears_error
+        await self.ears.open(language=self.persona.language, history=[h for h in self.history if h.get("content")])
+
+    async def on_audio(self, pcm: bytes) -> None:
+        """Microphone sound from the page (through the echo gate): PCM16, 24 kHz, mono."""
+        if self.ears and not self.paused:
+            await self.ears.feed(pcm)
+
+    async def _on_speech_stopped(self, item_id: str) -> None:
+        """Realtime heard the user finish a phrase: answer it, unless she was busy (then the words the browser
+        recognized decided whether it was an interruption) or the user said «стоп»."""
+        if self.paused:
+            return
+        skip = self._skip_reply
+        self._during_turn = self._skip_reply = False
+        if skip:
+            await self._j({"type": "user_drop", "reason": "stop", "text": self._last_interim})
+            return
+        if self.state in ("thinking", "speaking") or (self._turn and not self._turn.done()):
+            return
+        entry = {"role": "user", "content": ""}  # the transcript arrives later (_on_user_text)
+        self._rt_users[item_id] = entry
+        self.history.append(entry)
+        async with self._lock:
+            self._turn = asyncio.create_task(self._run_turn())
+
+    async def _on_user_text(self, item_id: str, text: str) -> None:
+        entry = self._rt_users.pop(item_id, None)
+        if entry is None:  # a phrase we did not answer
+            return
+        busy = self.state in ("thinking", "speaking")
+        recently = time.monotonic() - self._last_audio_at < _ECHO_TAIL_S
+        clean = self._without_echo(text)
+        echo = not clean or (classify_interjection(clean, assistant_recent=self._recent) == "echo" and (busy or recently))
+        if echo:
+            with contextlib.suppress(ValueError):
+                self.history.remove(entry)
+            await self.interrupt(reason="echo")
+            await self.ears.drop_item(item_id)
+            await self._j({"type": "user_drop", "reason": "echo", "text": text})
+            return
+        entry["content"] = clean
+        await self._j({"type": "user", "text": clean, "final": True})
+
+    async def _on_ears_error(self, message: str) -> None:
+        await self._j({"type": "error", "message": message})
+        await self.interrupt(reason="error")
 
     # ------------------------------------------------------------------ pause
 
@@ -351,6 +423,7 @@ class VoiceSession:
             run_tool=self.run_tool,
             on_usage=self._on_usage,
             on_search=self._on_search,
+            on_audio=self._on_audio,
         )
 
         async def produce() -> None:
@@ -418,6 +491,8 @@ class VoiceSession:
                 heard = " ".join(self._spoken) + " …"
                 self.history.append({"role": "assistant", "content": heard})
                 await self._j({"type": "record", "role": "assistant", "text": heard})
+            if self.ears and not self._turn_done:  # the model wrote the whole answer: keep what was heard
+                await self.ears.replace_spoken(" ".join(self._spoken) + " …" if self._spoken else "")
             self._turn_done = True
             self._awaiting_played = False
             await self._j({"type": "clear", "reason": reason, "text": text})
@@ -484,6 +559,8 @@ class VoiceSession:
             have = ", ".join(LANGUAGES[c][0] for c in sorted(SUPPORTED.get(self.provider, set())))
             return f"Цей голос ({self.provider}) говорить лише: {have}. Скажи, що іншою мовою не вмієш."
         self.persona.language = code
+        if self.ears:
+            await self.ears.set_language(code)
         self._pending = {**(self._pending or {}), "language": code}
         await self._j({"type": "language", "code": code, "recognition": self.persona.recognition})
         return f"Мову змінено: {self.persona.language_name}. Далі говори лише нею, коротко підтвердь нею."
@@ -653,6 +730,9 @@ class VoiceSession:
     def _on_usage(self, prompt_tokens: int, completion_tokens: int) -> None:
         self.usage.llm_in += prompt_tokens
         self.usage.llm_out += completion_tokens
+
+    def _on_audio(self, tokens: int) -> None:
+        self.usage.audio_in += tokens
 
     def _on_search(self) -> None:
         self.usage.searches += 1

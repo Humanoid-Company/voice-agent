@@ -52,6 +52,7 @@ class TurnContext:
     run_tool: Callable[[str, dict], Awaitable[str]] | None = None
     on_usage: Callable[[int, int], None] | None = None  # prompt tokens, completion tokens
     on_search: Callable[[], None] | None = None
+    on_audio: Callable[[int], None] | None = None  # audio input tokens (Realtime only)
 
 
 class LLM(Protocol):

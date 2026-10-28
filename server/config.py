@@ -32,6 +32,12 @@ class Config:
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     openai_model: str = field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
 
+    # The Realtime "ears": it hears the microphone and answers with text (the voice is Respeecher / Soniox).
+    realtime_model: str = field(default_factory=lambda: os.getenv("REALTIME_MODEL", "gpt-realtime-2.1"))
+    realtime_transcribe_model: str = field(default_factory=lambda: os.getenv("REALTIME_TRANSCRIBE_MODEL", "gpt-4o-transcribe"))
+    realtime_silence_ms: int = field(default_factory=lambda: _int("REALTIME_SILENCE_MS", 700))  # quiet that ends a phrase
+    realtime_vad_threshold: float = field(default_factory=lambda: _float("REALTIME_VAD_THRESHOLD", 0.5))
+
     soniox_api_key: str = field(default_factory=lambda: os.getenv("SONIOX_API_KEY", ""))
 
     respeecher_api_key: str = field(default_factory=lambda: os.getenv("RESPEECHER_API_KEY", ""))
@@ -53,6 +59,11 @@ class Config:
     # OPENAI_MODEL. Respeecher is $2 per 60k characters (a third-party figure); Soniox's TTS price is unknown, so 0.
     price_llm_in_per_m: float = field(default_factory=lambda: _float("PRICE_LLM_IN_PER_M", 0.40))
     price_llm_out_per_m: float = field(default_factory=lambda: _float("PRICE_LLM_OUT_PER_M", 1.60))
+    # The same for the Realtime engine (an estimate: check the current price list of REALTIME_MODEL). Audio input is
+    # billed for every second sent, silence included; the phrase transcription (REALTIME_TRANSCRIBE_MODEL) is not counted.
+    price_rt_text_in_per_m: float = field(default_factory=lambda: _float("PRICE_RT_TEXT_IN_PER_M", 4.0))
+    price_rt_text_out_per_m: float = field(default_factory=lambda: _float("PRICE_RT_TEXT_OUT_PER_M", 16.0))
+    price_rt_audio_in_per_m: float = field(default_factory=lambda: _float("PRICE_RT_AUDIO_IN_PER_M", 32.0))
     price_respeecher_per_1k_chars: float = field(default_factory=lambda: _float("PRICE_RESPEECHER_PER_1K_CHARS", 0.033))
     price_soniox_per_1k_chars: float = field(default_factory=lambda: _float("PRICE_SONIOX_PER_1K_CHARS", 0.0))
     price_search: float = field(default_factory=lambda: _float("PRICE_SEARCH", 0.008))

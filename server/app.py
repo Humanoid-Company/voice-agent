@@ -20,6 +20,7 @@ from .characters import CHARACTERS, DEFAULT_EMOTION, EMOTIONS, characters_payloa
 from .config import Config
 from .llm import OpenAILLM
 from .persona import SUPPORTED, Persona
+from .realtime import RealtimeLLM
 from .session import VoiceSession
 from .tts import TTSError, make_tts
 from .voices import list_voices, tts_providers
@@ -105,8 +106,10 @@ async def ws_call(ws: WebSocket) -> None:
         except TTSError as e:
             await ws.send_json({"type": "error", "message": str(e)})
             return
+        realtime = first.get("engine") == "realtime"
         session = VoiceSession(
             llm=OpenAILLM(cfg),
+            ears=RealtimeLLM(cfg) if realtime else None,
             tts=tts,
             send_json=ws.send_json,
             send_bytes=ws.send_bytes,
@@ -134,7 +137,9 @@ async def ws_call(ws: WebSocket) -> None:
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":
                 break
-            if msg.get("text"):
+            if msg.get("bytes"):
+                await session.on_audio(msg["bytes"])
+            elif msg.get("text"):
                 await session.on_client(json.loads(msg["text"]))
     except WebSocketDisconnect:
         pass

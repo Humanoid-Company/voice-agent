@@ -112,7 +112,7 @@ TOOLS = [
     ),
     _fn(
         "change_character",
-        "Switch to another character when the user asks for it by name («поклич Толіка», «хочу поговорити з котом», "
+        "Switch to another character when the user asks for it by name («поклич Анатолія», «хочу поговорити з Лесею», «давай Тараса», «поклич Кішку», «хочу поговорити з котом», "
         "«давай знову як Єва»). Characters: " + ", ".join(f"{c.label}" for c in CHARACTERS.values()) + ".",
         {"character": {"type": "string", "description": "The character's name as the user said it"}},
         ["character"],
@@ -694,7 +694,7 @@ class VoiceSession:
 
     async def _tool_set_name(self, args: dict) -> str:
         character = CHARACTERS[self.persona.character]
-        if character.character:  # Толік is Толік: only the plain character can be renamed
+        if character.character:  # Анатолій is Анатолій: only the plain character can be renamed
             return f"Тебе звати {character.label}, це ім'я персонажа, його не можна змінити. Скажи про це коротко, у своєму образі."
         name = sanitize_name(str(args.get("name") or ""))
         if not name:
@@ -748,9 +748,8 @@ class VoiceSession:
             self._pending = {**(self._pending or {}), "language": "uk"}
             await self._j({"type": "language", "code": "uk", "recognition": self.persona.recognition})
             extra = " Мова повернулась на українську: цей персонаж говорить лише нею."
-        # The voice stays as it is: it changes only when the user picks one («Застосувати», or by name), except a
-        # character that has a voice of its own (Тарас): it brings that voice. Otherwise only how it is delivered
-        # follows the character.
+        # One character, whichever provider speaks: it brings the voice it has for the provider selected now (the provider
+        # itself is not changed). A voice the user picks by hand stays until the next character.
         extra += await self._bind_voice(c)
         await self._persona_message()
         await self._retune()
@@ -759,15 +758,15 @@ class VoiceSession:
         return f"Тепер ти {c.label}. Відповідай у цьому образі з наступної фрази, коротко представся ним.{extra}"
 
     async def _bind_voice(self, c) -> str:
-        """The character's own voice goes on with it (if the provider has it and it is not already the one speaking)."""
-        bound = c.bound_voice
-        if bound is None or (bound.provider, bound.voice) == (self.provider, self.voice) or self._voices_for is None:
+        """The character's own voice on the provider that speaks now (if the provider has it and it is not already the one)."""
+        own = c.voice_for(self.provider)
+        if own is None or own.voice == self.voice or self._voices_for is None:
             return ""
-        voices = await self._voices_for(bound.provider, self.persona.language)
-        if not any(v["id"] == bound.voice for v in voices):
+        voices = await self._voices_for(self.provider, self.persona.language)
+        if not any(v["id"] == own.voice for v in voices):
             return ""
-        await self.request_voice(bound.provider, bound.voice)
-        return f" Голос теж змінюється на голос {c.label}: це його власний голос."
+        await self.request_voice(self.provider, own.voice)
+        return f" Голос теж змінюється на «{own.label}»: це голос цього образу."
 
     async def set_emotion(self, level: str) -> str:
         self.persona.emotion = level

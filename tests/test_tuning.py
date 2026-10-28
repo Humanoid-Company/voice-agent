@@ -135,7 +135,7 @@ def test_the_page_gets_no_sampling_defaults_and_the_character_menu():
         finally:
             app_module.tts_providers = original
         assert config["providers"][0]["voices"] == [{"id": "dmytro-conversation", "label": "Дмитро"}]  # no defaults to the page
-        assert [c["id"] for c in config["characters"]] == ["eva", "tolik", "kishka", "taras"]
+        assert [c["id"] for c in config["characters"]] == ["eva", "tolik", "kishka", "taras", "lesya", "mariia", "stepan"]
         assert [v["voice"] for v in {c["id"]: c for c in config["characters"]}["tolik"]["voices"]] == ["dmytro-conversation"]
 
     asyncio.run(go())

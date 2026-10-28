@@ -48,7 +48,7 @@ var CONFIG = {
     { id: "eva", label: "Єва", description: "Звичайна помічниця", voices: [] },
     { id: "tolik", label: "Толік", description: "Дворовий хуліган", voices: [["dmytro-conversation", "Дмитро"], ["ihoreo-conversation", "Ігорео"], ["yevhen-audiobook", "Євген"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
     { id: "kishka", label: "Кішка", description: "Говоряча кішка", voices: [["roksolana-conversation", "Роксолана"], ["kseniia-conversation", "Ксенія"], ["olesia-conversation", "Олеся"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; }) },
-    { id: "taras", label: "Тарас", description: "Лавелас", bound: { provider: "soniox", voice: "Daniel" }, // Daniel stands in for Taras here
+    { id: "taras", label: "Тарас", description: "Лавелас", voice_for: { soniox: "Daniel", respeecher: "oleksandr-radio" }, // Daniel stands in for Taras here
       voices: [{ provider: "soniox", voice: "Daniel", label: "Тарас" }].concat([["oleksandr-radio", "Олександр"], ["yevhen-audiobook", "Євген"]].map(function (v) { return { provider: "respeecher", voice: v[0], label: v[1] }; })) },
   ],
   missing: [],
@@ -463,21 +463,29 @@ playChunk(pcm(0, 480));
 stopPlayback();
 check("a cut-off drops what was waiting", pendingLen === 0 && sched.length === 0 && answerOpen === false);
 
-// Тарас brings his own voice: before a call into the selectors, in a call the server does it
+// One character, whichever provider speaks: it brings its voice on the selected provider (the provider is not changed)
 live = false; buildCharacterMenu(CONFIG.characters);
 E("provider").value = "respeecher"; fillVoices(); E("voice").value = "dmytro-conversation";
 E("character").value = "taras"; E("character").onchange();
-check("choosing Тарас before a call puts his voice in the selectors", E("provider").value === "soniox" && E("voice").value === "Daniel" && store["voice:soniox"] === "Daniel" && store["provider"] === "soniox");
+check("choosing Тарас on Respeecher puts his Respeecher voice in the selectors, the provider stays", E("provider").value === "respeecher" && E("voice").value === "oleksandr-radio" && store["voice:respeecher"] === "oleksandr-radio");
+E("provider").value = "soniox"; E("provider").onchange();
+check("switching the provider to Soniox puts his Soniox voice there", E("provider").value === "soniox" && E("voice").value === "Daniel" && store["voice:soniox"] === "Daniel");
+E("provider").value = "respeecher"; E("provider").onchange();
+check("and back: his Respeecher voice again", E("voice").value === "oleksandr-radio");
+E("character").value = "eva"; E("character").onchange();
+check("the plain character has no voice of its own: the voice stays", E("provider").value === "respeecher" && E("voice").value === "oleksandr-radio");
+E("voice").value = "dmytro-conversation"; E("voice").onchange();
 E("character").value = "tolik"; E("character").onchange();
-check("another character leaves that voice as it is", E("provider").value === "soniox" && E("voice").value === "Daniel");
+check("a character with no voice on this provider in the list leaves the voice as picked", E("voice").value === "dmytro-conversation");
+// in a call the server does it
 live = true; ready = true; ws = { readyState: 1, send: function (m) { sent.push(JSON.parse(m)); }, close: function () {} };
 activeVoice = { provider: "respeecher", voice: "dmytro-conversation" };
 E("provider").value = "respeecher"; fillVoices(); E("voice").value = "dmytro-conversation";
 sent.length = 0;
 E("character").value = "taras"; E("character").onchange();
-check("in a call the page only sends the character: the voice is the server's to switch", sent.some(function (m) { return m.type === "style" && m.character === "taras"; }) && !sent.some(function (m) { return m.type === "voice"; }) && E("provider").value === "respeecher");
-onMessage({ data: JSON.stringify({ type: "voice", provider: "soniox", voice: "Daniel", sample_rate: 24000, language: "uk" }) });
-check("and the selectors follow the server's voice message", E("provider").value === "soniox" && E("voice").value === "Daniel");
+check("in a call the page only sends the character: the voice is the server's to switch", sent.some(function (m) { return m.type === "style" && m.character === "taras"; }) && !sent.some(function (m) { return m.type === "voice"; }) && E("provider").value === "respeecher" && E("voice").value === "dmytro-conversation");
+onMessage({ data: JSON.stringify({ type: "voice", provider: "respeecher", voice: "oleksandr-radio", sample_rate: 24000, language: "uk" }) });
+check("and the selectors follow the server's voice message", E("provider").value === "respeecher" && E("voice").value === "oleksandr-radio");
 live = false;
 
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

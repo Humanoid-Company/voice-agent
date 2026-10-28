@@ -60,7 +60,7 @@ function load(key) { try { return localStorage.getItem(key); } catch (e) { retur
 
 // Any voice can be chosen for any character. The voices that suit the current one are marked with ★ and come first.
 const characterVoices = {}; // character id -> [{ provider, voice, label }] from the server
-const characterBound = {}; // character id -> { provider, voice }: the voice that goes with the character (Тарас), if the server has it
+const characterVoiceFor = {}; // character id -> { provider: voice id }: the voice that goes with the character on each provider (the server's list)
 
 function recommendedVoices(provider) { // in the character's own order: the first is the best fit
   return (characterVoices[characterId()] || []).filter((v) => v.provider === provider).map((v) => v.voice);
@@ -1076,7 +1076,15 @@ function resetVoiceApply() {
   el.voiceApply.textContent = "Застосувати голос";
 }
 
-el.provider.onchange = () => { stopPreview(); fillVoices(); updateVoiceApply(); updateButtons(); };
+el.provider.onchange = () => {
+  stopPreview();
+  fillVoices();
+  // The provider changes, the character stays: its voice on this provider is picked (and can be changed by hand after).
+  const own = characterVoiceFor[characterId()]?.[el.provider.value];
+  if (own && [...el.voice.options].some((o) => o.value === own)) { el.voice.value = own; save("voice:" + el.provider.value, own); }
+  updateVoiceApply();
+  updateButtons();
+};
 el.voice.onchange = () => { stopPreview(); save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); };
 function applyVoice() {
   el.voiceApply.hidden = false;
@@ -1117,7 +1125,7 @@ function setRecLang(code) {
 
 // The character is a manner (its own name, how it talks); the emotion is how alive the delivery is. The voice is a
 // separate choice, any voice, and never changes by itself: not with the character, not when the character is asked
-// for by voice («поклич Толіка»). What follows the character and the emotion is only how the same voice is delivered
+// for by voice («поклич Тараса»). What follows the character and the emotion is only how the same voice is delivered
 // (the «Підлаштовувати звучання» switch), and the voice list marks the voices that suit the character.
 function parseCharacter(value) {
   // An old stored choice can be «tolik|respeecher|voice» (when the menu had a voice per entry) or «kit».
@@ -1140,7 +1148,7 @@ function buildCharacterMenu(characters) {
     option.dataset.desc = c.description;
     el.character.add(option);
     characterVoices[c.id] = c.voices || [];
-    characterBound[c.id] = c.bound || null;
+    characterVoiceFor[c.id] = c.voice_for || {};
   }
   const want = parseCharacter(load("character")).id;
   el.character.value = [...el.character.options].some((o) => o.value === want) ? want : "eva";
@@ -1204,10 +1212,11 @@ el.character.onchange = () => {
   save("character", characterId());
   describeCharacter();
   refreshVoiceList();
-  // A character with a voice of its own brings it. In a call the server does it (and answers with the voice, which the
-  // selectors then follow); before one the selectors are set here, so the call starts with that voice.
-  const bound = characterBound[characterId()];
-  if (bound && !live) selectVoice(bound.provider, bound.voice);
+  // One character, whichever provider speaks: it brings its voice on the provider selected now (the provider is not
+  // changed). In a call the server does it (and answers with the voice, which the selectors then follow); before one the
+  // selectors are set here, so the call starts with that voice.
+  const own = characterVoiceFor[characterId()]?.[el.provider.value];
+  if (own && !live) selectVoice(el.provider.value, own);
   if (live) sendStyle();
 };
 el.emotion.onchange = () => { save("emotion", el.emotion.value); if (live) sendStyle(); };

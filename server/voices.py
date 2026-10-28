@@ -39,9 +39,11 @@ async def _respeecher(cfg: Config, client: httpx.AsyncClient, language: str = "u
 
 
 # Soniox offers ~200 multilingual voices (Japanese, Hindi, Spanish…), in groups by the language each one is made for.
-# For Ukrainian only the Ukrainian-named ones are offered (picked by name and group, not by ear); the other
-# Slavic-group voices (Andrei, Vadim, Kirill) are Russian-named. Other languages get the full list.
-SONIOX_UKRAINIAN = ("Taras", "Bohdan", "Yana")
+# For Ukrainian a few are offered, picked by name and group, not by ear: the Ukrainian-named ones first (Taras, Bohdan,
+# Yana), then three more so that each of the six characters can have a voice of its own (Andrei of the Slavic group; Nina
+# and Emma are women's voices of the first, language-neutral group: Soniox has only one Slavic woman). Other languages get
+# the full list.
+SONIOX_UKRAINIAN = ("Taras", "Bohdan", "Andrei", "Yana", "Nina", "Emma")
 
 
 async def _soniox(cfg: Config, client: httpx.AsyncClient, language: str = "uk") -> list[dict]:

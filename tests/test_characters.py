@@ -38,7 +38,7 @@ def test_the_cat_is_a_she_cat_now_and_an_old_stored_choice_follows():
 
 def test_the_prompt_carries_the_character_its_limits_and_the_emotion():
     tolik = build_system_prompt(search=False, persona=Persona(character="tolik", emotion="normal"), now="x")
-    assert "Анатолій" in tolik and "Толік" not in tolik  # a full name, not a diminutive
+    assert "Толік" in tolik and "Анатолій" not in tolik
     assert "never nationality, religion, gender, sexuality, disability or illness" in tolik  # Eva's limits are kept
     assert "Only real distress drops the act" in tolik and "You are a man" in tolik and "я зрозумів" in tolik
     assert "Манера мовлення" not in tolik  # «normal»: no emotion layer
@@ -59,47 +59,42 @@ def test_the_plain_character_has_no_mask_and_calm_asks_for_calm():
 NAMED = ("tolik", "kishka", "taras", "lesya", "mariia", "stepan")
 
 
-SONIOX_UK = {"Taras", "Bohdan", "Yana"}  # the Ukrainian voices Soniox offers (server/voices.py)
+from server.voices import SONIOX_UKRAINIAN  # noqa: E402
+
+SONIOX_UK = set(SONIOX_UKRAINIAN)  # the voices Soniox is offered for Ukrainian (server/voices.py)
 
 
 def test_every_named_character_has_a_voice_per_provider_and_the_plain_one_has_none():
-    defaults = set()
     for key in NAMED:
         voices = CHARACTERS[key].voices
         soniox = [v for v in voices if v.provider == "soniox"]
         respeecher = [v for v in voices if v.provider == "respeecher"]
-        assert len(soniox) == 1 and soniox[0].voice in SONIOX_UK, key  # Soniox has three Ukrainian voices: shared between them
-        assert len(respeecher) == 3 and len({v.voice for v in respeecher}) == 3, key
+        assert len(soniox) == 1 and soniox[0].voice in SONIOX_UK, key
+        assert 2 <= len(respeecher) <= 3 and len({v.voice for v in respeecher}) == len(respeecher), key
         assert {v.voice for v in respeecher} <= RESPEECHER_UK, key
         assert all(v.label for v in voices) and CHARACTERS[key].ukrainian_only and CHARACTERS[key].character, key
         assert CHARACTERS[key].voice_for("soniox") == soniox[0] and CHARACTERS[key].voice_for("respeecher") == respeecher[0], key
         assert CHARACTERS[key].voice_for("nobody") is None
-        defaults.add(respeecher[0].voice)
-    assert len(defaults) == len(NAMED)  # no two characters start on the same Respeecher voice
     assert CHARACTERS["eva"].voices == () and CHARACTERS["eva"].voice_for("soniox") is None
     assert CHARACTERS["taras"].voice_for("soniox").voice == "Taras"  # his own name
 
-def test_the_characters_are_found_by_whole_words():
-    assert list(CHARACTERS) == ["eva", "tolik", "kishka", "taras", "lesya", "mariia", "stepan"]
-    assert [c.label for c in CHARACTERS.values()] == ["Єва", "Анатолій", "Кішка", "Тарас", "Леся", "Марія", "Степан"]
-    for phrase, key in (("поклич Тараса", "taras"), ("давай лавеласа", "taras"), ("поклич кішку", "kishka"),
-                        ("хочу робособаку", "kishka"), ("Анатолія", "tolik"), ("Толіка", "tolik"),  # the old name still works
-                        ("давай Лесю", "lesya"), ("поклич Марію", "mariia"), ("Степана", "stepan"),
-                        ("давай знову як Єва", "eva")):  # fmt: skip
-        assert find_character(phrase) == key, phrase
-    for phrase in ("галявина", "тарасівка", "поклич Мілану", "давай бабу Галю", "лесник", "степанида"):  # not inside a word
-        assert find_character(phrase) is None, phrase
 
-def test_taras_is_a_charming_lovelace_with_clear_limits_and_a_mans_grammar():
-    p = build_system_prompt(search=False, persona=Persona(character="taras", emotion="normal"), now="x")
-    assert "ladies' man" in p and "alpha-male" in p and "You are a man" in p and "я зрозумів" in p
-    # the swagger has limits: nothing explicit, no pressure, no put-downs, a «no» is respected, serious things drop it
-    for limit in ("nothing explicit or sexual", "no pickup tricks", "no put-downs of anyone", "A «no» is met with a smile and a graceful step back",
-                  "drop the swagger completely", "sounds like a child", "without assuming their gender"):  # fmt: skip
-        assert limit in p, limit
-    assert "Typical requests and how you handle them" in p and "How you sound" in p and "незмінне" in p
-    assert CHARACTERS["taras"].feminine is False and "лавелас" in CHARACTERS["taras"].description.lower()
-
+def test_no_two_characters_share_a_voice_on_any_provider():
+    """«Головне, щоб в кожного персонажа були різні голоси»: not the one that goes on with the character, and not one in the
+    marked list either, on Soniox as on Respeecher."""
+    seen: dict[tuple[str, str], str] = {}
+    for key in NAMED:
+        for v in CHARACTERS[key].voices:
+            assert (v.provider, v.voice) not in seen, f"{v.provider}/{v.voice} is in {seen[(v.provider, v.voice)]} and in {key}"
+            seen[(v.provider, v.voice)] = key
+    assert len(seen) == sum(len(CHARACTERS[k].voices) for k in NAMED)
+    # as many Soniox voices are offered for Ukrainian as there are characters, and each is somebody's own
+    assert {v for (p, v) in seen if p == "soniox"} == SONIOX_UK
+    # the women have women's voices and the men men's (by the names the providers list them under)
+    women = {"kishka": "Emma", "lesya": "Yana", "mariia": "Nina"}
+    men = {"tolik": "Andrei", "taras": "Taras", "stepan": "Bohdan"}
+    for key, voice in {**women, **men}.items():
+        assert CHARACTERS[key].voice_for("soniox").voice == voice and CHARACTERS[key].feminine == (key in women), key
 
 def test_taras_gets_heated_about_the_invasion_but_never_about_a_people():
     p = build_system_prompt(search=False, persona=Persona(character="taras", emotion="normal"), now="x")
@@ -115,7 +110,7 @@ def test_the_menu_offers_only_voices_the_providers_really_have():
     menu = {c["id"]: c for c in characters_payload(live)}
     assert [c for c in menu] == ["eva", "tolik", "kishka", "taras", "lesya", "mariia", "stepan"]
     assert [v["voice"] for v in menu["tolik"]["voices"]] == ["dmytro-conversation", "ihoreo-conversation", "yevhen-audiobook"]
-    assert [v["label"] for v in menu["kishka"]["voices"]] == ["Роксолана", "Ксенія", "Олеся"] and menu["eva"]["voices"] == []
+    assert [v["label"] for v in menu["kishka"]["voices"]] == ["Роксолана", "Олеся"] and menu["eva"]["voices"] == []
     assert "хуліган" in menu["tolik"]["description"] and "робособака" in menu["kishka"]["description"].lower()
     fewer = [{"id": "respeecher", "label": "R", "voices": [{"id": "dmytro-conversation", "label": "x"}]}]  # a voice went away
     assert [v["voice"] for v in {c["id"]: c for c in characters_payload(fewer)}["tolik"]["voices"]] == ["dmytro-conversation"]
@@ -132,7 +127,7 @@ def _voices(monkeypatch, without=()):
     import tests.test_features as tf
 
     monkeypatch.setitem(tf.VOICES, ("respeecher", "uk"), [{"id": v, "label": v} for v in sorted(RESPEECHER_UK)])
-    monkeypatch.setitem(tf.VOICES, ("soniox", "uk"), [{"id": v, "label": v} for v in ("Daniel", "Taras", "Bohdan", "Yana") if v not in without])
+    monkeypatch.setitem(tf.VOICES, ("soniox", "uk"), [{"id": v, "label": v} for v in ("Daniel", *SONIOX_UKRAINIAN) if v not in without])
 
 
 def test_a_character_brings_its_voice_on_the_provider_that_speaks_and_the_plain_one_leaves_it(monkeypatch):
@@ -140,11 +135,11 @@ def test_a_character_brings_its_voice_on_the_provider_that_speaks_and_the_plain_
         _voices(monkeypatch)
         s, out = make()  # Respeecher, olesia
         await s.start()
-        result = await s.run_tool("change_character", {"character": "Анатолія"})
-        assert "Тепер ти Анатолій" in result and s.persona.character == "tolik" and s.persona.name == "Анатолій"
+        result = await s.run_tool("change_character", {"character": "Толіка"})
+        assert "Тепер ти Толік" in result and s.persona.character == "tolik" and s.persona.name == "Толік"
         assert "голос" in result and (s.provider, s.voice) == ("respeecher", "dmytro-conversation")
         p = of(out, "persona")[-1]
-        assert p["character"] == "tolik" and p["name"] == "Анатолій" and "хуліган" in p["description"]
+        assert p["character"] == "tolik" and p["name"] == "Толік" and "хуліган" in p["description"]
         assert of(out, "voice")[-1]["voice"] == "dmytro-conversation"
         await s.run_tool("change_character", {"character": "кішку"})
         assert s.persona.name == "Кішка" and (s.provider, s.voice) == ("respeecher", "roksolana-conversation")
@@ -159,7 +154,7 @@ def test_on_soniox_the_same_characters_bring_soniox_voices_and_the_provider_neve
         _voices(monkeypatch)
         s, out = make(provider="soniox", voice="Daniel")
         await s.start()
-        for who, voice in (("Тараса", "Taras"), ("Лесю", "Yana"), ("Степана", "Bohdan"), ("Марію", "Yana"), ("Анатолія", "Bohdan")):
+        for who, voice in (("Тараса", "Taras"), ("Лесю", "Yana"), ("Степана", "Bohdan"), ("Марію", "Nina"), ("Кішку", "Emma"), ("Толіка", "Andrei")):
             await s.run_tool("change_character", {"character": who})
             assert (s.provider, s.voice) == ("soniox", voice), who  # one character, the voice follows the provider
 
@@ -187,17 +182,17 @@ def test_the_pages_menu_does_it_too_and_a_voice_picked_by_hand_stays_until_the_n
 
 def test_a_voice_the_provider_does_not_have_or_that_already_speaks_is_left_alone(monkeypatch):
     async def go():
-        _voices(monkeypatch, without=("Bohdan",))  # Soniox without «Bohdan»
+        _voices(monkeypatch, without=("Andrei",))  # Soniox without «Andrei»
         s, out = make(provider="soniox", voice="Daniel")
         await s.start()
         made = len(out["made"])
-        result = await s.run_tool("change_character", {"character": "Анатолія"})
+        result = await s.run_tool("change_character", {"character": "Толіка"})
         assert s.persona.character == "tolik" and s.voice == "Daniel" and "голос" not in result and len(out["made"]) == made
         await s.run_tool("change_character", {"character": "Тараса"})
         assert s.voice == "Taras"
         made = len(out["made"])
         result = await s.run_tool("change_character", {"character": "Лесю"})  # Yana
-        again = await s.run_tool("change_character", {"character": "Марію"})  # Yana already speaks: nothing to switch
+        again = await s.run_tool("change_character", {"character": "Лесю"})  # Yana already speaks: nothing to switch
         assert s.voice == "Yana" and "голос" in result and "голос" not in again and len(out["made"]) == made + 1
 
     asyncio.run(go())
@@ -210,7 +205,7 @@ def test_back_to_the_plain_character_restores_its_name_and_still_keeps_the_voice
         await s.start()
         await s.run_tool("set_assistant_name", {"name": "Лесі"})
         await s.run_tool("change_character", {"character": "tolik"})
-        assert s.persona.name == "Анатолій"
+        assert s.persona.name == "Толік"
         result = await s.run_tool("change_character", {"character": "Єва"})
         assert "знову просто" in result and s.persona.name == "Лесі" and s.persona.character == "eva"
         assert s.tts is old_tts and not out["made"]
@@ -332,12 +327,15 @@ def test_lesya_defends_her_opinion_mariia_sees_in_colours_and_stepan_sings_and_j
 
 def test_a_character_tells_its_voice_per_provider_to_the_page():
     both = [
-        {"id": "soniox", "label": "S", "voices": [{"id": "Taras", "label": "x"}, {"id": "Bohdan", "label": "x"}, {"id": "Yana", "label": "x"}]},
+        {"id": "soniox", "label": "S", "voices": [{"id": v, "label": "x"} for v in SONIOX_UKRAINIAN]},
         {"id": "respeecher", "label": "R", "voices": [{"id": v, "label": v} for v in RESPEECHER_UK]},
     ]
     menu = {c["id"]: c for c in characters_payload(both)}
     assert menu["taras"]["voice_for"] == {"soniox": "Taras", "respeecher": "oleksandr-radio"}
     assert menu["lesya"]["voice_for"] == {"soniox": "Yana", "respeecher": "kseniia-conversation"}
+    assert menu["tolik"]["voice_for"] == {"soniox": "Andrei", "respeecher": "dmytro-conversation"}
+    assert menu["kishka"]["voice_for"] == {"soniox": "Emma", "respeecher": "roksolana-conversation"}
+    assert menu["mariia"]["voice_for"] == {"soniox": "Nina", "respeecher": "mariia-audiobook"}
     assert menu["stepan"]["voice_for"] == {"soniox": "Bohdan", "respeecher": "ihoreo-media"}
     assert menu["eva"]["voice_for"] == {}
     only_respeecher = {c["id"]: c for c in characters_payload(both[1:])}

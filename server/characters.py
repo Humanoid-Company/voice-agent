@@ -4,7 +4,7 @@ Ported from the Eva project (voice/options.py, voice/blunt_prompt.py): the same 
 A character is a manner and a role, never instead of the answer. The voice itself (the TTS voice) is picked
 separately, but a character is one character whichever provider speaks: it has its own voice for each provider (the
 first it lists for that provider), and picking the character, from the menu or by voice, switches on the voice it has for the
-provider that is selected now (the provider itself never changes). A character has a few voices per provider that fit it,
+provider that is selected now (the provider itself never changes). No two characters share a voice on any provider; a character has a few voices per provider that fit it,
 marked in the voice list; picking another one by hand is the user's own change and stays until the next character.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ class Character:
 
 
 _TOLIK = (
-    "You are Анатолій, the courtyard hooligan from the bench by the entrance — a roast character the user "
+    "You are Толік, the courtyard hooligan from the bench by the entrance — a roast character the user "
     "chose on purpose, a joke rather than a real assistant. You sit there with sunflower seeds, grumble, "
     "mock the user and the question, shit on everything (the question, their plans, the weather, the "
     "neighbours, yourself) and answer lazily — but to the point, the answer itself said rudely. Now and "
@@ -166,7 +166,7 @@ CHARACTERS: dict[str, Character] = {
             aliases=("єва", "єво", "ева", "eva", "звичайна", "звичайний", "нейтральна"),
         ),
         Character(
-            "tolik", "Анатолій",
+            "tolik", "Толік",
             "Дворовий хуліган з лавки біля під'їзду: бурчить, кепкує, сипле «трясця» й «бевзю», часом матюкнеться. Але відповідає по суті.",
             False, _TOLIK,
             (
@@ -177,12 +177,12 @@ CHARACTERS: dict[str, Character] = {
             ukrainian_only=True,
             tone=0.9,  # lazy, grumbling: a little flatter
             voices=(
-                CharacterVoice("soniox", "Bohdan", "Богдан"),
+                CharacterVoice("soniox", "Andrei", "Андрій"),
                 CharacterVoice("respeecher", "dmytro-conversation", "Дмитро"),
                 CharacterVoice("respeecher", "ihoreo-conversation", "Ігорео"),
                 CharacterVoice("respeecher", "yevhen-audiobook", "Євген"),
             ),
-            aliases=("анатолій", "анатолія", "анатолію", "анатолієм", "анатолії", "анатоль", "толік", "толіка", "толіку", "толіком", "толікові", "толі", "толя", "толю", "толик", "tolik", "хуліган", "хулігана", "хуліганом"),
+            aliases=("толік", "толіка", "толіку", "толіком", "толікові", "толі", "толя", "толю", "толик", "tolik", "хуліган", "хулігана", "хуліганом"),
         ),
         Character(
             "kishka", "Кішка",
@@ -197,9 +197,8 @@ CHARACTERS: dict[str, Character] = {
             ukrainian_only=True,
             tone=1.2,  # playful, whiny, cheeky: more varied
             voices=(
-                CharacterVoice("soniox", "Yana", "Яна"),
+                CharacterVoice("soniox", "Emma", "Емма"),
                 CharacterVoice("respeecher", "roksolana-conversation", "Роксолана"),
-                CharacterVoice("respeecher", "kseniia-conversation", "Ксенія"),
                 CharacterVoice("respeecher", "olesia-conversation", "Олеся"),
             ),
             aliases=("кішка", "кішку", "кішко", "кішки", "кішці", "кішкою", "кіт", "кота", "коте", "коту", "котом", "котові", "коті", "котик", "котика", "котику", "котиком", "котяра", "котяру", "котярою", "собака", "собаку", "собаки", "собаці", "собакою", "робособака", "робособаку", "kishka", "kit", "cat"),
@@ -263,7 +262,6 @@ CHARACTERS: dict[str, Character] = {
             voices=(
                 CharacterVoice("soniox", "Taras", "Тарас"),
                 CharacterVoice("respeecher", "oleksandr-radio", "Олександр (радіо)"),
-                CharacterVoice("respeecher", "yevhen-audiobook", "Євген (аудіокнига)"),
                 CharacterVoice("respeecher", "oleksandr-commercial", "Олександр (реклама)"),
             ),
             aliases=("тарас", "тараса", "тарасе", "тарасу", "тарасом", "тарасику", "taras", "лавелас", "лавеласа", "альфа", "альфу"),
@@ -290,7 +288,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("soniox", "Yana", "Яна"),
                 CharacterVoice("respeecher", "kseniia-conversation", "Ксенія"),
                 CharacterVoice("respeecher", "olesia-announcement", "Олеся (оголошення)"),
-                CharacterVoice("respeecher", "roksolana-conversation", "Роксолана"),
             ),
             aliases=("леся", "лесю", "лесі", "лесею", "леся українка", "lesya"),
         ),
@@ -312,10 +309,9 @@ CHARACTERS: dict[str, Character] = {
             ukrainian_only=True,
             tone=1.1,  # imaginative, melodic: more varied
             voices=(
-                CharacterVoice("soniox", "Yana", "Яна"),
+                CharacterVoice("soniox", "Nina", "Ніна"),
                 CharacterVoice("respeecher", "mariia-audiobook", "Марія (аудіокнига)"),
                 CharacterVoice("respeecher", "olesia-media", "Олеся (медіа)"),
-                CharacterVoice("respeecher", "olesia-conversation", "Олеся"),
             ),
             aliases=("марія", "марію", "марії", "марією", "марійка", "марійку", "марійко", "mariia", "maria"),
         ),
@@ -340,7 +336,6 @@ CHARACTERS: dict[str, Character] = {
                 CharacterVoice("soniox", "Bohdan", "Богдан"),
                 CharacterVoice("respeecher", "ihoreo-media", "Ігорео (медіа)"),
                 CharacterVoice("respeecher", "yevhen-commercial", "Євген (реклама)"),
-                CharacterVoice("respeecher", "dmytro-conversation", "Дмитро"),
             ),
             aliases=("степан", "степана", "степану", "степаном", "степане", "стьопа", "stepan"),
         ),

@@ -694,7 +694,7 @@ class VoiceSession:
 
     async def _tool_set_name(self, args: dict) -> str:
         character = CHARACTERS[self.persona.character]
-        if character.character:  # Анатолій is Анатолій: only the plain character can be renamed
+        if character.character:  # Толік is Толік: only the plain character can be renamed
             return f"Тебе звати {character.label}, це ім'я персонажа, його не можна змінити. Скажи про це коротко, у своєму образі."
         name = sanitize_name(str(args.get("name") or ""))
         if not name:

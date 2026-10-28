@@ -168,3 +168,9 @@ summary { cursor: pointer; font-weight: 600; font-size: 1.05rem; }
 .timeline .trow.warn { color: var(--warn); }
 
 .btn.wide { width: 100%; margin-top: 10px; }
+/* The voice: a provider and a voice side by side with «Прослухати» (as in Eva), «Застосувати голос» right under them. */
+.voice-block { margin-top: 16px; }
+.voice-block .block-label { margin-bottom: 6px; }
+.voice-pick { margin-top: 0; }
+.voice-pick select { flex: 1 1 130px; width: auto; min-width: 0; }
+.voice-pick .btn { flex: 0 0 auto; white-space: nowrap; }

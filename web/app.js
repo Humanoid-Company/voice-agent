@@ -15,7 +15,7 @@ const el = {
   tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"), engine: $("engine"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
-  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"),
+  historyBack: $("historyBack"), historyCopy: $("historyCopy"), historyStats: $("historyStats"), timeline: $("timeline"), bargeSens: $("bargeSens"), devicesInfo: $("devicesInfo"), devicesAllow: $("devicesAllow"), copyChat: $("copyChat"), clearChat: $("clearChat"),
   usageTable: $("usageTable"), openHistory: $("openHistory"), openUsage: $("openUsage"),
   historyDialog: $("historyDialog"), usageDialog: $("usageDialog"),
 };
@@ -907,6 +907,34 @@ function renderHistory() {
 
 el.historyBack.onclick = () => { viewing = null; renderHistory(); };
 el.newChat.onclick = newConversation;
+
+// «Очистити»: this conversation is gone from the screen, the history and the agent's memory. Two presses (the second
+// within 3 s), because it cannot be undone and «Нова розмова» is the button for keeping it.
+let clearArmed = null;
+
+function disarmClear() {
+  clearTimeout(clearArmed);
+  clearArmed = null;
+  el.clearChat.textContent = "Очистити";
+}
+
+el.clearChat.onclick = () => {
+  if (!clearArmed) {
+    el.clearChat.textContent = "Точно очистити?";
+    clearArmed = setTimeout(disarmClear, 3000);
+    return;
+  }
+  disarmClear();
+  clearChat();
+};
+
+function clearChat() {
+  if (current) { deleteConversation(current.id); return; } // also resets the log and the agent's memory
+  viewing = null;
+  resetLog();
+  if (live) send({ type: "history", history: [] });
+  renderHistory();
+}
 
 // ---------------------------------------------------------------- the windows behind the two buttons at the top
 

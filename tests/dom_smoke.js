@@ -359,4 +359,23 @@ E("tuneVoice").checked = false; E("tuneVoice").onchange();
 check("the switch is saved and sent", store["tune"] === "0" && sent.some(function (m) { return m.type === "style" && m.tune === false; }));
 E("tuneVoice").checked = true; E("tuneVoice").onchange();
 check("and back on", store["tune"] === "1");
+// a voice is never applied without «Застосувати голос»: neither a new voice nor a new provider
+live = true; ready = true; ws = { readyState: 1, send: function (m) { sent.push(JSON.parse(m)); }, close: function () {} };
+activeVoice = { provider: "respeecher", voice: "olesia" };
+sent.length = 0;
+E("provider").value = "soniox"; E("provider").onchange();
+check("a provider change mid-call sends no voice and offers the button", !sent.some(function (m) { return m.type === "voice"; }) && E("voiceApply").hidden === false);
+E("provider").value = "respeecher"; E("provider").onchange(); E("voice").value = "olesia"; E("voice").onchange();
+// «Очистити»: the first press only asks, the second wipes the conversation, its history entry and the agent's memory
+logEvent("user", "привіт"); logEvent("assistant", "добрий день");
+var before = convs.length;
+check("a conversation is being recorded", current !== null && before > 0);
+sent.length = 0;
+E("clearChat").onclick();
+check("the first press only asks to confirm", E("clearChat").textContent === "Точно очистити?" && current !== null && convs.length === before);
+E("clearChat").onclick();
+check("the second press clears the chat, the history entry and the agent's memory",
+  current === null && convs.length === before - 1 && E("clearChat").textContent === "Очистити"
+  && sent.some(function (m) { return m.type === "history" && m.history.length === 0; })
+  && E("log").innerHTML.indexOf("empty") >= 0);
 print(failed ? "SMOKE FAILED" : "SMOKE OK");

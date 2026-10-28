@@ -43,18 +43,15 @@
       </div>
       <p class="hint name-line">Асистент: <strong id="assistantName">Єва</strong>. Голосом можна сказати «тепер тебе звати …», «змін голос на …», «говори англійською», «досить, до побачення».</p>
 
-      <div class="settings">
-        <div>
-          <label for="provider">Голос: провайдер</label>
-          <select id="provider" disabled><option>Завантаження…</option></select>
-        </div>
-        <div>
-          <label for="voice">Голос</label>
+      <div class="voice-block">
+        <label class="block-label" for="voice">Голос</label>
+        <div class="row voice-pick">
+          <select id="provider" disabled aria-label="Провайдер голосу"><option>Завантаження…</option></select>
           <select id="voice" disabled></select>
+          <button id="voicePreview" class="btn" type="button" disabled title="Короткий зразок вибраного голосу. Під час розмови недоступно.">▶ Прослухати</button>
         </div>
+        <button id="voiceApply" class="btn primary wide" type="button" hidden>Застосувати голос</button>
       </div>
-      <button id="voicePreview" class="btn small-btn" type="button" disabled title="Короткий зразок вибраного голосу. Під час розмови недоступно.">▶ Прослухати</button>
-      <button id="voiceApply" class="btn primary wide" type="button" hidden>Застосувати голос</button>
       <div class="settings">
         <div>
           <label for="character">Характер</label>
@@ -144,7 +141,8 @@
         <h2>Розмова</h2>
         <div class="head-actions">
           <button id="copyChat" class="btn ghost small-btn" type="button">Скопіювати</button>
-          <button id="newChat" class="btn ghost small-btn" type="button">Нова розмова</button>
+          <button id="newChat" class="btn ghost small-btn" type="button" title="Почати нову розмову; ця лишиться в історії">Нова розмова</button>
+          <button id="clearChat" class="btn ghost small-btn" type="button" title="Стерти цю розмову: і з екрана, і з історії, і з пам'яті агента">Очистити</button>
         </div>
       </div>
       <div id="log" class="log" aria-live="polite">

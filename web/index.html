@@ -53,6 +53,7 @@
           <select id="voice" disabled></select>
         </div>
       </div>
+      <button id="voicePreview" class="btn small-btn" type="button" disabled title="Короткий зразок вибраного голосу. Під час розмови недоступно.">▶ Прослухати</button>
       <button id="voiceApply" class="btn primary wide" type="button" hidden>Застосувати голос</button>
       <div class="settings">
         <div>
@@ -77,6 +78,14 @@
         <input id="tuneVoice" type="checkbox" class="switch" role="switch" checked>
       </label>
       <p id="tuningInfo" class="hint"></p>
+
+      <label class="setting" for="greet">
+        <span class="setting-text">
+          <span class="setting-title">Вітатися першим, коли починаєте розмову</span>
+          <span class="hint">Агент щоразу вітається по-новому, у своїй манері. Вимкніть, якщо хочете, щоб він мовчав, поки ви не заговорите.</span>
+        </span>
+        <input id="greet" type="checkbox" class="switch" role="switch" checked>
+      </label>
 
       <button id="talk" class="btn primary big" disabled>Почати розмову</button>
       <div class="row">

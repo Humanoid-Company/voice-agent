@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +20,7 @@ from .characters import CHARACTERS, DEFAULT_EMOTION, EMOTIONS, characters_payloa
 from .config import Config
 from .llm import OpenAILLM
 from .persona import SUPPORTED, Persona
+from .preview import PreviewError, VoicePreviews
 from .realtime import RealtimeLLM
 from .session import VoiceSession
 from .tts import TTSError, make_tts
@@ -86,6 +87,19 @@ async def api_config() -> dict:
     }
 
 
+previews = VoicePreviews()
+
+
+@app.get("/api/preview")
+async def api_preview(provider: str, voice: str, language: str = "uk") -> Response:
+    """A sample of a voice for the page's «Прослухати» (WAV; the browser keeps it)."""
+    try:
+        wav = await previews.get(cfg, provider, voice, language, make_tts=make_tts, list_voices=list_voices)
+    except PreviewError as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e
+    return Response(wav, media_type="audio/wav", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.websocket("/ws")
 async def ws_call(ws: WebSocket) -> None:
     await ws.accept()
@@ -126,6 +140,7 @@ async def ws_call(ws: WebSocket) -> None:
             voices_for=lambda p, lang: list_voices(cfg, p, lang),
             history=first.get("history"),
             tune=first.get("tune") is not False,
+            greet=first.get("greet") is not False,
         )
         try:
             await session.start()

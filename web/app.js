@@ -11,7 +11,7 @@ const el = {
   recog: $("recog"), micMute: $("micMute"), talk: $("talk"), interrupt: $("interrupt"), log: $("log"), newChat: $("newChat"),
   pause: $("pause"), bgListen: $("bgListen"), volume: $("volume"), volumeValue: $("volumeValue"), meter: $("meter"),
   assistantName: $("assistantName"), micSelect: $("micSelect"), speakerSelect: $("speakerSelect"),
-  voiceApply: $("voiceApply"), character: $("character"), emotion: $("emotion"), characterInfo: $("characterInfo"),
+  voiceApply: $("voiceApply"), voicePreview: $("voicePreview"), greet: $("greet"), character: $("character"), emotion: $("emotion"), characterInfo: $("characterInfo"),
   tuneVoice: $("tuneVoice"), tuningInfo: $("tuningInfo"), engine: $("engine"),
   hearing: $("hearing"), levelFill: $("levelFill"), levelNeed: $("levelNeed"), hearingStatus: $("hearingStatus"),
   hearLog: $("hearLog"), historyList: $("historyList"), memorySel: $("memorySel"), historyView: $("historyView"),
@@ -73,6 +73,7 @@ function fillVoices() {
   for (const v of voices.filter((x) => !recIds.includes(x.id))) el.voice.add(new Option(v.label, v.id));
   const saved = load("voice:" + el.provider.value);
   if (saved && p && p.voices.some((v) => v.id === saved)) el.voice.value = saved;
+  updateButtons(); // «Прослухати» needs a picked voice
 }
 
 // A sleeping free-tier backend takes up to a minute to start: wait for it instead of failing.
@@ -140,8 +141,43 @@ function updateButtons() {
   el.pause.textContent = paused ? "Продовжити" : "Пауза";
   el.pause.classList.toggle("primary", paused);
   el.interrupt.hidden = !(live && !paused && (curState === "thinking" || curState === "speaking"));
+  el.voicePreview.disabled = live || !el.voice.value; // a sample would talk over the agent, and the agent would hear it
   updateVoiceApply();
 }
+
+// ---------------------------------------------------------------- voice sample («▶ Прослухати»)
+
+let preview = null;
+
+function stopPreview() {
+  if (preview) {
+    preview.onplaying = preview.onended = preview.onerror = null;
+    preview.pause();
+    preview.removeAttribute("src"); // unloaded, not only paused
+    preview.load();
+    preview = null;
+  }
+  el.voicePreview.textContent = "▶ Прослухати";
+}
+
+function togglePreview() {
+  if (preview) { stopPreview(); return; }
+  if (live || !el.voice.value) return;
+  const query = new URLSearchParams({ provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2) });
+  // The server makes the sample once per voice (the first listen takes a moment) and the browser keeps it.
+  const audio = new Audio(BACKEND + "/api/preview?" + query);
+  preview = audio;
+  el.voicePreview.textContent = "… Готую зразок";
+  audio.onplaying = () => { el.voicePreview.textContent = "■ Стоп"; };
+  audio.onended = stopPreview;
+  audio.onerror = () => { stopPreview(); showProblem("Зразок цього голосу зараз недоступний."); };
+  const sink = el.speakerSelect.value;
+  if (sink && audio.setSinkId) audio.setSinkId(sink).catch(() => { /* the default speaker */ });
+  showProblem("");
+  audio.play().catch(stopPreview);
+}
+
+el.voicePreview.onclick = togglePreview;
 
 // ---------------------------------------------------------------- log
 
@@ -580,6 +616,7 @@ async function start() {
   setState("connecting");
   el.talk.disabled = true;
   try {
+    stopPreview(); // a sample left playing would talk over the agent
     // Created in the click handler: browsers only allow audio after a user gesture.
     playCtx = new AudioContext();
     playGain = playCtx.createGain();
@@ -598,7 +635,7 @@ async function start() {
     ws.onmessage = onMessage;
     ws.onclose = () => stop(live ? (el.problem.hidden ? "Зв'язок розірвано." : el.problem.textContent) : "");
     ws.onopen = () => send({ type: "start", provider: el.provider.value, voice: el.voice.value, language: recLang.slice(0, 2), history: memoryForServer(),
-      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked,
+      character: characterId(), emotion: el.emotion.value, tune: el.tuneVoice.checked, greet: el.greet.checked,
       engine: pcmTap ? "realtime" : "browser" });
     live = true;
     paused = false;
@@ -912,8 +949,8 @@ function resetVoiceApply() {
   el.voiceApply.textContent = "Застосувати голос";
 }
 
-el.provider.onchange = () => { fillVoices(); updateVoiceApply(); };
-el.voice.onchange = () => { save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); };
+el.provider.onchange = () => { stopPreview(); fillVoices(); updateVoiceApply(); updateButtons(); };
+el.voice.onchange = () => { stopPreview(); save("voice:" + el.provider.value, el.voice.value); updateVoiceApply(); };
 function applyVoice() {
   el.voiceApply.hidden = false;
   el.voiceApply.disabled = true;
@@ -1087,6 +1124,9 @@ setInterval(() => {
 // ---------------------------------------------------------------- how easily the voice interrupts her
 
 function bargeSens() { return Number(load("bargeSens") ?? 2); }
+
+el.greet.checked = load("greet") !== "0";
+el.greet.onchange = () => save("greet", el.greet.checked ? "1" : "0");
 
 el.engine.value = load("engine") === "browser" ? "browser" : "realtime";
 el.engine.onchange = () => save("engine", el.engine.value);

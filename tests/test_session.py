@@ -185,3 +185,56 @@ def test_her_echo_glued_to_the_users_words_is_not_sent_to_the_model():
         assert llm.calls[1][-1] == {"role": "user", "content": "Нормально що порадиш мені зробити"}
 
     asyncio.run(go())
+
+
+def test_the_agent_greets_first_when_asked_and_not_otherwise():
+    async def go(greet):
+        out = {"json": [], "bytes": []}
+        prompts = []
+
+        class GreetLLM:
+            async def stream(self, history, ctx=None):
+                prompts.append((list(history), ctx.system_prompt))
+                yield "Привіт! Рада тебе чути."
+
+        async def sj(m):
+            out["json"].append(m)
+
+        async def sb(b):
+            out["bytes"].append(b)
+
+        s = VoiceSession(llm=GreetLLM(), tts=FakeTTS(), send_json=sj, send_bytes=sb, greet=greet)
+        await s.start()
+        await settle(s)
+        return s, out, prompts
+
+    s, out, prompts = asyncio.run(go(True))
+    assert len(prompts) == 1 and prompts[0][0] == []  # no user message: she speaks first
+    assert "щойно увімкнула розмову" in prompts[0][1] and "Привітайся" in prompts[0][1]
+    assert out["bytes"] and "turn_end" in types(out)  # and it is spoken
+    assert s.history == [{"role": "assistant", "content": "Привіт! Рада тебе чути."}]
+    _, out2, prompts2 = asyncio.run(go(False))
+    assert prompts2 == [] and not out2["bytes"]
+
+
+def test_the_greeting_is_never_part_of_the_next_answers_prompt():
+    async def go():
+        prompts = []
+
+        class LLM:
+            async def stream(self, history, ctx=None):
+                prompts.append(ctx.system_prompt)
+                yield "Добре, чую вас."
+
+        async def nothing(_):
+            pass
+
+        s = VoiceSession(llm=LLM(), tts=FakeTTS(), send_json=nothing, send_bytes=nothing, greet=True)
+        await s.start()
+        await settle(s)
+        await s.on_client({"type": "played"})
+        await say(s, "Розкажи щось цікаве")
+        await settle(s)
+        assert "щойно увімкнула розмову" in prompts[0] and "щойно увімкнула розмову" not in prompts[1]
+
+    asyncio.run(go())

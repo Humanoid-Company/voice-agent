@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 from .characters import CHARACTERS, character_prompt, emotion_text
 from .persona import Persona
 
@@ -65,6 +67,36 @@ _NO_SEARCH = """
 
 Доступу до інтернету в тебе немає: про новини, курси, погоду й інші свіжі речі чесно скажи, що не знаєш актуального."""
 
+# The greeting when the user switches the agent on. Different every time: a random angle for the model to take, and an
+# instruction never to repeat a pattern. No grammatical gender in the angles: a character may be a man or a woman.
+GREETING_ANGLES = (
+    "по-дружньому, з побажанням до пори дня",
+    "жартівливо, з радістю, що розмова нарешті почалась",
+    "коротко й енергійно",
+    "тепло, ніби давно не бачились",
+    "спокійно, з легкою цікавістю, як у людини справи сьогодні",
+    "з одним словом про пору доби й настрій",
+    "радісно-здивовано, на кшталт «о, а ось і ти!»",
+    "з легкою самоіронією про те, що ти лише голос",
+    "бадьоро, ніби перед гарним днем",
+    "тихо й м'яко, як на початку приємної бесіди",
+)
+
+_GREETING = """
+
+Зараз людина щойно увімкнула розмову й чекає, що ти заговориш першою. Привітайся: одне-два короткі речення, {angle}. Привітання щоразу нове, не схоже на жодне попереднє: не шаблонне «Привіт, чим можу допомогти?», свої слова. {again}Не питай «чим допомогти». Нічого не шукай і не викликай інструментів. Лише привітання, у своїй манері."""
+
+
+def greeting_note(*, returning: bool) -> str:
+    """What the model is told for the one turn that greets: the angle is picked at random, so no two greetings alike."""
+    again = (
+        "Ви вже розмовляли раніше в цьому вікні: привітайся як зі знайомим після перерви, без нового знайомства. "
+        if returning
+        else ""
+    )
+    return _GREETING.format(angle=random.choice(GREETING_ANGLES), again=again)
+
+
 _OVERHEARD = """
 
 Поки ти була на паузі, ти фоном почула, про що говорили поруч: {heard}
@@ -80,7 +112,9 @@ _FIXED_NAME = """
 Це ім'я незмінне: тебе звати {name}, перейменувати тебе не можна."""
 
 
-def build_system_prompt(*, search: bool, persona: Persona, now: str, overheard: list[str] | None = None) -> str:
+def build_system_prompt(
+    *, search: bool, persona: Persona, now: str, overheard: list[str] | None = None, greeting: str = ""
+) -> str:
     character = CHARACTERS.get(persona.character, CHARACTERS["eva"])
     text = _BASE.format(name=character.label if character.character else persona.name, now=now, language=persona.language_name)
     if character.character:
@@ -92,4 +126,4 @@ def build_system_prompt(*, search: bool, persona: Persona, now: str, overheard: 
     text += _WITH_SEARCH if search else _NO_SEARCH
     if overheard:
         text += _OVERHEARD.format(heard=" | ".join(overheard))
-    return text
+    return text + greeting

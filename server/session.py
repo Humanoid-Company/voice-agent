@@ -40,7 +40,7 @@ from .persona import (
     now_text,
     sanitize_name,
 )
-from .prompt import build_system_prompt
+from .prompt import build_system_prompt, greeting_note
 from .sentences import SentenceSplitter
 from .usage import Usage
 
@@ -138,8 +138,10 @@ class VoiceSession:
         history: list[dict] | None = None,
         tune: bool = True,
         ears: Any = None,
+        greet: bool = False,
     ) -> None:
         self.llm = ears or llm
+        self._greet = greet  # speak first when the call starts
         # Realtime ears: the model hears the microphone itself and tells when the user stopped (see realtime.py);
         # the browser's recognizer then only supplies interim words for barge-in and the on-screen text.
         self.ears = ears
@@ -215,6 +217,9 @@ class VoiceSession:
         )
         await self._j({"type": "state", "state": "listening"})  # _set_state would skip it: already "listening"
         await self._retune()
+        if self._greet:
+            async with self._lock:
+                self._turn = asyncio.create_task(self._run_turn(greeting=True))
 
     async def close(self) -> None:
         if self._turn and not self._turn.done():
@@ -406,7 +411,7 @@ class VoiceSession:
 
     # ------------------------------------------------------------------ turn
 
-    async def _run_turn(self) -> None:
+    async def _run_turn(self, *, greeting: bool = False) -> None:
         self._spoken, self._turn_done = [], False
         await self._set_state("thinking")
         splitter = SentenceSplitter()
@@ -418,6 +423,7 @@ class VoiceSession:
                 persona=self.persona,
                 now=now_text(self.cfg.timezone),
                 overheard=self._take_overheard(),
+                greeting=greeting_note(returning=bool(self.history)) if greeting else "",
             ),
             extra_tools=TOOLS,
             run_tool=self.run_tool,

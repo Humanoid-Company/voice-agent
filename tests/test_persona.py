@@ -41,3 +41,19 @@ def test_prompt_carries_name_language_time_search_and_what_was_overheard():
     assert "Лесі" in p and "англійська" in p and "вівторок, 1 січня" in p and "web_search" in p and "обговорюють піцу" in p
     q = build_system_prompt(search=False, persona=Persona(), now="x")
     assert "немає" in q and "Поки ти була на паузі" not in q
+
+
+def test_greetings_differ_and_know_whether_the_talk_was_resumed(monkeypatch):
+    import random
+
+    from server.prompt import GREETING_ANGLES, greeting_note
+
+    notes = {greeting_note(returning=False) for _ in range(200)}
+    assert len(notes) == len(GREETING_ANGLES) > 5  # every angle comes up, so no two greetings in a row are alike
+    assert all("не шаблонне" in n and "Не питай" in n for n in notes)
+    assert "після перерви" not in greeting_note(returning=False) and "після перерви" in greeting_note(returning=True)
+    monkeypatch.setattr(random, "choice", lambda seq: seq[0])
+    assert GREETING_ANGLES[0] in greeting_note(returning=False)
+    p = build_system_prompt(search=False, persona=Persona(), now="x", greeting=greeting_note(returning=False))
+    assert p.endswith("у своїй манері.") and "Привітайся" in p
+    assert "Привітайся" not in build_system_prompt(search=False, persona=Persona(), now="x")

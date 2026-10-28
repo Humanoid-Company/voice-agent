@@ -244,8 +244,9 @@ def test_tolik_is_a_character_on_cedar(client):
     assert config["audio"]["output"]["voice"] == "cedar"  # the API gets the preset
     assert "You are Толік" in config["instructions"] and "Your name is Толік" in config["instructions"]
     assert "masculine grammatical gender" in config["instructions"]
-    # The calmer version: old Ukrainian curses and names, real mat at most once in about half of the replies.
-    assert "трясця твоїй матері" in config["instructions"] and "at most once in a reply" in config["instructions"]
+    # The softest version: a human (not a cat), boorish but not aggressive, a rare «йолопе», no mat.
+    assert "never a cat, a robot or any animal" in config["instructions"] and "«йолопе»" in config["instructions"]
+    assert "no mat and no strong curses at all" in config["instructions"] and "not aggressive" in config["instructions"]
     # Prod: a rant, then a calm helpful answer; «Вибач, я справді занадто складно пояснив»; «Да, я здесь».
     assert "never a normal assistant's tone" in config["instructions"] and "Never apologise" in config["instructions"]
     assert "that is the game, not distress" in config["instructions"] and "never a word of Russian" in config["instructions"]
@@ -311,12 +312,12 @@ def test_characters_have_their_tone_and_limits():
     assert "feminine grammatical gender" in lesia["instructions"]
     # The owner's rules: no mat at all; a light «до дупи» now and then, with «вибачте за мій французький» each time.
     assert "вибачте за мій французький" in lesia["instructions"] and "Never «бля»" in lesia["instructions"]
-    # Кіт — a talking cat for birthdays and parties: a different greeting every time, no mat, apologises.
+    # Кішка — a talking cat for birthdays and parties: a different greeting every time, no mat, apologises.
     kit = cfg("kit")
-    assert kit["audio"]["output"]["voice"] == "bossa" and "a talking cat" in kit["instructions"]  # a female voice
+    assert kit["audio"]["output"]["voice"] == "bossa" and "a talking she-cat" in kit["instructions"]  # a female voice
     assert "never the same script" in kit["instructions"] and "No mat at all" in kit["instructions"]
     assert "гони касу" in kit["instructions"] and "feminine grammatical gender" in kit["instructions"]
-    assert "warm and friendly" not in kit["instructions"] and "«Кіт, скажи»" in kit["instructions"]
+    assert "warm and friendly" not in kit["instructions"] and "«Кішка, скажи»" in kit["instructions"]
     assert "«Леся, скажи»" in lesia["instructions"] and "Леся" in lesia["delegation"]["responses"]["instructions"]
 
 
@@ -458,6 +459,7 @@ def test_voice_request_picks_the_voice():
     assert target("зміни голос на Ліну", "willow") == "lina"
     assert target("зміни голос на Лесю", "willow") == "lesia"
     assert target("зміни голос на кота", "willow") == "kit"
+    assert target("зміни голос на кішку", "willow") == "kit" and target("зміни голос на робокішку", "willow") == "lesia"
     assert all(target("постав жіночий голос", c) != "lesia" for c in ("willow", "bossa", "marin", "lina"))
     assert target("що в мене завтра?", "willow") is None
     assert target("Єва, змини голос на чоловічий", "willow") == "meridian"  # STT spelling

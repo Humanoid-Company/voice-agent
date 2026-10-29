@@ -92,8 +92,6 @@ class RealtimeLLM:
         search: SearchFn | None = None,
     ) -> None:
         self._cfg = cfg
-        mode = cfg.realtime_output
-        self._audio_out = mode == "audio" or (mode != "text" and cfg.realtime_model.startswith("gpt-live"))
         self._connect = connect or (lambda: sdk_connect(cfg))
         self.searchable = bool(search or cfg.web_search_api_key)
 
@@ -136,7 +134,7 @@ class RealtimeLLM:
                 "type": "session.update",
                 "session": {
                     "type": "realtime",
-                    "output_modalities": ["audio"] if self._audio_out else ["text"],
+                    "output_modalities": ["text"],
                     "tool_choice": "auto",
                     "audio": {"input": self._audio_input(language)},
                 },
@@ -242,12 +240,7 @@ class RealtimeLLM:
             item = ev.get("item") or {}
             if item.get("type") == "message" and ev.get("response_id", self._response_id) == self._response_id:
                 self._items.append(item.get("id", ""))
-        elif kind in ("response.output_text.delta", "response.output_audio_transcript.delta", "response.done"):
-            if kind == "response.output_audio_transcript.delta":
-                # gpt-live: its own voice is dropped (the audio deltas match nothing here), the words it says are kept.
-                if not self._audio_out:
-                    return
-                ev = {**ev, "type": "response.output_text.delta"}
+        elif kind in ("response.output_text.delta", "response.done"):
             rid = ev.get("response_id") or (ev.get("response") or {}).get("id")
             if rid == self._response_id and self._turn_q is not None:
                 if kind == "response.done":

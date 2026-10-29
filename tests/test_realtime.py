@@ -1139,3 +1139,74 @@ def test_a_short_answer_to_her_question_is_not_a_scrap():
 def test_a_whole_phrase_right_after_her_voice_is_the_user():
     dropped, users = _scrap_case("Нарешті тебе чую, заходь сміливо в цей ритм.", "Привіт, як твої справи?")
     assert not dropped and "Привіт, як твої справи?" in users
+
+
+def _noise_case(transcript, *, length_s=0.1, heard_during=False, heard_ever=True):
+    """A phrase of `length_s` seconds of voice that the transcriber turned into `transcript`; the browser's recognizer
+    heard words in it only if `heard_during`."""
+    import time
+
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        if heard_ever:
+            s._last_interim_at = time.monotonic() - 60  # it heard the user earlier in this call
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Я тут.")
+        conn.push(type="input_audio_buffer.speech_started")
+        await pump()
+        s._phrase_began = (s._phrase_began[0] - length_s, *s._phrase_began[1:])  # the voice began length_s ago
+        if heard_during:
+            s._last_interim_at = time.monotonic()
+        said(conn, "u1")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        conn.push(type="conversation.item.input_audio_transcription.completed", item_id="u1", transcript=transcript)
+        await pump()
+        dropped = any(m["type"] == "user_drop" and m["reason"] == "noise" for m in out)
+        users = [h["content"] for h in s.history if h["role"] == "user"]
+        await s.close()
+        return dropped, users
+
+    return asyncio.run(go())
+
+
+def test_a_short_blip_that_became_one_invented_word_is_noise():
+    dropped, users = _noise_case("Дякую!")
+    assert dropped and users == []
+
+
+def test_a_short_blip_with_an_empty_transcript_is_noise_too():
+    dropped, users = _noise_case("")
+    assert dropped and users == []
+
+
+def test_the_same_blip_is_a_word_when_the_browser_heard_it_as_well():
+    dropped, users = _noise_case("Дякую!", heard_during=True)
+    assert not dropped and users == ["Дякую!"]
+
+
+def test_a_long_voice_or_a_whole_sentence_is_never_noise():
+    assert not _noise_case("Дякую!", length_s=2.0)[0]
+    dropped, users = _noise_case("Розкажи мені про Львів")
+    assert not dropped and users == ["Розкажи мені про Львів"]
+
+
+def test_without_any_words_from_the_browser_so_far_nothing_is_judged_noise():
+    dropped, users = _noise_case("Так.", heard_ever=False)
+    assert not dropped and users == ["Так."]
+
+
+def test_noise_reduction_is_asked_for_and_can_be_switched_off():
+    async def go(setting):
+        conn = FakeConn()
+
+        async def connect():
+            return conn
+
+        await RealtimeLLM(Config(realtime_noise_reduction=setting), connect=connect).open(language="uk")
+        return conn.sent[0]["session"]["audio"]["input"]
+
+    assert asyncio.run(go("far_field"))["noise_reduction"] == {"type": "far_field"}
+    assert asyncio.run(go("near_field"))["noise_reduction"] == {"type": "near_field"}
+    assert "noise_reduction" not in asyncio.run(go("off"))

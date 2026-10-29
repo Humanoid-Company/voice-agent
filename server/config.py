@@ -40,6 +40,9 @@ class Config:
     # person is done; REALTIME_EAGERNESS low|medium|high|auto says how soon it may decide: high = soonest).
     realtime_turn: str = field(default_factory=lambda: os.getenv("REALTIME_TURN", "server").strip().lower())
     realtime_eagerness: str = field(default_factory=lambda: os.getenv("REALTIME_EAGERNESS", "high").strip().lower())
+    # The input noise reduction of Realtime, before its VAD and the transcriber: "far_field" (a laptop or a stand's
+    # microphone), "near_field" (a headset) or "off".
+    realtime_noise_reduction: str = field(default_factory=lambda: os.getenv("REALTIME_NOISE_REDUCTION", "far_field").strip().lower())
     realtime_vad_threshold: float = field(default_factory=lambda: _float("REALTIME_VAD_THRESHOLD", 0.5))
 
     # One TTS generation per answer (text is added to it as the model writes) instead of one per sentence. "0" goes back.

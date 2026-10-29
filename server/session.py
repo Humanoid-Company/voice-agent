@@ -26,7 +26,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 from .characters import CHARACTERS, EMOTIONS, tone_factor
 from .config import Config
@@ -64,6 +64,10 @@ _ITEM_WAIT_S = 1.0
 # The microphone Realtime gets is shut only while she is audible, so what the room gives back right after her voice ends
 # (a reverb tail, the last syllable) reaches it as a «phrase»: a scrap of one short word. Such a scrap that starts this
 # soon after she stopped is dropped, unless she had asked a question (then a short «так» is the answer).
+# The transcriber invents words on silence and noise («Дякую!», «Продовження слідує», a place name from nowhere), and an
+# empty transcript is no proof of silence (a quiet «так» comes back empty too). What marks noise: the voice was short, the
+# transcript is empty or one word, and the browser's recognizer, which hears the same sound, heard no words in it.
+_NOISE_MAX_S = 1.0
 _TAIL_SCRAP_S = 1.5
 _SCRAP_LETTERS = 4
 _ECHO_TAIL_S = 3.0  # right after the assistant stopped, its tail may still come back through the mic
@@ -134,6 +138,16 @@ TOOLS = [
 ]
 
 
+class _Phrase(NamedTuple):
+    """What was so when Realtime's VAD heard a voice begin. Taken then, because the answer to the phrase changes it before
+    its transcript arrives."""
+
+    since_her_voice: float  # seconds since her last sound
+    recent: str  # what she had said
+    began: float  # monotonic time
+    length: float  # seconds of voice
+
+
 class VoiceSession:
     def __init__(
         self,
@@ -171,10 +185,8 @@ class VoiceSession:
         self._turn_audio: list[tuple[str, float]] = []
         self._cut: dict | None = None
         self._vad_speaking = False  # Realtime's VAD hears the user right now
-        # What was so when a voice began, taken then because the answer to the phrase changes it before its transcript comes:
-        self._since_her_voice_at_start = 1e9  # seconds since her last sound
-        self._recent_at_start = ""  # what she had said
-        self._rt_started: dict[str, tuple[float, str]] = {}  # Realtime audio item id -> (the two above)
+        self._phrase_began: tuple[float, float, str] = (0.0, 1e9, "")  # when a voice last began, and what was so then
+        self._rt_started: dict[str, _Phrase] = {}  # Realtime audio item id -> its phrase
         self._t_stop = 0.0  # when Realtime's VAD last heard a phrase end: the start of the answer's timing
         self._timer: TurnTimer | None = None
         self._rates: dict[str, float] = {}  # per provider: seconds of speech per character, learned from finished answers
@@ -390,8 +402,8 @@ class VoiceSession:
         """Realtime hears the user begin. While she is busy a voice that goes on is an interruption (a short sound,
         «угу» or a cough, is over before the timer ends); the phrase is answered when it ends (_on_speech_stopped)."""
         self._vad_speaking = True
-        self._since_her_voice_at_start = time.monotonic() - self._last_audio_at
-        self._recent_at_start = self._recent
+        now = time.monotonic()
+        self._phrase_began = (now, now - self._last_audio_at, self._recent)
         if self.paused or self.state not in ("thinking", "speaking"):
             return
         self._cancel_barge()
@@ -417,7 +429,8 @@ class VoiceSession:
         """Realtime heard the user finish a phrase: answer it, unless she was busy (then the words the browser
         recognized decided whether it was an interruption) or the user said «стоп»."""
         self._vad_speaking = False
-        self._rt_started[item_id] = (self._since_her_voice_at_start, self._recent_at_start)
+        began, since, recent = self._phrase_began
+        self._rt_started[item_id] = _Phrase(since, recent, began, time.monotonic() - began)
         self._t_stop = time.monotonic()
         self._cancel_barge()
         if self.paused:
@@ -465,22 +478,44 @@ class VoiceSession:
         async with self._lock:
             self._turn = asyncio.create_task(self._run_turn())
 
-    def _tail_scrap(self, text: str, started: tuple[float, str] | None) -> bool:
+    def _tail_scrap(self, text: str, phrase: _Phrase | None) -> bool:
         """A one-word scrap that began right after her voice ended: the tail of her own sound, not the user."""
-        if started is None or started[0] >= _TAIL_SCRAP_S:
+        if phrase is None or phrase.since_her_voice >= _TAIL_SCRAP_S:
             return False
         words = re.findall(r"\w+", text)
         if len(words) != 1 or len(words[0]) > _SCRAP_LETTERS:
             return False
-        return not started[1].rstrip().endswith("?")  # a question was asked: a short answer is an answer
+        return not phrase.recent.rstrip().endswith("?")  # a question was asked: a short answer is an answer
+
+    def _noise(self, text: str, phrase: _Phrase | None) -> bool:
+        """A short blip of sound that the transcriber turned into nothing or into one invented word: no words of it reached
+        the browser's recognizer. Only judged once the recognizer has produced words in this call (without one, its silence
+        proves nothing)."""
+        if phrase is None or phrase.length >= _NOISE_MAX_S or self._last_interim_at <= 0:
+            return False
+        if len(re.findall(r"\w+", text)) > 1:
+            return False
+        return self._last_interim_at < phrase.began - 0.5  # the recognizer heard nothing of it
+
+    async def _drop_phrase(self, item_id: str, entry: dict, text: str, reason: str) -> None:
+        """The model is already answering what turned out not to be the user: stop it, and forget the phrase."""
+        with contextlib.suppress(ValueError):
+            self.history.remove(entry)
+        await self.interrupt(reason=reason)
+        await self.ears.drop_item(item_id)
+        await self._j({"type": "user_drop", "reason": reason, "text": text})
 
     async def _on_user_text(self, item_id: str, text: str) -> None:
-        started = self._rt_started.pop(item_id, None)
+        phrase = self._rt_started.pop(item_id, None)
         if item_id in self._late:
             await self._judge_late(item_id, text)
             return
         entry = self._rt_users.pop(item_id, None)
         if entry is None:  # a phrase we did not answer
+            return
+        if self._noise(text, phrase):
+            log.info("dropped a blip of noise (%.2f s, transcript %r)", phrase.length, text)
+            await self._drop_phrase(item_id, entry, text, "noise")
             return
         if not text.strip():
             # Nothing was recognized (short or quiet words often come back empty). The model heard the audio itself and is
@@ -492,15 +527,11 @@ class VoiceSession:
         recently = time.monotonic() - self._last_audio_at < _ECHO_TAIL_S
         clean = self._without_echo(text)
         echo = not clean or (classify_interjection(clean, assistant_recent=self._recent) == "echo" and (busy or recently))
-        if not echo and self._tail_scrap(clean, started):
+        if not echo and self._tail_scrap(clean, phrase):
             log.info("dropped a scrap right after her voice: %r", clean)
             echo = True
         if echo:
-            with contextlib.suppress(ValueError):
-                self.history.remove(entry)
-            await self.interrupt(reason="echo")
-            await self.ears.drop_item(item_id)
-            await self._j({"type": "user_drop", "reason": "echo", "text": text})
+            await self._drop_phrase(item_id, entry, text, "echo")
             return
         entry["content"] = clean
         await self._j({"type": "user", "text": clean, "final": True})

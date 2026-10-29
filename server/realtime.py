@@ -159,11 +159,14 @@ class RealtimeLLM:
                 "silence_duration_ms": self._cfg.realtime_silence_ms,
                 **ours,
             }
-        return {
+        audio = {
             "format": {"type": "audio/pcm", "rate": 24000},
             "transcription": {"model": self._cfg.realtime_transcribe_model, "language": language},
             "turn_detection": detection,
         }
+        if self._cfg.realtime_noise_reduction in ("near_field", "far_field"):
+            audio["noise_reduction"] = {"type": self._cfg.realtime_noise_reduction}
+        return audio
 
     async def set_language(self, language: str) -> None:
         if self._conn is not None:

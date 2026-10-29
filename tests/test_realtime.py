@@ -871,16 +871,21 @@ def test_the_instructions_are_sent_once_and_each_turn_gets_only_a_short_note_ins
 
 
 class FakeStream:
-    def __init__(self, tts, silent=False):
-        self.tts, self.silent, self.written, self.cancelled, self.finished = tts, silent, [], False, False
+    def __init__(self, tts, silent=False, manual=False, audio_on_write=b""):
+        self.audio_on_write = audio_on_write
+        self.tts, self.silent, self.manual, self.written, self.cancelled, self.finished = tts, silent, manual, [], False, False
         self._q: asyncio.Queue = asyncio.Queue()
 
     async def write(self, text):
         self.written.append(text)
-        if not self.silent:
+        if self.audio_on_write:
+            self._q.put_nowait(self.audio_on_write)
+        elif not self.silent and not self.manual:  # manual: the test decides how much audio comes
             self._q.put_nowait(b"\x00\x01" * 100)
 
     async def finish(self):
+        if self.manual:  # the provider is still producing: the audio ends when the test says so
+            return
         self._q.put_nowait(None if not self.silent else RuntimeError("no audio"))
 
     async def cancel(self):
@@ -903,12 +908,12 @@ class FakeStream:
 
 
 class StreamingTTS(FakeTTS):
-    def __init__(self, silent=False):
+    def __init__(self, silent=False, manual=False, audio_on_write=b""):
         super().__init__()
-        self.silent, self.streams = silent, []
+        self.silent, self.manual, self.audio_on_write, self.streams = silent, manual, audio_on_write, []
 
     def open_stream(self):
-        self.streams.append(FakeStream(self, self.silent))
+        self.streams.append(FakeStream(self, self.silent, self.manual, self.audio_on_write))
         return self.streams[-1]
 
 
@@ -1031,6 +1036,58 @@ def test_busy_queue_and_barge_in_work_the_same_with_semantic_turns(monkeypatch):
         conn.push(type="input_audio_buffer.speech_stopped", item_id="u2")
         await pump()
         assert "u2" in s._late and (s._turn is None or s._turn.done())
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_a_cut_off_answer_keeps_only_what_the_audio_had_reached_not_all_that_was_written():
+    S1 = "Перше довге речення про початок усієї цієї історії."
+    S2 = "Друге довге речення про те що буває далі."
+    S3 = "Третє довге речення про те чим усе закінчується."
+
+    async def go():
+        conn = FakeConn()
+        tts = StreamingTTS(manual=True)
+        s, out = make_stream_session(conn, tts)
+        await s.start()
+        # The model writes all three sentences at once; the voice has produced one second of audio so far.
+        conn.on_create = lambda _e: answer_events(conn, "r1", " ".join((S1, S2, S3)), item="msg_1")
+        said(conn, "u1")
+        await pump()
+        assert len(tts.streams[0].written) == 3
+        tts.streams[0]._q.put_nowait(b"\x00\x01" * 24000)  # 1 s at 24 kHz
+        await pump()
+        assert s._spoken == [S1]  # not all three: the others are written, not spoken
+        assert [round(d, 1) for _, d in s._turn_audio][0] > 1.0  # the first sentence takes longer than that second
+
+        await s.interrupt(reason="sound")
+        heard = S1 + " …"
+        assert s.history[-1] == {"role": "assistant", "content": heard}  # what «продовжуй» continues from: the second sentence
+        items = [e["item"] for e in conn.sent if e["type"] == "conversation.item.create" and e["item"]["role"] == "assistant"]
+        assert items[-1]["content"][0]["text"] == heard
+        assert "msg_1" in [e["item_id"] for e in conn.sent if e["type"] == "conversation.item.delete"]
+        assert S2 not in " ".join(h["content"] for h in s.history)
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_the_seconds_per_character_is_learned_from_answers_spoken_to_the_end():
+    async def go():
+        conn = FakeConn()
+        tts = StreamingTTS(audio_on_write=b"\x00\x01" * 36000)  # 1.5 s of audio with every sentence
+        s, out = make_stream_session(conn, tts)
+        await s.start()
+        first = s._seconds_per_char()
+        assert first == s.cfg.tts_seconds_per_char
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Це доволі довге речення для виміру. І ще одне таке саме.")
+        said(conn, "u1")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert len(s._spoken) == len(s._turn_audio) == 2  # spoken to the end: all of it counts
+        assert abs(sum(d for _, d in s._turn_audio) - 3.0) < 0.01  # the estimates are scaled to the audio that came
+        assert s._seconds_per_char() == 0.7 * first + 0.3 * (3.0 / sum(len(t) for t in s._spoken))  # learned, as a moving average
         await s.close()
 
     asyncio.run(go())

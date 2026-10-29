@@ -129,13 +129,6 @@ TOOLS = [
 ]
 
 
-def _spread(sentences: list[str], seconds: float) -> list[tuple[str, float]]:
-    """With one generation for the whole answer the provider does not say where a sentence ends, so the audio received so
-    far is shared between the sentences by their length (what heard.py needs to find the place where the answer was cut)."""
-    total = sum(len(t) for t in sentences) or 1
-    return [(t, seconds * len(t) / total) for t in sentences]
-
-
 class VoiceSession:
     def __init__(
         self,
@@ -175,6 +168,7 @@ class VoiceSession:
         self._vad_speaking = False  # Realtime's VAD hears the user right now
         self._t_stop = 0.0  # when Realtime's VAD last heard a phrase end: the start of the answer's timing
         self._timer: TurnTimer | None = None
+        self._rates: dict[str, float] = {}  # per provider: seconds of speech per character, learned from finished answers
         self._stream_broken = False  # the voice gave no audio for one generation per answer: sentence by sentence from now on
         self._rt_waiting: dict[str, asyncio.Task] = {}  # phrases to answer, until their item exists (fallback timers)
         # Phrases that ended while she was busy: item id -> the words (None until the transcript comes). Not lost: what is
@@ -650,6 +644,34 @@ class VoiceSession:
         finally:
             producer.cancel()
 
+    def _seconds_per_char(self) -> float:
+        return self._rates.get(self.provider, self.cfg.tts_seconds_per_char)
+
+    def _sync_progress(self, written: list[str], received_s: float) -> None:
+        """One generation does not say where a sentence ends, so each sentence's time is estimated from its length. A
+        sentence counts as spoken once the audio received has reached its estimated start: the model writes much faster
+        than the voice speaks, and the sentences that are only written must not be taken for heard."""
+        rate = self._seconds_per_char()
+        self._turn_audio = [(t, len(t) * rate) for t in written]
+        spoken, start = [], 0.0
+        for text, dur in self._turn_audio:
+            if start >= received_s:
+                break
+            spoken.append(text)
+            start += dur
+        self._spoken = spoken
+
+    def _finish_progress(self, written: list[str], seconds: float) -> None:
+        """The answer was spoken to the end: everything counts as spoken, the estimates are scaled to the audio that really
+        came, and the seconds-per-character figure learns from it (a moving average)."""
+        chars = sum(len(t) for t in written)
+        self._spoken = list(written)
+        est = chars * self._seconds_per_char()
+        scale = seconds / est if est > 0 and seconds > 0 else 1.0
+        self._turn_audio = [(t, len(t) * self._seconds_per_char() * scale) for t in written]
+        if chars >= 20 and seconds >= 0.5:
+            self._rates[self.provider] = 0.7 * self._seconds_per_char() + 0.3 * (seconds / chars)
+
     async def _speak(self, sentences: asyncio.Queue, timer: TurnTimer) -> None:
         """Voice the sentences of the answer as they come: one TTS generation for all of them when the voice supports it,
         otherwise (or when it gave no audio that way) one generation per sentence."""
@@ -677,7 +699,7 @@ class VoiceSession:
                 self._last_audio_at = time.monotonic()
                 await self._send_bytes(chunk)
                 seconds += len(chunk) / 2 / self.tts.sample_rate
-                self._turn_audio = _spread(plain_written, seconds)
+                self._sync_progress(plain_written, seconds)
 
         try:
             while (sentence := await sentences.get()) is not None:
@@ -697,12 +719,12 @@ class VoiceSession:
                 written.append(sentence)
                 if plain:
                     plain_written.append(plain)
-                    self._spoken.append(plain)
-                    self._turn_audio = _spread(plain_written, seconds)
+                    self._sync_progress(plain_written, seconds)
             drained = True
             if stream is not None and written:
                 await stream.finish()
                 await reader
+                self._finish_progress(plain_written, seconds)
             return None
         except TTSError as e:
             if seconds > 0 or not written:

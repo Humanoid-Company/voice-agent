@@ -45,6 +45,11 @@ class Config:
     # One TTS generation per answer (text is added to it as the model writes) instead of one per sentence. "0" goes back.
     tts_one_generation: bool = field(default_factory=lambda: os.getenv("TTS_ONE_GENERATION", "1") != "0")
 
+    # How long the voice takes per character of text, in seconds: the first guess for where a cut-off answer was
+    # (session.py). With one generation per answer the provider does not say where a sentence ends; the value is then
+    # refined by a moving average over the answers that were spoken to the end.
+    tts_seconds_per_char: float = field(default_factory=lambda: _float("TTS_SECONDS_PER_CHAR", 0.065))
+
     soniox_api_key: str = field(default_factory=lambda: os.getenv("SONIOX_API_KEY", ""))
 
     respeecher_api_key: str = field(default_factory=lambda: os.getenv("RESPEECHER_API_KEY", ""))

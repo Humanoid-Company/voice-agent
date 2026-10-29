@@ -13,6 +13,13 @@ services:
         value: 3.12.7
       - key: OPENAI_API_KEY
         sync: false
+      # Own GPT-Live voices (prompt-generated, tied to the OpenAI project of the key); empty → the preset voice.
+      - key: OPENAI_VOICE_TARAS
+        sync: false
+      - key: OPENAI_VOICE_TOLIK
+        sync: false
+      - key: OPENAI_VOICE_KISHKA
+        sync: false
       - key: PUBLIC_BACKEND_URL # e.g. https://voice-agent-backend.onrender.com
         sync: false
       - key: FRONTEND_ORIGINS # e.g. https://voice-agent.vercel.app (comma-separated)

@@ -85,3 +85,10 @@ def test_voice_request_in_transcript_switches_without_the_model(monkeypatch):
 
     asyncio.run(run())
     assert asked == ["Єва, зміни голос на чоловічий"]
+
+
+def test_desktop_session_sends_an_own_voice_as_an_id_object(monkeypatch):
+    monkeypatch.setenv("OPENAI_VOICE_TARAS", "voice_taras_test")
+    assert _session(ConversationLog(), voice="meridian")._session_config()["audio"]["output"]["voice"] == {"id": "voice_taras_test"}
+    monkeypatch.delenv("OPENAI_VOICE_TARAS")
+    assert _session(ConversationLog(), voice="meridian")._session_config()["audio"]["output"]["voice"] == "meridian"

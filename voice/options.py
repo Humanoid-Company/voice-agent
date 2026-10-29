@@ -1,6 +1,7 @@
 """User-changeable voice settings: preset voices, languages, assistant-name validation."""
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 
@@ -46,10 +47,32 @@ class VoicePersona:
     # Typical requests and how this character handles them: (request, behaviour in character). The model takes
     # the way of doing it, not the words — what makes a character more than a manner of speech.
     situations: tuple[tuple[str, str], ...] = ()
+    # An own GPT-Live voice (platform.openai.com → Audio → Voices, prompt-generated): the id comes from this env var
+    # (the voice belongs to one OpenAI project, another key gets a 404); unset → the preset `voice` speaks, as before.
+    # `voice_description` goes into the instructions as «Voice: …» — OpenAI: it keeps the sound steady.
+    voice_env: str = ""
+    voice_description: str = ""
 
     @property
     def id(self) -> str:
         return self.key or self.voice
+
+    @property
+    def custom_voice_id(self) -> str:
+        """The own voice's id from the env ("" = none: the preset speaks). Read at call time, not at import."""
+        return os.getenv(self.voice_env, "").strip() if self.voice_env else ""
+
+    @property
+    def api_voice(self) -> str | dict[str, str]:
+        """What audio.output.voice gets: {"id": …} for an own voice, the preset's name otherwise."""
+        custom = self.custom_voice_id
+        return {"id": custom} if custom else self.voice
+
+    def voice_line(self) -> str:
+        """«Voice: …» for the instructions; empty unless the own voice is set (the preset sounds as it does)."""
+        if self.custom_voice_id and self.voice_description:
+            return f"Voice: {self.voice_description}"
+        return ""
 
     def instructions(self) -> str:
         if self.feminine:
@@ -80,6 +103,8 @@ class VoicePersona:
         if self.samples:
             lines = "\n".join(f"- {line}" for line in self.samples)
             text += f"\nHow you sound (tone reference only — never repeat these lines verbatim):\n{lines}"
+        if self.voice_line():
+            text += f"\n{self.voice_line()}"
         return text
 
 
@@ -87,6 +112,29 @@ def _note(who: str) -> str:
     return (f"\nVOICE CHARACTER: the voice is {who}. Write your spoken answers in that manner — a touch of it, "
             "the facts right and complete.\n")
 
+
+# Own GPT-Live voices (prompt-generated; gpt-live-1 only, and not in the speech endpoint — so the picker's sample
+# stays the preset's). Descriptions go into the instructions next to the voice id.
+_TARAS_VOICE = (
+    "A deep, rough, commanding adult masculine voice of a man in his late 30s to early 40s. Native Ukrainian speaker "
+    "with clean, standard Ukrainian pronunciation: soft fricative Ukrainian 'h' sound, natural Ukrainian vowels, no "
+    "Russian or English accent. Low bass-baritone pitch, heavy and dense chest resonance. Gravelly, husky texture "
+    "with noticeable rasp, but still clear and intelligible. Strong vocal effort, grounded and authoritative. Slow to "
+    "medium pace, terse and blunt delivery with weighty pauses, dry sarcastic humor."
+)
+_TOLIK_VOICE = (
+    "A relaxed, husky, low adult masculine voice of a man in his early 50s, an easygoing everyday neighbour. Native "
+    "Ukrainian speaker, colloquial everyday Ukrainian with a slightly rustic, homely pronunciation, soft fricative "
+    "Ukrainian 'h' sound, no Russian or English accent. Low baritone pitch, warm gravelly texture with a light dry "
+    "rasp. Low-to-moderate vocal effort, unhurried and laid-back. Slow, drawling pace with lazy pauses, an occasional "
+    "sigh and a short chuckle, dry humorous intonation."
+)
+_KISHKA_VOICE = (
+    "A sly, playful adult feminine voice of a woman in her late 20s with a cat-like character. Native Ukrainian "
+    "speaker with clean, natural Ukrainian pronunciation, no Russian or English accent. Mid to slightly low pitch, "
+    "velvety smooth timbre with a soft breathy purr and a light huskiness. Moderate vocal effort, lazy and "
+    "self-satisfied, a little capricious. Lively, theatrical delivery with wide intonation swings."
+)
 
 # The picker: characters, in display order (women first). Keyed by id (a preset voice id, or its own key when
 # the voice is taken), so a stored choice and the change_voice argument stay plain ids. Their voices were picked
@@ -214,6 +262,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
                 "Дивись, тут просто: два кроки — і готово.",
             ),
             backend_note=_note("Тарас — reliable and calm, plain words, «зроблено»"),
+            voice_env="OPENAI_VOICE_TARAS",
+            voice_description=_TARAS_VOICE,
             wake_names=("тарас", "тарасе", "тарасику", "taras"),
         ),
         VoicePersona(
@@ -280,6 +330,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             special=True,
             own_tone=True,
             backend_note=blunt_prompt.backend_note(),
+            voice_env="OPENAI_VOICE_TOLIK",
+            voice_description=_TOLIK_VOICE,
             wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
         ),
         VoicePersona(
@@ -362,6 +414,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             own_tone=True,
             backend_note=_note("Кішка — a talking she-cat at a celebration: cheeky, a bit whiny, a cat's view of humans, "
                                "short punchy lines; no mat, a rare «до дупи» always with «вибачте за мій французький»"),
+            voice_env="OPENAI_VOICE_KISHKA",
+            voice_description=_KISHKA_VOICE,
             wake_names=("кішка", "кішко", "кішку", "кішечко", "киця", "киць", "кицю", "кіт", "коте", "котику", "котик", "котяро", "котяра", "котейко", "kit"),
         ),
     )
@@ -372,10 +426,11 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
 DEFAULT_PERSONA = "willow"
 
 
-def api_voice(voice_id: str) -> str:
-    """The preset the API gets for a picker id («blunt» → «cedar», «lina» → «willow»)."""
+def api_voice(voice_id: str) -> str | dict[str, str]:
+    """What the API gets for a picker id: the preset («blunt» → «cedar», «lina» → «willow»), or {"id": …} when the
+    character has its own voice set in the env."""
     persona = VOICE_PERSONAS.get(voice_id)
-    return persona.voice if persona else voice_id
+    return persona.api_voice if persona else voice_id
 
 
 # «Єва, зміни голос на чоловічий» — handled by the app itself: the Live model often answers

@@ -792,4 +792,5 @@ def build_concierge_prompt(*, language_name: str, today: str, voice: str | None 
         start = prompt.index("With each person, in this order:\n")
         end = prompt.index("Then wait for the next person")
         prompt = prompt[:start] + _CONCIERGE_STEPS_NO_CHECK + prompt[end:]
-    return prompt + f"Today is {today}. Speak {language_name} by default.{gender}"
+    voice_line = f"\n{persona.voice_line()}" if persona is not None and persona.voice_line() else ""
+    return prompt + f"Today is {today}. Speak {language_name} by default.{gender}{voice_line}"

@@ -207,6 +207,49 @@ def test_voice_tool_accepts_only_picker_voices():
     assert ok.ok and user.voice == "bossa"
 
 
+_OWN_VOICES = {
+    "meridian": ("OPENAI_VOICE_TARAS", "voice_taras_test", "meridian", "late 30s"),
+    "blunt": ("OPENAI_VOICE_TOLIK", "voice_tolik_test", "cedar", "early 50s"),
+    "kit": ("OPENAI_VOICE_KISHKA", "voice_kishka_test", "bossa", "late 20s"),
+}
+
+
+@pytest.mark.parametrize("persona", sorted(_OWN_VOICES))
+def test_own_voice_goes_to_the_session_as_an_id_object(client, monkeypatch, persona):
+    """Env set → audio.output.voice is {"id": …} and the voice description is a «Voice: …» line; the picker's
+    sample stays the preset's (no speech-endpoint sample for own voices)."""
+    env, voice_id, preset, age = _OWN_VOICES[persona]
+    monkeypatch.setenv(env, voice_id)
+    cid = f"own-{persona}-0123456789abcdef"
+    assert client.post("/api/voice", json={"voice": persona}, headers={"X-Client-Id": cid}).status_code == 200
+    user = web.users.get(cid)
+    config = web._session_config(user)
+    assert config["audio"]["output"]["voice"] == {"id": voice_id}
+    assert "\nVoice: " in config["instructions"] and age in config["instructions"]
+    conc = web._session_config(user, concierge=True)
+    assert conc["audio"]["output"]["voice"] == {"id": voice_id} and "\nVoice: " in conc["instructions"]
+    entry = next(v for v in client.get("/api/voices").json()["voices"] if v["id"] == persona)
+    assert entry["sample"] == preset
+
+
+@pytest.mark.parametrize("persona", sorted(_OWN_VOICES))
+def test_empty_env_keeps_the_preset_voice(client, monkeypatch, persona):
+    env, _, preset, _ = _OWN_VOICES[persona]
+    monkeypatch.setenv(env, "  ")  # blank = unset
+    cid = f"pre-{persona}-0123456789abcdef"
+    assert client.post("/api/voice", json={"voice": persona}, headers={"X-Client-Id": cid}).status_code == 200
+    config = web._session_config(web.users.get(cid))
+    assert config["audio"]["output"]["voice"] == preset
+    assert "\nVoice: " not in config["instructions"]
+
+
+def test_own_voice_is_accepted_by_the_desktop_change_voice():
+    from voice.options import LIVE_VOICE_OPTIONS, VOICE_PERSONAS, api_voice
+
+    assert {"blunt", "kit"} <= set(VOICE_PERSONAS) and "blunt" not in LIVE_VOICE_OPTIONS
+    assert api_voice("willow") == "willow" and api_voice("cedar") == "cedar"  # plain presets pass through
+
+
 def test_tolik_is_a_character_on_cedar(client):
     """Толік, the courtyard hooligan: Кедр's voice — apart in the picker, only on request, and never at the
     concierge's door."""

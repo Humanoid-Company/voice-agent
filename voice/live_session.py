@@ -51,7 +51,7 @@ from voice.delegation import (
 )
 from voice.interrupt_intent import classify_interjection, is_backchannel_utterance
 from voice.local_vad import LocalSpeechDetector
-from voice.options import VOICE_REQUEST_RE
+from voice.options import VOICE_REQUEST_RE, api_voice
 from voice.playback import PlaybackTracker
 from voice.wake_phrases import is_stop
 
@@ -521,7 +521,7 @@ class LiveVoiceSession:
             "instructions": self._live_instructions,
             "audio": {
                 "format": {"type": "audio/pcm", "rate": self._audio_rate},
-                "output": {"voice": self._voice},
+                "output": {"voice": api_voice(self._voice)},
             },
             "delegation": responses_delegation(
                 model=self._backend_model,

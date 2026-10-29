@@ -27,3 +27,10 @@ def _temporary_stores(tmp_path, monkeypatch):
     monkeypatch.setattr(conversations, "store", conversations.ConversationStore("", str(tmp_path / "conversations.db")))
     monkeypatch.setattr(usage, "store", usage.UsageStore("", str(tmp_path / "usage.db")))
     monkeypatch.setattr(checkins, "store", checkins.CheckinStore("", str(tmp_path / "checkins.db")))
+
+
+@pytest.fixture(autouse=True)
+def _no_own_voices(monkeypatch):
+    """The preset voices by default, whatever the real .env holds; a test sets OPENAI_VOICE_* to try an own voice."""
+    for name in ("OPENAI_VOICE_TARAS", "OPENAI_VOICE_TOLIK", "OPENAI_VOICE_KISHKA"):
+        monkeypatch.delenv(name, raising=False)

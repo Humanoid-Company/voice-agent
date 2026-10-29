@@ -27,6 +27,7 @@ from voice.options import (
     LIVE_VOICE_OPTIONS,
     SPEED_OPTIONS,
     STYLE_OPTIONS,
+    VOICE_PERSONAS,
     _sanitize_name,
     asked_for_voice_change,
     delivery_instruction,
@@ -294,7 +295,7 @@ class LiveDriverMixin:
                 status="error",
                 message="Користувач не просив змінити голос — не змінюй його, просто продовжуй розмову.",
             )
-        if voice not in LIVE_VOICE_OPTIONS:
+        if voice not in LIVE_VOICE_OPTIONS and voice not in VOICE_PERSONAS:  # a character may have its own voice
             return ToolResult(
                 ok=False,
                 status="error",

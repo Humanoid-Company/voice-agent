@@ -107,6 +107,7 @@ uv run python main.py
 |---|---|
 | `OPENAI_API_KEY` | ключ OpenAI (обов'язково) |
 | `OPENAI_LIVE_MODEL`, `OPENAI_LIVE_BACKEND_MODEL`, `OPENAI_LIVE_VOICE` | моделі GPT-Live і голос за замовчуванням |
+| `OPENAI_VOICE_TARAS`, `OPENAI_VOICE_TOLIK`, `OPENAI_VOICE_KISHKA` | id власних голосів GPT-Live (`voice_…`, Audio → Voices, Prompt-generated) для Тараса, Толіка й Кішки. Голос належить проєкту OpenAI свого ключа (на іншому — 404). Порожньо → пресет (`meridian`, `cedar`, `bossa`). Зразок у пікері лишається пресетним |
 | `TIMEZONE` | часовий пояс, за замовчуванням `Europe/Kyiv` |
 | `WEB_SEARCH_API_KEY` | ключ [Tavily](https://tavily.com) для вебпошуку; без нього Єва каже, що пошук недоступний. Ще: `WEB_SEARCH_TIMEOUT_S` (9), `WEB_SEARCH_MAX_CALLS_PER_TURN` (2 пошуки на один запит) |
 | `PUBLIC_BACKEND_URL`, `FRONTEND_ORIGINS` | веб-бекенд: адреса, дозволені сторінки |

@@ -170,6 +170,12 @@ def test_model_changing_the_voice_unasked_is_refused():
     assert not result.ok and not bot._voice_change_pending
 
 
+def test_character_with_own_voice_is_accepted_by_change_voice():
+    bot = _bot()
+    result = bot._live_change_voice({"voice": "blunt"}, ToolExecutionContext(user_utterances=["Хочу голос Толіка"]))
+    assert result.ok and bot._memory["live_voice"] == "blunt"
+
+
 # ── «ще роблю» during slow work ──────────────────────────────────────────────
 
 

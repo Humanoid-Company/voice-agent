@@ -1,0 +1,22 @@
+# Keeps the free Render backend awake: it spins down after ~15 min without requests, and the first
+# visitor then waits up to a minute («Сервер прокидається»). GitHub's cron is best-effort (runs can
+# be late or skipped), so this lowers the odds rather than guaranteeing it; a paid Render plan does.
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /healthz
+        run: |
+          # A sleeping service needs 30–60 s to answer: wait for it instead of failing at once.
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 5 --retry-all-errors \
+            https://voice-agent-f3m4.onrender.com/healthz

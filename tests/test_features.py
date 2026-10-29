@@ -32,7 +32,7 @@ class FakeLLM:
         self.answer, self.tool_calls, self.prompts, self.calls = answer, list(tool_calls), [], []
 
     async def stream(self, history, ctx: TurnContext):
-        self.prompts.append(ctx.system_prompt)
+        self.prompts.append(ctx.full_prompt)
         self.calls.append(list(history))
         for name, args in self.tool_calls:
             self.last_tool_result = await ctx.run_tool(name, args)

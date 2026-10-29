@@ -43,7 +43,7 @@ from .persona import (
     sanitize_about,
     sanitize_name,
 )
-from .prompt import build_system_prompt, greeting_note
+from .prompt import build_stable_prompt, greeting_note, turn_note
 from .russian import asks_for_russian, is_russian, refusal
 from .sentences import SentenceSplitter
 from .tags import strip_tags
@@ -549,14 +549,16 @@ class VoiceSession:
         sentences: asyncio.Queue[str | None] = asyncio.Queue()
         full: list[str] = []
         ctx = TurnContext(
-            system_prompt=build_system_prompt(
+            system_prompt=build_stable_prompt(
                 search=bool(getattr(self.llm, "searchable", False)),
                 persona=self.persona,
+                about=await self._about(),
+                provider=self.provider,
+            ),
+            note=turn_note(
                 now=now_text(self.cfg.timezone),
                 overheard=self._take_overheard(),
                 greeting=greeting_note(returning=bool(self.history)) if greeting else "",
-                about=await self._about(),
-                provider=self.provider,
             ),
             extra_tools=TOOLS,
             run_tool=self.run_tool,

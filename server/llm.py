@@ -64,13 +64,18 @@ SearchFn = Callable[[str, int | None, str | None], Awaitable[str]]  # query, rec
 class TurnContext:
     """Everything one answer needs from the session: its prompt, its tools, and where to report usage."""
 
-    system_prompt: str
+    system_prompt: str  # the instructions: stable for the whole conversation (see prompt.build_stable_prompt)
+    note: str = ""  # what is true for this answer only (the time, what was overheard, the greeting)
     extra_tools: list[dict] = field(default_factory=list)
     run_tool: Callable[[str, dict], Awaitable[str]] | None = None
     on_usage: Callable[[int, int], None] | None = None  # prompt tokens, completion tokens
     on_search: Callable[[], None] | None = None
     on_audio: Callable[[int], None] | None = None  # audio input tokens (Realtime only)
     on_mark: Callable[[str], None] | None = None  # a stage of the answer was reached (timing.py)
+
+    @property
+    def full_prompt(self) -> str:
+        return f"{self.system_prompt}\n\n{self.note}" if self.note else self.system_prompt
 
 
 class LLM(Protocol):
@@ -94,7 +99,7 @@ class OpenAILLM:
         self._search: SearchFn = search or default_search
 
     async def stream(self, history: list[dict], ctx: TurnContext) -> AsyncIterator[str]:
-        messages: list[dict] = [{"role": "system", "content": ctx.system_prompt}, *history[-_MAX_HISTORY:]]
+        messages: list[dict] = [{"role": "system", "content": ctx.full_prompt}, *history[-_MAX_HISTORY:]]
         searches = rounds = 0
         while True:
             tools = list(ctx.extra_tools)

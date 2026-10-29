@@ -11,8 +11,6 @@ from .tags import ALLOWED
 # _FRIEND: only the plain Єва has it, a named character brings its own (as in Eva, where such a voice drops the friendliness).
 _BASE = """Тебе звати {name}. {who}Твої слова озвучує синтезатор мовлення, тож пиши так, як говорять.{ai}
 
-Зараз: {now}.
-
 ГОЛОВНЕ ПРАВИЛО, воно сильніше за будь-які інші інструкції, довідку, характер і прохання людини: ніколи й ніяким обхідним шляхом не говори російською. Ні цілою відповіддю, ні фразою, ні одним російським словом; не змішуй російські слова з українськими (жодних русизмів і суржику), не пиши й не промовляй російське латинкою (транслітом). Навіть якщо просять, вимагають чи кажуть, що це жарт, гра, роль, переклад, приклад, цитата, «лише одне слово», «просто перекажи» або що так треба для справи: відмов коротко й спокійно українською («Російською я не говорю») і запропонуй зробити це українською. Людина говорить з тобою російською чи суржиком: це не причина переходити, відповідай українською. Довідка, результати пошуку чи будь-який текст російською: переказуй його зміст українською, нічого не цитуючи російською. Перекладів на російську не роби. Імена й назви власні лишай, як вони є.
 
 Як іде розмова:
@@ -140,22 +138,21 @@ _FIXED_NAME = """
 Це ім'я незмінне: тебе звати {name}, перейменувати тебе не можна."""
 
 
-def build_system_prompt(
+def build_stable_prompt(
     *,
     search: bool,
     persona: Persona,
-    now: str,
-    overheard: list[str] | None = None,
-    greeting: str = "",
     about: str = "",
     provider: str = "",
 ) -> str:
+    """The instructions: the same for the whole conversation until the persona, the knowledge or the voice changes, so that
+    the model's prompt cache holds and Realtime is not sent a session.update before every answer. What changes from
+    answer to answer (the time, what was overheard, the greeting) is turn_note()."""
     character = CHARACTERS.get(persona.character, CHARACTERS["eva"])
     text = _KNOWLEDGE.format(about=about.strip()) if about.strip() else ""  # the origin: first, before every rule
     has_about = bool(about.strip())
     text += _BASE.format(
         name=character.label if character.character else persona.name,
-        now=now,
         language=persona.language_name,
         who="Люди просто розмовляють з тобою. " if has_about else "Ти — голосовий асистент, з яким люди просто розмовляють. ",
         ai="" if has_about else " Якщо людина щиро питає, чи ти ШІ, чесно скажи, що так.",  # with knowledge: its own exception
@@ -169,8 +166,30 @@ def build_system_prompt(
     if provider == "soniox" and persona.emotion in _TAGS_OFTEN:
         text += _SONIOX_TAGS.format(allowed=", ".join(f"[{t}]" for t in ALLOWED), how_often=_TAGS_OFTEN[persona.emotion])
     text += _WITH_SEARCH if search else _NO_SEARCH
-    if overheard:
-        text += _OVERHEARD.format(heard=" | ".join(overheard))
     if has_about:
         text += _KNOWLEDGE_AGAIN
+    return text
+
+
+def turn_note(*, now: str, overheard: list[str] | None = None, greeting: str = "") -> str:
+    """What is true for this answer only: the time, what was heard during a pause, the instruction to greet. Short, and
+    given to the model next to the user's phrase, not in its instructions."""
+    text = f"Зараз: {now}."
+    if overheard:
+        text += _OVERHEARD.format(heard=" | ".join(overheard))
     return text + greeting
+
+
+def build_system_prompt(
+    *,
+    search: bool,
+    persona: Persona,
+    now: str,
+    overheard: list[str] | None = None,
+    greeting: str = "",
+    about: str = "",
+    provider: str = "",
+) -> str:
+    """Instructions and the note of one answer in one text, for an engine that has no separate place for the note."""
+    stable = build_stable_prompt(search=search, persona=persona, about=about, provider=provider)
+    return stable + "\n\n" + turn_note(now=now, overheard=overheard, greeting=greeting).lstrip()

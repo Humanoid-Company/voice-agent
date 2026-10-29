@@ -194,7 +194,7 @@ def test_the_agent_greets_first_when_asked_and_not_otherwise():
 
         class GreetLLM:
             async def stream(self, history, ctx=None):
-                prompts.append((list(history), ctx.system_prompt))
+                prompts.append((list(history), ctx.full_prompt))
                 yield "Привіт! Рада тебе чути."
 
         async def sj(m):
@@ -223,7 +223,7 @@ def test_the_greeting_is_never_part_of_the_next_answers_prompt():
 
         class LLM:
             async def stream(self, history, ctx=None):
-                prompts.append(ctx.system_prompt)
+                prompts.append(ctx.full_prompt)
                 yield "Добре, чую вас."
 
         async def nothing(_):

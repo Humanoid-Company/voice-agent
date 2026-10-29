@@ -879,3 +879,29 @@ def test_a_turn_is_timed_from_the_end_of_the_phrase_to_the_first_sound_in_the_br
         await s.close()
 
     asyncio.run(go())
+
+
+def test_the_instructions_are_sent_once_and_each_turn_gets_only_a_short_note_instead():
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        for i in (1, 2, 3):
+            conn.on_create = lambda _e, i=i: answer_events(conn, f"r{i}", "Добре.")
+            said(conn, f"u{i}")
+            await pump()
+            await asyncio.gather(s._turn, return_exceptions=True)
+            await s.on_client({"type": "played"})
+        updates = [e for e in conn.sent if e["type"] == "session.update" and "instructions" in e["session"]]
+        assert len(updates) == 1  # not before every answer: the prompt cache holds
+        assert "Зараз:" not in updates[0]["session"]["instructions"]
+        notes = [e["item"] for e in conn.sent if e["type"] == "conversation.item.create" and e["item"]["role"] == "system"]
+        assert [n["id"] for n in notes] == ["note_1", "note_2", "note_3"] and "Зараз:" in notes[0]["content"][0]["text"]
+        deleted = [e["item_id"] for e in conn.sent if e["type"] == "conversation.item.delete"]
+        assert deleted == ["note_1", "note_2"]  # the previous note leaves the conversation, the notes do not pile up
+        order = conn.kinds()  # the note comes right before the answer is asked for
+        creates = [i for i, k in enumerate(order) if k == "response.create"]
+        assert conn.sent[creates[0] - 1]["item"]["id"] == "note_1"
+        await s.close()
+
+    asyncio.run(go())

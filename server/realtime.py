@@ -79,7 +79,7 @@ def flat_tool(tool: dict) -> dict:
 
 
 def _text_item(role: str, text: str) -> dict:
-    kind = "input_text" if role == "user" else "output_text"
+    kind = "output_text" if role == "assistant" else "input_text"
     return {"type": "message", "role": role, "content": [{"type": kind, "text": text}]}
 
 
@@ -121,6 +121,8 @@ class RealtimeLLM:
         self._items: list[str] = []  # assistant message ids of the current answer
         self._response_open = False
         self._cuts = 0
+        self._note_id = ""  # the previous answer's note item, taken out of the conversation before the next one
+        self._notes = 0
         self._mark: Callable[[str], None] | None = None
         self._first_delta = False
 
@@ -267,6 +269,14 @@ class RealtimeLLM:
         if len(update) > 1:
             await self._send({"type": "session.update", "session": update})
             self._instructions, self._tools_key = ctx.system_prompt, key
+
+        if self._note_id:
+            await self._send({"type": "conversation.item.delete", "item_id": self._note_id})
+            self._note_id = ""
+        if ctx.note:  # after the user's phrase, right before the answer: the instructions stay the same
+            self._notes += 1
+            self._note_id = f"note_{self._notes}"
+            await self._send({"type": "conversation.item.create", "item": {**_text_item("system", ctx.note), "id": self._note_id}})
 
         self._turn_q = queue = asyncio.Queue()
         self._mark, self._first_delta = ctx.on_mark, False

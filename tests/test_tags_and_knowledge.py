@@ -2,7 +2,7 @@
 import asyncio
 
 from server.persona import ABOUT_MAX_CHARS, Persona, sanitize_about
-from server.prompt import build_system_prompt
+from server.prompt import build_stable_prompt, build_system_prompt
 from server.session import VoiceSession
 from server.tags import ALLOWED, TagStripper, strip_tags
 
@@ -126,7 +126,7 @@ def test_the_knowledge_is_read_from_its_source_for_every_answer():
             searchable = False
 
             async def stream(self, history, ctx=None):
-                prompts.append(ctx.system_prompt)
+                prompts.append(ctx.full_prompt)
                 yield "Добре."
 
         class Source:
@@ -160,7 +160,7 @@ def test_a_knowledge_source_that_breaks_never_stops_an_answer():
             searchable = False
 
             async def stream(self, history, ctx=None):
-                prompts.append(ctx.system_prompt)
+                prompts.append(ctx.full_prompt)
                 yield "Добре."
 
         class Broken:
@@ -202,7 +202,7 @@ def test_the_prompt_tells_how_to_perform_verse_songs_and_prose():
 
 def test_with_knowledge_the_base_does_not_call_her_an_assistant_or_an_ai_and_the_knowledge_is_repeated_last():
     for key in ("eva", "taras", "lesya"):
-        p = build_system_prompt(search=True, persona=Persona(character=key), now="x", about="Ти людина.")
+        p = build_stable_prompt(search=True, persona=Persona(character=key), about="Ти людина.")
         assert "Ти — голосовий асистент" not in p and "чесно скажи, що так" not in p, key
         assert p.rstrip().endswith("кожній відповіді."), key  # the reminder comes last (before a greeting, if any)
         assert "щире серйозне питання" in p, key  # the one exception stays

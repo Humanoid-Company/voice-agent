@@ -20,6 +20,7 @@ from .about_store import AboutKnowledge, AboutStore
 from .characters import CHARACTERS, DEFAULT_EMOTION, EMOTIONS, characters_payload, normalize_character_id
 from .config import Config
 from .db import StoreError
+from .live import LiveBridge, uses_live
 from .llm import OpenAILLM
 from .persona import ABOUT_MAX_CHARS, SUPPORTED, Persona, sanitize_about
 from .preview import PreviewError, VoicePreviews
@@ -134,7 +135,7 @@ async def api_preview(provider: str, voice: str, language: str = "uk") -> Respon
 @app.websocket("/ws")
 async def ws_call(ws: WebSocket) -> None:
     await ws.accept()
-    session: VoiceSession | None = None
+    session: VoiceSession | LiveBridge | None = None
     try:
         # The first message picks the voice: {"type": "start", "provider": "...", "voice": "...", "language": "uk"}
         first = json.loads(await ws.receive_text())
@@ -152,28 +153,44 @@ async def ws_call(ws: WebSocket) -> None:
             await ws.send_json({"type": "error", "message": str(e)})
             return
         realtime = first.get("engine") == "realtime"
-        session = VoiceSession(
-            llm=OpenAILLM(cfg),
-            ears=RealtimeLLM(cfg) if realtime else None,
-            tts=tts,
-            send_json=ws.send_json,
-            send_bytes=ws.send_bytes,
-            cfg=cfg,
-            provider=provider,
-            voice=getattr(tts, "voice", ""),
-            persona=Persona(
-                name=CHARACTERS[character].label if CHARACTERS[character].character else Persona().name,
-                language=language,
-                character=character,
-                emotion=emotion,
-            ),
-            tts_factory=lambda p, v, lang: make_tts(p, v, cfg, lang),
-            voices_for=lambda p, lang: list_voices(cfg, p, lang),
-            history=first.get("history"),
-            tune=first.get("tune") is not False,
-            greet=first.get("greet") is not False,
-            about_source=about,
+        persona = Persona(
+            name=CHARACTERS[character].label if CHARACTERS[character].character else Persona().name,
+            language=language,
+            character=character,
+            emotion=emotion,
         )
+        if realtime and uses_live(cfg):  # GPT-Live is a protocol of its own: its own bridge (server/live.py)
+            session = LiveBridge(
+                tts=tts,
+                send_json=ws.send_json,
+                send_bytes=ws.send_bytes,
+                cfg=cfg,
+                provider=provider,
+                voice=getattr(tts, "voice", ""),
+                persona=persona,
+                tts_factory=lambda p, v, lang: make_tts(p, v, cfg, lang),
+                history=first.get("history"),
+                greet=first.get("greet") is not False,
+                about_source=about,
+            )
+        else:
+            session = VoiceSession(
+                llm=OpenAILLM(cfg),
+                ears=RealtimeLLM(cfg) if realtime else None,
+                tts=tts,
+                send_json=ws.send_json,
+                send_bytes=ws.send_bytes,
+                cfg=cfg,
+                provider=provider,
+                voice=getattr(tts, "voice", ""),
+                persona=persona,
+                tts_factory=lambda p, v, lang: make_tts(p, v, cfg, lang),
+                voices_for=lambda p, lang: list_voices(cfg, p, lang),
+                history=first.get("history"),
+                tune=first.get("tune") is not False,
+                greet=first.get("greet") is not False,
+                about_source=about,
+            )
         try:
             await session.start()
         except Exception as e:

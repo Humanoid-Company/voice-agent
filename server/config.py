@@ -53,6 +53,16 @@ class Config:
     # refined by a moving average over the answers that were spoken to the end.
     tts_seconds_per_char: float = field(default_factory=lambda: _float("TTS_SECONDS_PER_CHAR", 0.065))
 
+    # GPT-Live (REALTIME_MODEL=gpt-live-*, server/live.py): a primary WebSocket of its own, not v1/realtime.
+    live_url: str = field(default_factory=lambda: os.getenv("LIVE_URL", "wss://api.openai.com/v1/live/sessions"))
+    # Its transcript of what it says is split into utterances for the voice: a pause on the session timeline longer than
+    # this starts a new one, and so does a silence of this length in the arrival of the text (the rest is spoken at once).
+    live_gap_ms: int = field(default_factory=lambda: _int("LIVE_GAP_MS", 600))
+    live_idle_flush_ms: int = field(default_factory=lambda: _int("LIVE_IDLE_FLUSH_MS", 300))
+    # The user's words over her voice count as an interruption from this many characters (or from two words).
+    live_barge_min_chars: int = field(default_factory=lambda: _int("LIVE_BARGE_MIN_CHARS", 8))
+    price_live_per_min: float = field(default_factory=lambda: _float("PRICE_LIVE_PER_MIN", 0.05))
+
     soniox_api_key: str = field(default_factory=lambda: os.getenv("SONIOX_API_KEY", ""))
 
     respeecher_api_key: str = field(default_factory=lambda: os.getenv("RESPEECHER_API_KEY", ""))

@@ -90,7 +90,7 @@ class _MuxTTS:
     async def connect(self) -> None:
         await self._ensure()
 
-    def open_stream(self) -> "TTSStream":
+    def open_stream(self) -> TTSStream:
         """One generation for a whole answer: text is written to it as it arrives, audio is read from it."""
         return TTSStream(self)
 

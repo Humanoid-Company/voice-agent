@@ -5,6 +5,7 @@ services:
     name: diff-voice-agent-backend
     runtime: python
     plan: free
+    region: frankfurt # close to the Realtime and TTS servers (and to the users in Europe); fixed when the service is created
     branch: alternative
     buildCommand: pip install -r requirements-server.txt
     startCommand: uvicorn server.app:app --host 0.0.0.0 --port $PORT

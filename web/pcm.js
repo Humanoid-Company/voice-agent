@@ -1,4 +1,4 @@
-// Takes the (gated) microphone and hands it to the page as PCM16, 24 kHz, mono, 100 ms at a time: the format of
+// Takes the (gated) microphone and hands it to the page as PCM16, 24 kHz, mono, 40 ms at a time: the format of
 // the Realtime input. Each output sample is the average of the input samples it covers (a cheap low-pass).
 class PcmTap extends AudioWorkletProcessor {
   constructor() {
@@ -7,7 +7,7 @@ class PcmTap extends AudioWorkletProcessor {
     this.pos = 0;
     this.acc = 0;
     this.n = 0;
-    this.out = new Int16Array(2400);
+    this.out = new Int16Array(960);
     this.k = 0;
   }
 

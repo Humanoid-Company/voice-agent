@@ -17,7 +17,7 @@ function run(rate, hz, amp, seconds) {
   }
   var samples = 0, peak = 0, zc = 0, prev = 0, allFull = true;
   chunks.forEach(function (c) {
-    if (c.length !== 2400) allFull = false;
+    if (c.length !== 960) allFull = false;
     samples += c.length;
     for (var i = 0; i < c.length; i++) {
       peak = Math.max(peak, Math.abs(c[i]));

@@ -71,6 +71,8 @@ class WebUser:
     assistant_name: str | None = None
     language: str = "uk"
     voice: str | None = None
+    # Characters whose old (preset) voice the page picked instead of the own one (the picker's «новий / старий»).
+    old_voices: set[str] = field(default_factory=set)
     speed: str = "normal"
     style: str = "normal"
     prompt_variant: str = "v5"  # delivery prompt (v5 default = v4 condensed, v4 = v3 + full answers), sent by the page with every call

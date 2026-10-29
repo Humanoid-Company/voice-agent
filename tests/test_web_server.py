@@ -243,6 +243,40 @@ def test_empty_env_keeps_the_preset_voice(client, monkeypatch, persona):
     assert "\nVoice: " not in config["instructions"]
 
 
+@pytest.mark.parametrize("persona", sorted(_OWN_VOICES))
+def test_old_voice_variant_switches_back_to_the_preset(client, monkeypatch, persona):
+    """The picker's «новий / старий голос»: voice_variant "preset" → the preset and no «Voice:» line, "own" → back."""
+    env, voice_id, preset, _ = _OWN_VOICES[persona]
+    monkeypatch.setenv(env, voice_id)
+    cid = f"var-{persona}-0123456789abcdef"
+    headers = {"X-Client-Id": cid}
+    entry = next(v for v in client.get("/api/voices").json()["voices"] if v["id"] == persona)
+    assert entry["own_voice"] is True
+    user = web.users.get(cid)
+    assert client.post("/api/voice", json={"voice": persona, "voice_variant": "preset"}, headers=headers).status_code == 200
+    for concierge in (False, True):
+        config = web._session_config(user, concierge=concierge)
+        assert config["audio"]["output"]["voice"] == preset and "\nVoice: " not in config["instructions"]
+    assert client.post("/api/voice", json={"voice": persona, "voice_variant": "own"}, headers=headers).status_code == 200
+    assert web._session_config(user)["audio"]["output"]["voice"] == {"id": voice_id}
+
+
+def test_voices_say_whether_a_character_has_an_own_voice(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_VOICE_KISHKA", "voice_k")
+    flags = {v["id"]: v["own_voice"] for v in client.get("/api/voices").json()["voices"]}
+    assert flags["kit"] is True and flags["blunt"] is False and flags["lesia"] is False
+
+
+def test_delivery_notes_name_pace_and_manner_for_every_answer():
+    from voice.options import delivery_instruction
+
+    slow = delivery_instruction("slow", "calm")
+    assert "PACE" in slow and "slow" in slow and "MANNER" in slow and "calm" in slow and "on top of your character" in slow
+    changed = delivery_instruction("fast", "expressive", changed=True)
+    assert "replace any earlier" in changed and "faster" in changed and "expressive" in changed
+    assert delivery_instruction("normal", "normal") == ""
+
+
 def test_own_voice_is_accepted_by_the_desktop_change_voice():
     from voice.options import LIVE_VOICE_OPTIONS, VOICE_PERSONAS, api_voice
 

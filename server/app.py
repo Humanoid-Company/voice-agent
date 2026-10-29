@@ -177,6 +177,15 @@ def _talker(client_id: str | None) -> WebUser:
     return _user(client_id)
 
 
+def _set_voice_variant(user: WebUser, variant: str | None) -> None:
+    """The picker's «новий / старий голос» for the character now picked."""
+    voice = _user_voice(user)
+    if variant == "preset":
+        user.old_voices.add(voice)
+    elif variant == "own":
+        user.old_voices.discard(voice)
+
+
 def _user_voice(user: WebUser) -> str:
     """The character this browser picked; one that is gone (an old plain voice) → the default one."""
     return user.voice if user.voice in VOICE_PERSONAS else _default_voice()
@@ -199,10 +208,11 @@ def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
             voice=voice,
             delivery=delivery_instruction(user.speed, user.style),
             variant=user.prompt_variant,
+            old_voice=voice in user.old_voices,
         )
         + _WEB_NOTE
         + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE),
-        "audio": {"output": {"voice": api_voice(voice)}},
+        "audio": {"output": {"voice": api_voice(voice, voice in user.old_voices)}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
@@ -232,8 +242,9 @@ def _concierge_config(user: WebUser, language: str, today: str, voice: str) -> d
     config = {
         "model": OPENAI_LIVE_MODEL,
         "instructions": build_concierge_prompt(language_name=language, today=today, voice=voice,
-                                               check_question=user.check_question),
-        "audio": {"output": {"voice": api_voice(voice)}},  # the voice only: a concierge never roasts guests
+                                               check_question=user.check_question,
+                                               old_voice=voice in user.old_voices),
+        "audio": {"output": {"voice": api_voice(voice, voice in user.old_voices)}},  # the voice only: a concierge never roasts guests
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language)
@@ -253,6 +264,7 @@ class SessionRequest(BaseModel):
     sdp: str
     # The page's picker choices: server state is in memory and is lost on a Render restart.
     voice: str | None = None
+    voice_variant: str | None = None  # "own" | "preset": which voice of `voice` (when it has an own one)
     speed: str | None = None
     style: str | None = None
     # What the user asked right after the wake phrase: goes into the new call's history as their
@@ -282,6 +294,7 @@ async def _close_if_replaced(old: Any, new: Any, delay_s: float) -> None:
 
 class VoiceRequest(BaseModel):
     voice: str | None = None
+    voice_variant: str | None = None
     speed: str | None = None
     style: str | None = None
 
@@ -357,6 +370,7 @@ async def create_session(
     user = await asyncio.to_thread(_talker, x_client_id)  # may restore the conversation from the database
     if body.voice and body.voice.strip().lower() in VOICE_PERSONAS:
         user.voice = body.voice.strip().lower()
+    _set_voice_variant(user, body.voice_variant)
     if body.speed in SPEED_OPTIONS:
         user.speed = body.speed
     if body.style in STYLE_OPTIONS:
@@ -465,7 +479,7 @@ def voices() -> dict:
         "default": _default_voice(),
         "voices": [
             {"id": p.id, "label": p.label, "description": p.description, "feminine": p.feminine,
-             "special": p.special, "sample": p.voice, "wake": list(p.wake_names)}
+             "special": p.special, "sample": p.voice, "own_voice": bool(p.custom_voice_id), "wake": list(p.wake_names)}
             for p in VOICE_PERSONAS.values()
         ],
     }
@@ -485,6 +499,7 @@ def set_voice(
         if voice not in VOICE_PERSONAS:
             raise HTTPException(status_code=400, detail="unknown_voice")
         user.voice = voice
+    _set_voice_variant(user, body.voice_variant)
     delivery_changed = False
     for name, options in (("speed", SPEED_OPTIONS), ("style", STYLE_OPTIONS)):
         value = getattr(body, name)

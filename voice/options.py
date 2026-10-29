@@ -62,19 +62,19 @@ class VoicePersona:
         """The own voice's id from the env ("" = none: the preset speaks). Read at call time, not at import."""
         return os.getenv(self.voice_env, "").strip() if self.voice_env else ""
 
-    @property
-    def api_voice(self) -> str | dict[str, str]:
-        """What audio.output.voice gets: {"id": …} for an own voice, the preset's name otherwise."""
-        custom = self.custom_voice_id
+    def api_voice(self, old_voice: bool = False) -> str | dict[str, str]:
+        """What audio.output.voice gets: {"id": …} for an own voice, the preset's name otherwise (or when the
+        listener picked the old, preset voice)."""
+        custom = "" if old_voice else self.custom_voice_id
         return {"id": custom} if custom else self.voice
 
-    def voice_line(self) -> str:
-        """«Voice: …» for the instructions; empty unless the own voice is set (the preset sounds as it does)."""
-        if self.custom_voice_id and self.voice_description:
+    def voice_line(self, old_voice: bool = False) -> str:
+        """«Voice: …» for the instructions; empty unless the own voice speaks (the preset sounds as it does)."""
+        if not old_voice and self.custom_voice_id and self.voice_description:
             return f"Voice: {self.voice_description}"
         return ""
 
-    def instructions(self) -> str:
+    def instructions(self, old_voice: bool = False) -> str:
         if self.feminine:
             gender = (
                 "You are a woman: speak about yourself in the feminine grammatical gender: "
@@ -103,8 +103,8 @@ class VoicePersona:
         if self.samples:
             lines = "\n".join(f"- {line}" for line in self.samples)
             text += f"\nHow you sound (tone reference only — never repeat these lines verbatim):\n{lines}"
-        if self.voice_line():
-            text += f"\n{self.voice_line()}"
+        if self.voice_line(old_voice):
+            text += f"\n{self.voice_line(old_voice)}"
         return text
 
 
@@ -426,11 +426,11 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
 DEFAULT_PERSONA = "willow"
 
 
-def api_voice(voice_id: str) -> str | dict[str, str]:
+def api_voice(voice_id: str, old_voice: bool = False) -> str | dict[str, str]:
     """What the API gets for a picker id: the preset («blunt» → «cedar», «lina» → «willow»), or {"id": …} when the
-    character has its own voice set in the env."""
+    character has its own voice set in the env — unless the listener chose the old (preset) voice."""
     persona = VOICE_PERSONAS.get(voice_id)
-    return persona.api_voice if persona else voice_id
+    return persona.api_voice(old_voice) if persona else voice_id
 
 
 # «Єва, зміни голос на чоловічий» — handled by the app itself: the Live model often answers
@@ -519,15 +519,33 @@ def voice_request_target(text: str, current: str | None) -> str | None:
 
 # Speed and style of delivery. GPT-Live has no speed/pitch parameter, so these are instructions
 # to the model — applied at session start and, when changed mid-call, appended live.
+# Pace and manner are asked for in plain words: GPT-Live has no speed or tone setting, and a mild «a bit slower»
+# at the end of a long prompt was lost behind the character («the settings changed a little»). So each one names
+# what to do with the delivery itself — sentence length, pauses, pitch, energy — and says it holds for every
+# answer on top of the character (who stays the same), until a new note.
 SPEED_OPTIONS: dict[str, str] = {
-    "slow": "Speak noticeably slower than usual: calm, unhurried pacing with clear pauses between sentences.",
-    "normal": "Speak at your normal conversational pace.",
-    "fast": "Speak a bit faster than usual: brisk and energetic, but every word still clear.",
+    "slow": (
+        "PACE — slow, in every answer: speak clearly slower than your usual pace, about three quarters of it. "
+        "Short sentences, a real pause after each one and between thoughts, no rushing through lists or numbers; "
+        "stretch the stressed words a little."
+    ),
+    "normal": "PACE — your own natural conversational pace, no slower and no faster.",
+    "fast": (
+        "PACE — fast, in every answer: speak clearly faster than your usual pace, brisk and to the point, about a "
+        "third quicker. Short pauses, no drawn-out words or lingering, no filler; every word still clear."
+    ),
 }
 STYLE_OPTIONS: dict[str, str] = {
-    "calm": "Use a calm, soft, soothing delivery with gentle intonation and little excitement.",
-    "normal": "Use your normal friendly delivery.",
-    "expressive": "Use a more expressive, emotional delivery: livelier intonation, more warmth and audible reactions.",
+    "calm": (
+        "MANNER — calm, in every answer: a soft, low, even voice, quiet energy, gentle falling intonation, no "
+        "exclamations, no loud laughter or sudden jumps in pitch; soothing and unhurried in feeling."
+    ),
+    "normal": "MANNER — your own natural manner and energy.",
+    "expressive": (
+        "MANNER — expressive, in every answer: a lively, emotional voice with a wide range of pitch, clear "
+        "emphasis on key words, audible feeling — surprise, delight, a laugh, a sigh — and bigger energy "
+        "than usual."
+    ),
 }
 
 
@@ -538,11 +556,12 @@ def delivery_instruction(speed: str = "normal", style: str = "normal", *, change
     if not changed and speed == "normal" and style == "normal":
         return ""
     head = (
-        "Settings note, not a message from the user: the voice settings changed. Do not answer this, "
-        "do not mention it and do not interrupt or restart what you are saying — just sound like this "
-        "from your next answer on. "
+        "Settings note, not a message from the user — do not answer it, do not mention it and do not stop or "
+        "restart what you are saying. The voice settings changed; they replace any earlier pace and manner "
+        "notes and apply from your next answer on, to every answer until the next note. "
         if changed
-        else ""
+        else "Delivery settings — they apply to every answer, on top of your character (the character and the "
+             "words stay yours; only the pace and the manner change). "
     )
     return head + SPEED_OPTIONS[speed] + " " + STYLE_OPTIONS[style]
 

@@ -104,7 +104,7 @@
   let promptVariant = params.get("prompt") || "v5";
   // The top switch: «Помічниця» (the usual talk) or «Консьєрж» — she welcomes people, asks their name and
   // checks it against «Знання» with one check question (server/knowledge.py CONCIERGE_NOTE).
-  let mode = store.get("va-mode") === "concierge" ? "concierge" : "assistant";
+  let mode = "assistant"; // «Консьєрж» is off in the UI for now (its code stays)
   // «Консьєрж» → «Перевірочне питання»: off — the name on the list is enough (kept on this device).
   let checkQuestion = store.get("va-check-question") !== "0";
   if (!WEB_PROMPTS.includes(promptVariant)) promptVariant = "v5";
@@ -637,13 +637,6 @@
     remoteLevel = level;
     const el = $("remote");
     const v = eva.mode === "waiting" ? 0 : level * volume;
-    if (fx && fx.on) {
-      // She is heard through the «Чистіший звук» chain; the element only keeps the stream flowing.
-      clearInterval(volRamp);
-      el.muted = true;
-      fx.setVolume(v);
-      return;
-    }
     rampVolume(el, v);
   }
 
@@ -665,129 +658,13 @@
     }, 8);
   }
 
-  // Her voice into the speakers (straight, or through the chain) and into the gate's echo meter.
+  // Her voice into the speakers and into the gate's echo meter.
   function playRemote(stream) {
     stopPreview(); // a sample left playing would talk over her
     $("remote").srcObject = stream;
     if (gate) gate.listenTo(stream);
-    if (cleanVoice) {
-      ensureFx().then((f) => { if (f && $("remote").srcObject === stream) { f.attach(stream); setRemoteVolume(remoteLevel); } });
-    }
   }
 
-  // ── «Чистіший звук»: a small chain on her voice before the speakers ────────────────────────────
-  // Rumble cut, a little presence (clearer words), a de-esser that only tames sharp «с»/«ш»/«ц»,
-  // and a gentle compressor so quiet sentence ends don't drop. It can't change how the model says a
-  // sound — only how it comes out. Off by default (?clean=1 or the switch turns it on).
-  let cleanVoice = params.get("clean") === "1" || store.get("va-clean") === "1";
-  let fx = null;
-  let fxLoading = null;
-  const DEESS_WORKLET = `
-    class DeEsser extends AudioWorkletProcessor {
-      constructor() {
-        super();
-        this.a = 1 - Math.exp((-2 * Math.PI * 5000) / sampleRate); // split at 5 kHz
-        this.atk = 1 - Math.exp(-1 / (sampleRate * 0.002));
-        this.rel = 1 - Math.exp(-1 / (sampleRate * 0.06));
-        this.lp = 0; this.env = 0; this.g = 1;
-        this.thr = 0.035; // sibilance above this (linear) is pulled down
-      }
-      process(inputs, outputs) {
-        const input = inputs[0][0];
-        const output = outputs[0][0];
-        if (!input || !output) return true;
-        for (let i = 0; i < input.length; i++) {
-          const x = input[i];
-          this.lp += this.a * (x - this.lp);
-          const high = x - this.lp;
-          const level = Math.abs(high);
-          this.env += (level - this.env) * (level > this.env ? this.atk : this.rel);
-          // Ratio ~3:1 above the threshold, at most −9 dB, smoothed so it never clicks.
-          const want = this.env > this.thr ? Math.max(0.35, Math.pow(this.thr / this.env, 0.66)) : 1;
-          this.g += (want - this.g) * (want < this.g ? this.atk : this.rel);
-          output[i] = this.lp + high * this.g;
-        }
-        for (let c = 1; c < outputs[0].length; c++) outputs[0][c].set(output);
-        return true;
-      }
-    }
-    registerProcessor("de-esser", DeEsser);
-  `;
-
-  function ensureFx() {
-    if (fx) return Promise.resolve(fx);
-    if (!fxLoading) fxLoading = createFx().then((f) => { fx = f; fxLoading = null; return f; });
-    return fxLoading;
-  }
-
-  async function createFx() {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) return null;
-    const ctx = new AudioCtx();
-    // She is heard from this context, not from the <audio> element: it plays to the picked speaker too
-    // (Chrome/Edge 110+; elsewhere the system default).
-    const setSink = (id) => { if (!ctx.setSinkId) return false; ctx.setSinkId(id).catch(() => {}); return true; };
-    if (speakerId) setSink(speakerId);
-    try {
-      if (!ctx.audioWorklet) throw new Error("no AudioWorklet");
-      const url = URL.createObjectURL(new Blob([DEESS_WORKLET], { type: "application/javascript" }));
-      try {
-        if (await within(ctx.audioWorklet.addModule(url), 4000) === "late") throw new Error("worklet load timed out");
-      } finally { URL.revokeObjectURL(url); }
-      // Made outside a tap (her voice arrived), WebKit may keep it suspended: then she plays as usual.
-      await within(ctx.resume().catch(() => {}), 1500);
-      if (ctx.state !== "running") throw new Error("audio not started: " + ctx.state);
-      const highpass = new BiquadFilterNode(ctx, { type: "highpass", frequency: 70, Q: 0.7 });
-      const presence = new BiquadFilterNode(ctx, { type: "peaking", frequency: 3200, Q: 1, gain: 2.5 });
-      const deEsser = new AudioWorkletNode(ctx, "de-esser", { channelCount: 1, channelCountMode: "explicit" });
-      const comp = new DynamicsCompressorNode(ctx, { threshold: -22, knee: 12, ratio: 2.5, attack: 0.004, release: 0.18 });
-      // The compressor already adds its own make-up gain; no more on top — louder would just
-      // sound "better" in a side-by-side comparison.
-      const makeup = new GainNode(ctx, { gain: 1 });
-      const volumeNode = new GainNode(ctx, { gain: 1 });
-      // The compressor adds its own make-up gain: on loud phrases the chain went past full scale and
-      // clipped (a rasp at high volume). A brick-wall limiter last keeps it just under.
-      const limiter = new DynamicsCompressorNode(ctx, { threshold: -2, knee: 0, ratio: 20, attack: 0.002, release: 0.08 });
-      highpass.connect(presence).connect(deEsser).connect(comp).connect(makeup).connect(volumeNode).connect(limiter);
-      limiter.connect(ctx.destination);
-      let source = null;
-      return {
-        on: false,
-        attach(stream) {
-          if (source) source.disconnect();
-          source = ctx.createMediaStreamSource(stream);
-          source.connect(highpass);
-          ctx.resume().catch(() => {});
-          this.on = true;
-        },
-        detach() {
-          if (source) source.disconnect();
-          source = null;
-          this.on = false;
-        },
-        setVolume(v) { volumeNode.gain.setTargetAtTime(v, ctx.currentTime, 0.02); },
-        resume() { if (ctx.state !== "running" && ctx.state !== "closed") ctx.resume().catch(() => {}); },
-        setSink,
-      };
-    } catch {
-      ctx.close().catch(() => {});
-      return null;
-    }
-  }
-
-  async function toggleCleanVoice() {
-    cleanVoice = $("cleanVoice").checked;
-    store.set("va-clean", cleanVoice ? "1" : "0");
-    const stream = $("remote").srcObject;
-    if (cleanVoice) {
-      const f = await ensureFx();
-      if (!f) { addLine("system", "Цей браузер не підтримує обробку звуку."); $("cleanVoice").checked = cleanVoice = false; return; }
-      if (stream) f.attach(stream);
-    } else if (fx) {
-      fx.detach();
-    }
-    setRemoteVolume(remoteLevel);
-  }
   // Her voice for the current call.
   function attachVoice(stream) {
     if (stream) playRemote(stream);
@@ -1185,7 +1062,7 @@
 
   // What a new call is opened with: voice and delivery.
   const sessionBody = (extra) => Object.assign({
-    voice: voice || undefined, speed, style, prompt: promptVariant,
+    voice: voice || undefined, voice_variant: voice ? variantFor(voice) : undefined, speed, style, prompt: promptVariant,
     mode: mode === "concierge" ? "concierge" : undefined,
     check_question: mode === "concierge" ? checkQuestion : undefined,
   }, extra);
@@ -1688,29 +1565,79 @@
     const picked = voices.find((x) => x.id === $("voice").value);
     $("voiceInfo").textContent = picked ? picked.description : "";
     $("voiceApply").hidden = !picked || picked.id === voice;
+    for (const b of $("characters").children) b.setAttribute("aria-selected", String(picked ? b.dataset.id === picked.id : false));
+    showVoiceVariant(picked);
   }
+
+  // «Новий / старий голос»: only for a character that has an own voice (the server says so: own_voice).
+  const variantOf = (id) => (store.get("va-voice-variant-" + id) === "preset" ? "preset" : "own");
+  function showVoiceVariant(picked) {
+    const has = Boolean(picked && picked.own_voice);
+    $("voiceVariantRow").hidden = !has;
+    const own = !has || variantOf(picked.id) === "own";
+    if (has) $("voiceVariant").value = variantOf(picked.id);
+    // A prompt-generated voice is not in the speech endpoint, so it has no sample: only the old one does.
+    $("voicePreview").disabled = !voices.length || (has && own);
+    $("voiceVariantInfo").textContent = has && own
+      ? "Новий голос звучить лише в розмові — зразка для нього немає. Старий — пресет, його можна прослухати."
+      : "";
+  }
+
+  // The variant to send for a character: only one with an own voice has the choice.
+  const variantFor = (id) => ((voices.find((x) => x.id === id) || {}).own_voice ? variantOf(id) : undefined);
+
+  // The voice of the current character changed (a new character, or its new / old voice): the call goes on in it.
+  function reconnectForVoice(text) {
+    if (eva.mode === "active") {
+      const later = !voiceNow && answering();
+      addLine("system", later ? text.later : text.now);
+      switchVoiceFast(later);
+    } else if (eva.mode === "waiting") {
+      addLine("system", text.now);
+      restartSession("switching", { switched: true }); // paused: she is silent, nothing to continue
+    }
+  }
+
+  async function applyVoiceVariant() {
+    const picked = voices.find((x) => x.id === voice);
+    if (!picked || !picked.own_voice) return;
+    const variant = $("voiceVariant").value === "preset" ? "preset" : "own";
+    if (variant === variantOf(voice)) return;
+    store.set("va-voice-variant-" + voice, variant);
+    showVoiceVariant(picked);
+    stopPreview();
+    fetch(BACKEND + "/api/voice", { method: "POST", headers: headers(), body: JSON.stringify({ voice, voice_variant: variant }) }).catch(() => {});
+    const name = variant === "own" ? "новий голос" : "старий голос";
+    reconnectForVoice({
+      now: callName + ": " + name + ".",
+      later: callName + ": " + name + " — щойно договорить поточну відповідь.",
+    });
+  }
+
+  const CHARACTERS = ["meridian", "blunt", "lesia", "kit"]; // Тарас, Толік, Леся, Кішка
 
   async function loadVoices() {
     try {
       const res = await fetch(BACKEND + "/api/voices");
       if (!res.ok) return;
       const data = await res.json();
-      voices = data.voices || [];
+      // Only these characters, in this order (the rest stay on the server, off the page for now).
+      voices = (data.voices || []).filter((x) => CHARACTERS.includes(x.id))
+        .sort((a, b) => CHARACTERS.indexOf(a.id) - CHARACTERS.indexOf(b.id));
       voice = store.get("va-voice") || "";
-      if (!voices.some((x) => x.id === voice)) voice = data.default;
+      if (!voices.some((x) => x.id === voice)) voice = voices.some((x) => x.id === data.default) ? data.default : "";
       if (!voices.some((x) => x.id === voice) && voices.length) voice = voices[0].id;
-      const group = (label, list) => {
-        const g = document.createElement("optgroup");
-        g.label = label;
-        g.append(...list.map((x) => new Option(x.label, x.id)));
-        return g;
-      };
-      $("voice").replaceChildren(
-        group("Жіночі", voices.filter((x) => x.feminine && !x.special)),
-        group("Чоловічі", voices.filter((x) => !x.feminine && !x.special)),
-        // Толік (a roast) and Леся (a robot cat), kept apart.
-        ...(voices.some((x) => x.special) ? [group("Особливі", voices.filter((x) => x.special))] : []),
-      );
+      $("voice").replaceChildren(...voices.map((x) => new Option(x.label, x.id)));
+      $("characters").replaceChildren(...voices.map((x) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("role", "tab");
+        b.dataset.id = x.id;
+        b.textContent = x.label;
+        b.title = x.description;
+        b.addEventListener("click", () => { $("voice").value = x.id; stopPreview(); applyVoice(); });
+        return b;
+      }));
       $("voice").disabled = !voices.length;
       $("voicePreview").disabled = !voices.length;
       showVoice();
@@ -1728,17 +1655,11 @@
     showVoice();
     // Not awaited: the new call carries the voice itself (/api/session), this only keeps the server
     // in step (it remembers the voice).
-    fetch(BACKEND + "/api/voice", { method: "POST", headers: headers(), body: JSON.stringify({ voice: id }) }).catch(() => {});
-    if (eva.mode === "active") {
-      const later = !voiceNow && answering();
-      addLine("system", later
-        ? "Персонаж зміниться на «" + voiceLabel(id) + "», щойно договорить поточну відповідь."
-        : "Голос змінено на «" + voiceLabel(id) + "».");
-      switchVoiceFast(later);
-    } else if (eva.mode === "waiting") {
-      addLine("system", "Голос змінено на «" + voiceLabel(id) + "».");
-      restartSession("switching", { switched: true }); // paused: she is silent, nothing to continue
-    }
+    fetch(BACKEND + "/api/voice", { method: "POST", headers: headers(), body: JSON.stringify({ voice: id, voice_variant: variantFor(id) }) }).catch(() => {});
+    reconnectForVoice({
+      now: "Голос змінено на «" + voiceLabel(id) + "».",
+      later: "Персонаж зміниться на «" + voiceLabel(id) + "», щойно договорить поточну відповідь.",
+    });
   }
 
   // ── fast voice switch ──
@@ -1982,7 +1903,7 @@
     if (!BACKEND || (!diag.changed && !final)) return;
     diag.changed = false;
     const body = {
-      final, prompt: promptVariant, clean: cleanVoice, sens: params.get("sens") === "1", ios: IOS,
+      final, prompt: promptVariant, sens: params.get("sens") === "1", ios: IOS,
       browser: BROWSER, browserV: BROWSER_VERSION, osV: OS_VERSION, micApi: HAS_MIC_API, legacyMic: Boolean(LEGACY_GUM),
       secure: window.isSecureContext,
       audio: { ctxInterrupts: diag.ctxInterrupts, micRevives: diag.micRevives, micMutes: diag.micMutes, wakeLock: Boolean(wakeLock) },
@@ -2390,7 +2311,6 @@
     if (document.visibilityState !== "visible" || eva.mode === "off") return;
     holdScreen(true);
     if (gate) gate.alive();
-    if (fx) fx.resume();
     if (eva.mode === "active") reviveMic();
   });
 
@@ -2448,9 +2368,6 @@
     setDevice("speaker", id);
     showDevicesNow();
     if (eva.mode !== "off") addLine("system", "Звук: " + devicesNow().output + ".");
-    // «Чистіший звук» plays from an AudioContext: where it can't pick an output (Safari), she stays
-    // in the old one — say so rather than leave the pick looking broken.
-    if (fx && !fx.setSink(id) && fx.on) addLine("system", "З «Чистішим звуком» цей браузер грає лише в системний вихід — вимкніть його, щоб звук пішов на обраний динамік.");
     stopPreview(); // the next «Прослухати» plays to the new one
   }
 
@@ -2589,8 +2506,6 @@
     $("bgListen").addEventListener("change", toggleBgListen);
     showBgListen();
     $("voiceNow").addEventListener("change", toggleVoiceNow);
-    $("cleanVoice").checked = cleanVoice;
-    $("cleanVoice").addEventListener("change", toggleCleanVoice);
     showVoiceNow();
     $("newChat").addEventListener("click", newConversation);
     $("nextGuest").addEventListener("click", newConversation);
@@ -2602,6 +2517,7 @@
     showMode();
     $("copyChat").addEventListener("click", copyConversation);
     $("voice").addEventListener("change", () => { stopPreview(); showVoice(true); });
+    $("voiceVariant").addEventListener("change", applyVoiceVariant);
     $("voicePreview").addEventListener("click", togglePreview);
     $("voiceApply").addEventListener("click", applyVoice);
     $("speed").value = speed;

@@ -646,11 +646,12 @@ def build_live_prompt(
     voice: str | None = None,
     delivery: str = "",
     variant: str = "v4",
+    old_voice: bool = False,
 ) -> str:
     # The voice's character goes right after the general delivery rules, where it shapes how
     # every line sounds — appended at the very end of this long prompt it was mostly ignored.
     persona = VOICE_PERSONAS.get(voice or "")
-    voice_part = persona.instructions() + "\n\n" if persona else ""
+    voice_part = persona.instructions(old_voice) + "\n\n" if persona else ""
     if variant == "v5":
         top = _LIVE_PROMPT_V5_TOP
         if persona is not None and persona.own_tone:
@@ -777,7 +778,7 @@ _CONCIERGE_STEPS_NO_CHECK: str = (
 
 
 def build_concierge_prompt(*, language_name: str, today: str, voice: str | None = None,
-                           check_question: bool = True) -> str:
+                           check_question: bool = True, old_voice: bool = False) -> str:
     persona = VOICE_PERSONAS.get(voice or "")
     # Gender-neutral whatever the voice: it can change from guest to guest, and «я перевірила» in a man's voice
     # sounds wrong (feedback: «чоловічі голоси говорять у жіночому роді»).
@@ -792,5 +793,5 @@ def build_concierge_prompt(*, language_name: str, today: str, voice: str | None 
         start = prompt.index("With each person, in this order:\n")
         end = prompt.index("Then wait for the next person")
         prompt = prompt[:start] + _CONCIERGE_STEPS_NO_CHECK + prompt[end:]
-    voice_line = f"\n{persona.voice_line()}" if persona is not None and persona.voice_line() else ""
+    voice_line = f"\n{persona.voice_line(old_voice)}" if persona is not None and persona.voice_line(old_voice) else ""
     return prompt + f"Today is {today}. Speak {language_name} by default.{gender}{voice_line}"

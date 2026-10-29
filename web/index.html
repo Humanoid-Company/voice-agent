@@ -17,17 +17,17 @@
         <p class="sub">Оберіть персонажа й говоріть з ним як з людиною.</p>
       </div>
       <nav class="head-links" aria-label="Сторінки">
-        <a id="knowledgeLink" class="nav-btn" href="knowledge.html"
+        <a id="knowledgeLink" class="nav-btn" href="knowledge.html" hidden
           title="Список гостей і факти про подію для консьєржа: завантажити таблицю чи документ"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg><span>Знання</span></a>
         <a id="settingsLink" class="nav-btn" href="settings.html" aria-label="Налаштування"
           title="Версія й моделі, довідка"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="wide-only">Налаштування</span></a>
       </nav>
     </header>
 
-    <nav class="mode-tabs" role="tablist" aria-label="Режим">
-      <button id="modeAssistant" role="tab" type="button" aria-selected="true">Помічник</button>
-      <button id="modeConcierge" role="tab" type="button" aria-selected="false">Консьєрж</button>
-    </nav>
+    <nav id="characters" class="mode-tabs" role="tablist" aria-label="Персонаж"></nav>
+    <!-- «Консьєрж» is hidden for now (the code stays): the page always opens an assistant call. -->
+    <button id="modeAssistant" type="button" hidden></button>
+    <button id="modeConcierge" type="button" hidden></button>
 
     <section class="card call">
       <div class="status-line">
@@ -38,7 +38,7 @@
         title="Час, поки відкрита сесія GPT-Live (разом з першими 15 с паузи), і орієнтовна ціна за ним. Інструменти й підсумок фонового слухання оплачуються окремо й тут не враховані."></p>
       <p id="callDevices" class="call-devices"><span id="callDevicesText"></span>
         <a href="#devices" class="call-devices-link">Змінити</a></p>
-      <div id="concierge" class="concierge" hidden>
+      <div id="concierge" class="concierge" hidden data-off>
         <div class="guest-line">
           <span class="muted small">Гість</span>
           <strong id="guestName">ще не назвався</strong>
@@ -59,14 +59,20 @@
           однаковим ім'ям — питає прізвище) і ставить одне перевірочне питання. Потім — «Наступний гість».</p>
       </div>
       <div class="voice-block">
-        <label class="block-label" for="voice">Персонаж</label>
-        <div class="row voice-pick">
-          <select id="voice" disabled>
-            <option>Завантаження…</option>
-          </select>
-          <button id="voicePreview" class="btn" disabled>▶ Прослухати</button>
-        </div>
         <p id="voiceInfo" class="hint"></p>
+        <div id="voiceVariantRow" class="voice-variant" hidden>
+          <label class="block-label" for="voiceVariant">Голос</label>
+          <div class="row voice-pick">
+            <select id="voiceVariant">
+              <option value="own">Створений голос (новий)</option>
+              <option value="preset">Старий голос (пресет)</option>
+            </select>
+            <button id="voicePreview" class="btn" disabled>▶ Прослухати</button>
+          </div>
+          <p id="voiceVariantInfo" class="hint"></p>
+        </div>
+        <!-- The picked character: set by the buttons above, kept here for the page's logic. -->
+        <select id="voice" disabled hidden><option>Завантаження…</option></select>
         <button id="voiceApply" class="btn primary wide" hidden>Застосувати</button>
       </div>
       <button id="talk" class="btn primary big">Почати розмову</button>
@@ -85,14 +91,6 @@
         </span>
         <input id="bgListen" type="checkbox" class="switch" role="switch" checked>
       </label>
-      <label class="setting" for="camera">
-        <span class="setting-text">
-          <span class="setting-title">Камера</span>
-          <span id="cameraInfo" class="hint">Попросіть «…, подивись» — погляд через камеру.</span>
-        </span>
-        <input id="camera" type="checkbox" class="switch" role="switch">
-      </label>
-      <video id="cameraView" class="camera-view" autoplay muted playsinline hidden></video>
     </section>
 
     <section id="devices" class="card">
@@ -112,6 +110,14 @@
           <select id="cameraSelect"><option value="">За замовчуванням</option></select>
         </div>
       </div>
+      <label class="setting" for="camera">
+        <span class="setting-text">
+          <span class="setting-title">Камера</span>
+          <span id="cameraInfo" class="hint">Попросіть «…, подивись» — погляд через камеру.</span>
+        </span>
+        <input id="camera" type="checkbox" class="switch" role="switch">
+      </label>
+      <video id="cameraView" class="camera-view" autoplay muted playsinline hidden></video>
       <p id="devicesNow" class="devices-now"></p>
       <button id="devicesAllow" class="btn small-btn" type="button" hidden>Показати пристрої</button>
       <p id="devicesInfo" class="hint">Назви пристроїв з'являться, коли браузер дасть доступ до мікрофона.</p>
@@ -142,24 +148,16 @@
         <span id="volumeValue" class="muted small"></span>
       </div>
       <input id="volume" type="range" min="0" max="100" step="5">
-      <p class="hint">Гучність діє одразу, навіть посеред розмови. Новий персонаж — після «Застосувати»: розмова
-        продовжиться ним з усією пам'яттю. Темп і манера — лише побажання для помічника, різниця слабка: GPT-Live
-        не має налаштувань швидкості й тону, і за замірами темп майже не змінюється. Відчутно змінює
-        звучання лише інший голос. Зразок звучить звичайним темпом.</p>
+      <p class="hint">Гучність діє одразу, навіть посеред розмови. Новий персонаж — кнопкою вгорі: розмова
+        продовжиться ним з усією пам'яттю. Темп і манера — прохання до персонажа (GPT-Live не має
+        регулятора швидкості й тону): вони діють на кожну наступну відповідь, голос лишається його. Зразок звучить
+        звичайним темпом.</p>
       <label class="setting" for="voiceNow">
         <span class="setting-text">
           <span class="setting-title">Міняти голос посеред відповіді</span>
           <span id="voiceNowInfo" class="hint">Відповідь договорить уже новий персонаж.</span>
         </span>
         <input id="voiceNow" type="checkbox" class="switch" role="switch" checked>
-      </label>
-      <label class="setting" for="cleanVoice">
-        <span class="setting-text">
-          <span class="setting-title">Чистіший звук · тест</span>
-          <span class="hint">Трохи більше чіткості, м'якші «с»/«ш», рівніша гучність. Можна перемикати посеред
-            розмови й порівнювати. Якщо на колонках помічник почне перебивати сам себе — вимкніть.</span>
-        </span>
-        <input id="cleanVoice" type="checkbox" class="switch" role="switch">
       </label>
     </section>
 

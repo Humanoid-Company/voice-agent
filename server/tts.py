@@ -74,6 +74,14 @@ class _MuxTTS:
         """Reply -> (generation id, message); (None, ...) when the reply carries no id."""
         raise NotImplementedError
 
+    def _stream_messages(self, ctx: str, text: str, first: bool) -> list[dict]:
+        """More text for a generation that is still open (`first`: it is the generation's first piece)."""
+        raise NotImplementedError
+
+    def _end_messages(self, ctx: str) -> list[dict]:
+        """Closes the generation: no more text."""
+        raise NotImplementedError
+
     def set_sampling(self, params: dict) -> bool:
         """Delivery parameters for the next sentences; False when the provider has none."""
         return False
@@ -81,6 +89,10 @@ class _MuxTTS:
     # -- public --
     async def connect(self) -> None:
         await self._ensure()
+
+    def open_stream(self) -> "TTSStream":
+        """One generation for a whole answer: text is written to it as it arrives, audio is read from it."""
+        return TTSStream(self)
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
         tried: list[str] = []
@@ -175,6 +187,74 @@ class _MuxTTS:
             q.put_nowait(_Msg("error", error="tts connection closed"))
 
 
+class TTSStream:
+    """One generation for the whole answer instead of one per sentence: `write()` adds the text of a sentence as soon as
+    it is complete, `finish()` says there is no more, and iterating gives the audio as the provider produces it. The
+    voice then carries its intonation across sentences, and there is no new request between them. `cancel()` stops the
+    whole generation (a barge-in)."""
+
+    def __init__(self, tts: _MuxTTS) -> None:
+        self._tts = tts
+        self.ctx = uuid.uuid4().hex
+        self._queue: asyncio.Queue[_Msg] = asyncio.Queue()
+        tts._queues[self.ctx] = self._queue
+        self._first = True
+        self._ended = False  # no more text will come: from here on silence from the provider is a timeout
+        self.finished = False  # the provider is done (or the generation was cancelled): nothing is left to cancel
+
+    async def _send(self, messages: list[dict]) -> None:
+        ws = await self._tts._ensure()
+        for m in messages:
+            await ws.send(json.dumps(m))
+
+    async def write(self, text: str) -> None:
+        # A space after every piece, so that the words of two sentences are not glued together.
+        await self._send(self._tts._stream_messages(self.ctx, text.rstrip() + " ", self._first))
+        self._first = False
+
+    async def finish(self) -> None:
+        self._ended = True
+        if not self._first:
+            await self._send(self._tts._end_messages(self.ctx))
+
+    async def cancel(self) -> None:
+        self._ended = self.finished = True
+        self._tts._queues.pop(self.ctx, None)
+        ws = self._tts._ws
+        if not self._first and ws is not None and ws.state.name == "OPEN":
+            with contextlib.suppress(Exception):
+                await ws.send(json.dumps(self._tts._cancel_message(self.ctx)))
+
+    def __aiter__(self) -> AsyncIterator[bytes]:
+        return self._audio()
+
+    async def _audio(self) -> AsyncIterator[bytes]:
+        got_audio = False
+        seen: list[str] = []
+        try:
+            while True:
+                # While the answer is still being written the provider may be quiet for as long as the model thinks.
+                try:
+                    msg = await asyncio.wait_for(self._queue.get(), _CHUNK_TIMEOUT_S if self._ended else None)
+                except TimeoutError:
+                    raise TTSError("tts timeout") from None
+                if len(seen) < 6 and (msg.kind != "audio" or not got_audio):
+                    seen.append(msg.raw)
+                if msg.kind == "error":
+                    self.finished = True
+                    raise TTSError(msg.error)
+                if msg.kind == "end":
+                    self.finished = True
+                    if not got_audio:
+                        raise _NoAudio(f"replies {seen}")
+                    return
+                if msg.audio:
+                    got_audio = True
+                    yield msg.audio
+        finally:
+            self._tts._queues.pop(self.ctx, None)
+
+
 class RespeecherTTS(_MuxTTS):
     """wss://api.respeecher.com/v1/public/tts/{ua-rt|en-rt}/tts/websocket
 
@@ -215,6 +295,12 @@ class RespeecherTTS(_MuxTTS):
             lambda ctx, text: [self._request(ctx, text, True), self._request(ctx, "", False)],
         ]
 
+    def _stream_messages(self, ctx: str, text: str, first: bool) -> list[dict]:
+        return [self._request(ctx, text, True)]
+
+    def _end_messages(self, ctx: str) -> list[dict]:
+        return [self._request(ctx, "", False)]
+
     def _cancel_message(self, ctx: str) -> dict:
         return {"context_id": ctx, "cancel": True}
 
@@ -253,18 +339,26 @@ class SonioxTTS(_MuxTTS):
     def _variants(self) -> list:
         return [self._start_messages]
 
+    def _config(self, ctx: str) -> dict:
+        return {
+            "stream_id": ctx,
+            "model": self._cfg.soniox_tts_model,
+            "language": self._language,
+            "voice": self._voice,
+            "audio_format": "pcm_s16le",
+            "sample_rate": self.sample_rate,
+        }
+
     def _start_messages(self, ctx: str, text: str) -> list[dict]:
-        return [
-            {
-                "stream_id": ctx,
-                "model": self._cfg.soniox_tts_model,
-                "language": self._language,
-                "voice": self._voice,
-                "audio_format": "pcm_s16le",
-                "sample_rate": self.sample_rate,
-            },
-            {"stream_id": ctx, "text": text, "text_end": True},
-        ]
+        return [self._config(ctx), {"stream_id": ctx, "text": text, "text_end": True}]
+
+    # Several text messages for one stream_id, the last with text_end: true (docs: soniox.com/docs/api-reference/tts/websocket-api).
+    def _stream_messages(self, ctx: str, text: str, first: bool) -> list[dict]:
+        more = {"stream_id": ctx, "text": text, "text_end": False}
+        return [self._config(ctx), more] if first else [more]
+
+    def _end_messages(self, ctx: str) -> list[dict]:
+        return [{"stream_id": ctx, "text": "", "text_end": True}]
 
     def _cancel_message(self, ctx: str) -> dict:
         return {"stream_id": ctx, "cancel": True}

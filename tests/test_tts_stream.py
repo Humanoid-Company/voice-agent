@@ -105,3 +105,111 @@ def test_the_working_format_is_remembered_so_the_failed_one_is_not_retried():
     # first sentence: 1 failed request + 2 messages; second sentence: only the 2 messages
     assert len(ws.sent) == 1 + 2 + 2
     del tts_ws
+
+
+# ---------------------------------------------------------------------- one generation for the whole answer
+
+
+def test_respeecher_one_generation_for_several_sentences_and_a_closing_chunk():
+    def script(msgs):
+        last = msgs[-1]
+        if not last["continue"]:
+            return [CHUNK, DONE]
+        return [CHUNK] if len(msgs) == 1 else []
+
+    ws = FakeWS(script)
+
+    class T(RespeecherTTS):
+        async def _open(self):
+            return ws
+
+    async def go():
+        tts = T(Config(respeecher_api_key="k"), "v")
+        st = tts.open_stream()
+        got = []
+
+        async def read():
+            async for c in st:
+                got.append(c)
+
+        reader = asyncio.create_task(read())
+        await st.write("Перше.")
+        await st.write("Друге.")
+        await st.finish()
+        await reader
+        await tts.close()
+        return got
+
+    got = asyncio.run(go())
+    assert len(got) == 2  # the first chunk came before the second sentence was even written
+    assert [(m["transcript"], m["continue"]) for m in ws.sent] == [("Перше. ", True), ("Друге. ", True), ("", False)]
+    assert len({m["context_id"] for m in ws.sent}) == 1  # one generation
+
+
+def test_cancelling_a_stream_cancels_the_whole_generation_at_the_provider():
+    ws = FakeWS(lambda msgs: [])
+
+    class T(RespeecherTTS):
+        async def _open(self):
+            return ws
+
+    async def go():
+        tts = T(Config(respeecher_api_key="k"), "v")
+        await tts.connect()
+        st = tts.open_stream()
+        await st.write("Довга відповідь.")
+        await st.cancel()
+        await tts.close()
+
+    asyncio.run(go())
+    assert ws.sent[-1] == {"context_id": ws.sent[0]["context_id"], "cancel": True}
+
+
+def test_soniox_text_goes_in_several_messages_and_text_end_comes_last():
+    from server.tts import SonioxTTS
+
+    sent = []
+
+    class WS:
+        class state:  # noqa: N801
+            name = "OPEN"
+
+        def __init__(self):
+            self.q = asyncio.Queue()
+
+        async def send(self, raw):
+            m = json.loads(raw)
+            sent.append(m)
+            if m.get("text_end"):
+                self.q.put_nowait(json.dumps({"stream_id": m["stream_id"], "audio": PCM, "audio_end": True}))
+                self.q.put_nowait(json.dumps({"stream_id": m["stream_id"], "terminated": True}))
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return await self.q.get()
+
+        async def close(self): ...
+
+    ws = WS()
+
+    class T(SonioxTTS):
+        async def _open(self):
+            return ws
+
+    async def go():
+        tts = T(Config(soniox_api_key="k"), "Taras")
+        st = tts.open_stream()
+        await st.write("[warm] Привіт.")
+        await st.write("Як справи?")
+        await st.finish()
+        out = [c async for c in st]
+        await tts.close()
+        return out
+
+    assert len(asyncio.run(go())) == 1
+    configs = [m for m in sent if "model" in m]
+    assert len(configs) == 1 and configs[0]["voice"] == "Taras"  # configured once, for the whole answer
+    texts = [(m["text"], m["text_end"]) for m in sent if "text" in m]
+    assert texts == [("[warm] Привіт. ", False), ("Як справи? ", False), ("", True)]

@@ -48,6 +48,7 @@ from .russian import asks_for_russian, is_russian, refusal
 from .sentences import SentenceSplitter
 from .tags import strip_tags
 from .timing import TurnTimer
+from .tts import TTSError
 from .usage import Usage
 
 log = logging.getLogger(__name__)
@@ -128,6 +129,13 @@ TOOLS = [
 ]
 
 
+def _spread(sentences: list[str], seconds: float) -> list[tuple[str, float]]:
+    """With one generation for the whole answer the provider does not say where a sentence ends, so the audio received so
+    far is shared between the sentences by their length (what heard.py needs to find the place where the answer was cut)."""
+    total = sum(len(t) for t in sentences) or 1
+    return [(t, seconds * len(t) / total) for t in sentences]
+
+
 class VoiceSession:
     def __init__(
         self,
@@ -167,6 +175,7 @@ class VoiceSession:
         self._vad_speaking = False  # Realtime's VAD hears the user right now
         self._t_stop = 0.0  # when Realtime's VAD last heard a phrase end: the start of the answer's timing
         self._timer: TurnTimer | None = None
+        self._stream_broken = False  # the voice gave no audio for one generation per answer: sentence by sentence from now on
         self._rt_waiting: dict[str, asyncio.Task] = {}  # phrases to answer, until their item exists (fallback timers)
         # Phrases that ended while she was busy: item id -> the words (None until the transcript comes). Not lost: what is
         # more than a «угу» is answered as soon as she is free (_answer_late).
@@ -611,23 +620,7 @@ class VoiceSession:
 
         producer = asyncio.create_task(produce())
         try:
-            while (sentence := await sentences.get()) is not None:
-                await self._apply_pending()  # a new voice / language: between sentences, never inside one
-                await self._set_state("speaking")
-                plain = strip_tags(sentence)
-                voiced = sentence if self.provider == "soniox" else plain  # only Soniox understands the tags
-                if not voiced:
-                    continue
-                self.usage.chars[self.provider] = self.usage.chars.get(self.provider, 0) + len(voiced)
-                seconds = 0.0
-                async for chunk in self.tts.synthesize(voiced):
-                    timer.mark("tts_audio")
-                    self._last_audio_at = time.monotonic()
-                    await self._send_bytes(chunk)
-                    seconds += len(chunk) / 2 / self.tts.sample_rate
-                if plain:
-                    self._spoken.append(plain)
-                    self._turn_audio.append((plain, seconds))
+            await self._speak(sentences, timer)
             await producer  # surfaces an LLM error
             if kept_back and self.ears:  # the model's own memory must not keep what was not said
                 await self.ears.replace_spoken(" ".join(said))
@@ -656,6 +649,104 @@ class VoiceSession:
             await self._send_usage()
         finally:
             producer.cancel()
+
+    async def _speak(self, sentences: asyncio.Queue, timer: TurnTimer) -> None:
+        """Voice the sentences of the answer as they come: one TTS generation for all of them when the voice supports it,
+        otherwise (or when it gave no audio that way) one generation per sentence."""
+        first: list[str] = []
+        if self.cfg.tts_one_generation and not self._stream_broken and hasattr(self.tts, "open_stream"):
+            first = await self._speak_stream(sentences, timer) or []
+            if not first:
+                return
+        await self._speak_sentences(sentences, timer, first)
+
+    async def _speak_stream(self, sentences: asyncio.Queue, timer: TurnTimer) -> list[str] | None:
+        """One generation for the whole answer: each sentence is added to it the moment it is complete. The voice and the
+        language are changed only before the answer (never inside one generation). Returns None when all is said; the
+        sentences written so far when the voice gave no audio this way (then they are said one by one: see _speak)."""
+        stream = reader = None
+        seconds = 0.0
+        written: list[str] = []  # the sentences as the voice got them (with tags)
+        plain_written: list[str] = []
+        drained = False  # the end of the answer (None) was taken from the queue
+
+        async def pump(st) -> None:
+            nonlocal seconds
+            async for chunk in st:
+                timer.mark("tts_audio")
+                self._last_audio_at = time.monotonic()
+                await self._send_bytes(chunk)
+                seconds += len(chunk) / 2 / self.tts.sample_rate
+                self._turn_audio = _spread(plain_written, seconds)
+
+        try:
+            while (sentence := await sentences.get()) is not None:
+                if stream is None:
+                    await self._apply_pending()
+                    await self._set_state("speaking")
+                    stream = self.tts.open_stream()
+                    reader = asyncio.create_task(pump(stream))
+                elif reader.done():
+                    reader.result()  # the voice failed: raises
+                plain = strip_tags(sentence)
+                voiced = sentence if self.provider == "soniox" else plain  # only Soniox understands the tags
+                if not voiced:
+                    continue
+                self.usage.chars[self.provider] = self.usage.chars.get(self.provider, 0) + len(voiced)
+                await stream.write(voiced)
+                written.append(sentence)
+                if plain:
+                    plain_written.append(plain)
+                    self._spoken.append(plain)
+                    self._turn_audio = _spread(plain_written, seconds)
+            drained = True
+            if stream is not None and written:
+                await stream.finish()
+                await reader
+            return None
+        except TTSError as e:
+            if seconds > 0 or not written:
+                raise
+            # No audio at all: this provider does not do it this way. The answer is not lost: said sentence by sentence.
+            log.warning("one TTS generation per answer gave no audio (%s): back to one per sentence", e)
+            self._stream_broken = True
+            for sentence in written:
+                voiced = sentence if self.provider == "soniox" else strip_tags(sentence)
+                self.usage.chars[self.provider] -= len(voiced)
+            self._spoken, self._turn_audio = [], []
+            if drained:
+                sentences.put_nowait(None)  # the sentence-by-sentence voicing waits for the end of the answer again
+            return written
+        finally:
+            if reader is not None and not reader.done():
+                reader.cancel()
+                await asyncio.gather(reader, return_exceptions=True)
+            if stream is not None and not stream.finished:
+                await stream.cancel()  # a barge-in: the provider stops generating the rest of the answer
+
+    async def _speak_sentences(self, sentences: asyncio.Queue, timer: TurnTimer, first: list[str]) -> None:
+        todo = list(first)
+        while True:
+            if todo:
+                sentence = todo.pop(0)
+            elif (sentence := await sentences.get()) is None:
+                return
+            await self._apply_pending()  # a new voice / language: between sentences, never inside one
+            await self._set_state("speaking")
+            plain = strip_tags(sentence)
+            voiced = sentence if self.provider == "soniox" else plain  # only Soniox understands the tags
+            if not voiced:
+                continue
+            self.usage.chars[self.provider] = self.usage.chars.get(self.provider, 0) + len(voiced)
+            seconds = 0.0
+            async for chunk in self.tts.synthesize(voiced):
+                timer.mark("tts_audio")
+                self._last_audio_at = time.monotonic()
+                await self._send_bytes(chunk)
+                seconds += len(chunk) / 2 / self.tts.sample_rate
+            if plain:
+                self._spoken.append(plain)
+                self._turn_audio.append((plain, seconds))
 
     async def _report_timing(self) -> None:
         timer = self._timer

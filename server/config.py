@@ -41,6 +41,9 @@ class Config:
     realtime_silence_ms: int = field(default_factory=lambda: _int("REALTIME_SILENCE_MS", 700))  # quiet that ends a phrase
     realtime_vad_threshold: float = field(default_factory=lambda: _float("REALTIME_VAD_THRESHOLD", 0.5))
 
+    # One TTS generation per answer (text is added to it as the model writes) instead of one per sentence. "0" goes back.
+    tts_one_generation: bool = field(default_factory=lambda: os.getenv("TTS_ONE_GENERATION", "1") != "0")
+
     soniox_api_key: str = field(default_factory=lambda: os.getenv("SONIOX_API_KEY", ""))
 
     respeecher_api_key: str = field(default_factory=lambda: os.getenv("RESPEECHER_API_KEY", ""))

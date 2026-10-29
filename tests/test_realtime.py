@@ -905,3 +905,114 @@ def test_the_instructions_are_sent_once_and_each_turn_gets_only_a_short_note_ins
         await s.close()
 
     asyncio.run(go())
+
+
+class FakeStream:
+    def __init__(self, tts, silent=False):
+        self.tts, self.silent, self.written, self.cancelled, self.finished = tts, silent, [], False, False
+        self._q: asyncio.Queue = asyncio.Queue()
+
+    async def write(self, text):
+        self.written.append(text)
+        if not self.silent:
+            self._q.put_nowait(b"\x00\x01" * 100)
+
+    async def finish(self):
+        self._q.put_nowait(None if not self.silent else RuntimeError("no audio"))
+
+    async def cancel(self):
+        self.cancelled = True
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        from server.tts import TTSError
+
+        while True:
+            item = await self._q.get()
+            if item is None:
+                self.finished = True
+                return
+            if isinstance(item, Exception):
+                raise TTSError(str(item))
+            yield item
+
+
+class StreamingTTS(FakeTTS):
+    def __init__(self, silent=False):
+        super().__init__()
+        self.silent, self.streams = silent, []
+
+    def open_stream(self):
+        self.streams.append(FakeStream(self, self.silent))
+        return self.streams[-1]
+
+
+def make_stream_session(conn, tts):
+    out = []
+
+    async def sj(m):
+        out.append(m)
+
+    async def sb(_b):
+        pass
+
+    return VoiceSession(llm=None, ears=make_llm(conn), tts=tts, send_json=sj, send_bytes=sb), out
+
+
+def test_an_answer_is_one_tts_generation_with_every_sentence_written_to_it():
+    async def go():
+        conn = FakeConn()
+        tts = StreamingTTS()
+        s, out = make_stream_session(conn, tts)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "[warm] Привіт. Як справи? Що нового?")
+        said(conn, "u1")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert len(tts.streams) == 1 and tts.streams[0].written and tts.said == []  # one generation, no per-sentence one
+        assert " ".join(tts.streams[0].written).replace("  ", " ").split()[-1] == "нового?"
+        assert s._spoken and s._turn_audio and abs(sum(d for _, d in s._turn_audio) - 0.0166) < 0.1
+        assert s.usage.chars["respeecher"] == sum(len(w) for w in tts.streams[0].written)
+        assert not tts.streams[0].cancelled
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_a_barge_in_cancels_the_generation():
+    async def go():
+        conn = FakeConn()
+        tts = StreamingTTS()
+        s, out = make_stream_session(conn, tts)
+        await s.start()
+        conn.on_create = lambda _e: (
+            conn.push(type="response.created", response={"id": "r1"}),
+            conn.push(type="response.output_text.delta", response_id="r1", delta="Довга відповідь, яка ще йде. "),
+        )
+        said(conn, "u1")
+        await pump()
+        await s.interrupt(reason="button")
+        assert tts.streams[0].cancelled
+        await s.close()
+
+    asyncio.run(go())
+
+
+def test_a_voice_that_gives_no_audio_one_generation_at_a_time_falls_back_to_sentences():
+    async def go():
+        conn = FakeConn()
+        tts = StreamingTTS(silent=True)
+        s, out = make_stream_session(conn, tts)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Привіт, друже. Як справи сьогодні?")
+        said(conn, "u1")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert " ".join(tts.said) == "Привіт, друже. Як справи сьогодні?"  # nothing was lost
+        assert s._stream_broken and not [m for m in out if m["type"] == "error"]
+        assert s.usage.chars["respeecher"] == sum(len(t) for t in tts.said)  # not counted twice
+        await s.close()
+
+    asyncio.run(go())

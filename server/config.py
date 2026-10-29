@@ -34,6 +34,9 @@ class Config:
 
     # The Realtime "ears": it hears the microphone and answers with text (the voice is Respeecher / Soniox).
     realtime_model: str = field(default_factory=lambda: os.getenv("REALTIME_MODEL", "gpt-realtime-2.1"))
+    # "auto": text-only output, except for gpt-live-*, which cannot do that (its voice is always its own): there the
+    # audio is asked for and thrown away, and its transcript is what Soniox / Respeecher speak. "text" / "audio" force it.
+    realtime_output: str = field(default_factory=lambda: os.getenv("REALTIME_OUTPUT", "auto").strip().lower())
     realtime_transcribe_model: str = field(default_factory=lambda: os.getenv("REALTIME_TRANSCRIBE_MODEL", "gpt-4o-transcribe"))
     realtime_silence_ms: int = field(default_factory=lambda: _int("REALTIME_SILENCE_MS", 700))  # quiet that ends a phrase
     realtime_vad_threshold: float = field(default_factory=lambda: _float("REALTIME_VAD_THRESHOLD", 0.5))

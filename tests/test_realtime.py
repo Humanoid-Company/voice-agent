@@ -820,3 +820,40 @@ def test_a_real_phrase_said_while_she_is_busy_is_answered_when_she_is_free(monke
         await s.close()
 
     asyncio.run(go())
+
+
+def test_gpt_live_asks_for_audio_but_speaks_only_its_transcript():
+    async def go():
+        conn = FakeConn()
+
+        async def connect():
+            return conn
+
+        llm = RealtimeLLM(Config(realtime_model="gpt-live-1"), connect=connect)
+        await llm.open(language="uk")
+        assert conn.sent[0]["session"]["output_modalities"] == ["audio"]
+
+        def on_create(event):
+            conn.push(type="response.created", response={"id": "r1"})
+            conn.push(type="response.output_item.added", response_id="r1", item={"id": "i1", "type": "message"})
+            conn.push(type="response.output_audio.delta", response_id="r1", delta="QUJD")  # the model's own voice: dropped
+            for word in ("Добрий ", "день."):
+                conn.push(type="response.output_audio_transcript.delta", response_id="r1", delta=word)
+            conn.push(type="response.done", response={"id": "r1", "status": "completed", "output": [], "usage": {}})
+
+        conn.on_create = on_create
+        assert await collect(llm) == "Добрий день."
+        await llm.close()
+
+    asyncio.run(go())
+
+
+def test_realtime_output_text_ignores_transcript_events():
+    async def go():
+        conn = FakeConn()
+        llm = make_llm(conn)
+        await llm.open(language="uk")
+        assert conn.sent[0]["session"]["output_modalities"] == ["text"]
+        await llm.close()
+
+    asyncio.run(go())

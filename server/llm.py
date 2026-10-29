@@ -70,6 +70,7 @@ class TurnContext:
     on_usage: Callable[[int, int], None] | None = None  # prompt tokens, completion tokens
     on_search: Callable[[], None] | None = None
     on_audio: Callable[[int], None] | None = None  # audio input tokens (Realtime only)
+    on_mark: Callable[[str], None] | None = None  # a stage of the answer was reached (timing.py)
 
 
 class LLM(Protocol):

@@ -121,6 +121,8 @@ class RealtimeLLM:
         self._items: list[str] = []  # assistant message ids of the current answer
         self._response_open = False
         self._cuts = 0
+        self._mark: Callable[[str], None] | None = None
+        self._first_delta = False
 
     # ------------------------------------------------------------------ connection
 
@@ -228,6 +230,8 @@ class RealtimeLLM:
                 self._response_id = (ev.get("response") or {}).get("id", "")
                 self._awaiting_created = False
                 self._response_open = True
+                if self._mark:
+                    self._mark("response_created")
         elif kind == "response.output_item.added":
             item = ev.get("item") or {}
             if item.get("type") == "message" and ev.get("response_id", self._response_id) == self._response_id:
@@ -242,6 +246,9 @@ class RealtimeLLM:
             if rid == self._response_id and self._turn_q is not None:
                 if kind == "response.done":
                     self._response_open = False
+                elif self._mark and not self._first_delta:
+                    self._first_delta = True
+                    self._mark("first_delta")
                 self._turn_q.put_nowait(ev)
 
     # ------------------------------------------------------------------ one answer
@@ -262,6 +269,7 @@ class RealtimeLLM:
             self._instructions, self._tools_key = ctx.system_prompt, key
 
         self._turn_q = queue = asyncio.Queue()
+        self._mark, self._first_delta = ctx.on_mark, False
         self._items = []
         searches = rounds = 0
         unanswered: list[str] = []  # calls of the model whose output has not been sent yet
@@ -272,6 +280,8 @@ class RealtimeLLM:
                 if rounds >= MAX_TOOL_ROUNDS:
                     create["response"] = {"tool_choice": "none"}  # it kept calling tools: now it has to answer
                 await self._send(create)
+                if ctx.on_mark:
+                    ctx.on_mark("create_sent")
                 text, calls, done = "", [], None
                 while done is None:
                     try:
@@ -316,7 +326,7 @@ class RealtimeLLM:
             for call_id in unanswered:  # cut off while a tool ran: a call left without output confuses the next answer
                 with contextlib.suppress(Exception):
                     await self._send_output(call_id, _CANCELLED_NOTE)
-            self._turn_q = None
+            self._turn_q, self._mark = None, None
 
     async def _send_output(self, call_id: str, output: str) -> None:
         await self._send(

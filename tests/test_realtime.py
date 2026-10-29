@@ -857,3 +857,25 @@ def test_realtime_output_text_ignores_transcript_events():
         await llm.close()
 
     asyncio.run(go())
+
+
+def test_a_turn_is_timed_from_the_end_of_the_phrase_to_the_first_sound_in_the_browser():
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Привіт. Як справи?")
+        said(conn, "u1")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert not [m for m in out if m["type"] == "timing"]  # nothing is reported before the browser plays
+        await s.on_client({"type": "play_start", "lead_ms": 150})
+        ms = [m for m in out if m["type"] == "timing"][0]["ms"]
+        stages = list(ms)
+        assert stages == ["turn_start", "create_sent", "response_created", "first_delta", "first_sentence", "tts_audio", "playing"]
+        assert list(ms.values()) == sorted(ms.values()) and ms["playing"] >= 150
+        await s.on_client({"type": "play_start", "lead_ms": 150})  # once per turn
+        assert len([m for m in out if m["type"] == "timing"]) == 1
+        await s.close()
+
+    asyncio.run(go())

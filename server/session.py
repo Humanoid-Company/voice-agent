@@ -47,6 +47,7 @@ from .prompt import build_system_prompt, greeting_note
 from .russian import asks_for_russian, is_russian, refusal
 from .sentences import SentenceSplitter
 from .tags import strip_tags
+from .timing import TurnTimer
 from .usage import Usage
 
 log = logging.getLogger(__name__)
@@ -164,6 +165,8 @@ class VoiceSession:
         self._turn_audio: list[tuple[str, float]] = []
         self._cut: dict | None = None
         self._vad_speaking = False  # Realtime's VAD hears the user right now
+        self._t_stop = 0.0  # when Realtime's VAD last heard a phrase end: the start of the answer's timing
+        self._timer: TurnTimer | None = None
         self._rt_waiting: dict[str, asyncio.Task] = {}  # phrases to answer, until their item exists (fallback timers)
         # Phrases that ended while she was busy: item id -> the words (None until the transcript comes). Not lost: what is
         # more than a «угу» is answered as soon as she is free (_answer_late).
@@ -270,6 +273,10 @@ class VoiceSession:
             await self.interrupt(reason=by if by in ("button", "sound") else "button")
         elif kind == "played_until":  # the page stopped her audio: how much of it had really played
             await self._trim_to_heard(msg.get("seconds"))
+        elif kind == "play_start" and self._timer and not self._timer.reported:  # the browser began to play the answer
+            lead = msg.get("lead_ms")
+            self._timer.mark("playing", at=time.monotonic() + (lead / 1000 if isinstance(lead, (int, float)) and 0 <= lead < 2000 else 0))
+            await self._report_timing()
         elif kind == "played" and self._awaiting_played:
             self._awaiting_played = False
             self._last_audio_at = time.monotonic()
@@ -395,6 +402,7 @@ class VoiceSession:
         """Realtime heard the user finish a phrase: answer it, unless she was busy (then the words the browser
         recognized decided whether it was an interruption) or the user said «стоп»."""
         self._vad_speaking = False
+        self._t_stop = time.monotonic()
         self._cancel_barge()
         if self.paused:
             return
@@ -534,6 +542,9 @@ class VoiceSession:
     async def _run_turn(self, *, greeting: bool = False) -> None:
         self._spoken, self._turn_done, self._turn_audio = [], False, []
         await self._set_state("thinking")
+        fresh = self.realtime and not greeting and time.monotonic() - self._t_stop < 5.0
+        self._timer = timer = TurnTimer(self._t_stop if fresh else None)
+        timer.mark("turn_start")
         splitter = SentenceSplitter()
         sentences: asyncio.Queue[str | None] = asyncio.Queue()
         full: list[str] = []
@@ -552,6 +563,7 @@ class VoiceSession:
             on_usage=self._on_usage,
             on_search=self._on_search,
             on_audio=self._on_audio,
+            on_mark=timer.mark,
         )
 
         kept_back: list[str] = []  # sentences the model wrote in Russian: never said, never shown
@@ -572,6 +584,7 @@ class VoiceSession:
                     return
                 sentence = " ".join(good)
                 said.append(sentence)
+                timer.mark("first_sentence")
                 sentences.put_nowait(sentence)
                 clean = strip_tags(sentence)
                 if clean:
@@ -606,6 +619,7 @@ class VoiceSession:
                 self.usage.chars[self.provider] = self.usage.chars.get(self.provider, 0) + len(voiced)
                 seconds = 0.0
                 async for chunk in self.tts.synthesize(voiced):
+                    timer.mark("tts_audio")
                     self._last_audio_at = time.monotonic()
                     await self._send_bytes(chunk)
                     seconds += len(chunk) / 2 / self.tts.sample_rate
@@ -640,6 +654,14 @@ class VoiceSession:
             await self._send_usage()
         finally:
             producer.cancel()
+
+    async def _report_timing(self) -> None:
+        timer = self._timer
+        if timer is None or timer.reported or "tts_audio" not in timer.marks:
+            return
+        timer.reported = True
+        log.info("turn timing (ms from the end of the phrase): %s", timer.line())
+        await self._j({"type": "timing", "ms": timer.report()})
 
     async def interrupt(self, *, reason: str = "", text: str = "") -> None:
         """Cut the answer off. `reason` (stop / takeover: the user's voice, with their words in `text`; button;

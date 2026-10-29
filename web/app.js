@@ -304,6 +304,7 @@ function flushPlay() {
     answerOpen = true;
     nextTime = now + LEAD_S;
     playStart = nextTime;
+    send({ type: "play_start", lead_ms: Math.round(LEAD_S * 1000) }); // for the server's timing of the answer
   } else if (nextTime < now + 0.01) { // the audio ran dry: start again with a head start (the gap is not played time)
     const start = now + LEAD_S;
     playStart += start - nextTime;
@@ -673,6 +674,7 @@ function onMessage(ev) {
       showStyle(m.character, m.emotion, m.description);
       break;
     case "usage": onUsage(m); break;
+    case "timing": console.log("[timing ms]", m.ms); hearEvent("⏱", Object.entries(m.ms).map(([k, v]) => k + " " + v).join(" · ")); break;
     case "tuning": showTuning(m); break;
     case "overheard": showRecog("🎤 На паузі, запам'ятовую фоном: " + m.count + " реплік"); break;
     case "end": stop(""); bubble("system", "Розмову завершено."); break;

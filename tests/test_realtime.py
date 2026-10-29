@@ -1091,3 +1091,51 @@ def test_the_seconds_per_character_is_learned_from_answers_spoken_to_the_end():
         await s.close()
 
     asyncio.run(go())
+
+
+def _scrap_case(said_by_her, user_text, *, gap_s=0.1):
+    """She finishes an answer; the user's «phrase» starts gap_s after the audio ended and the transcript is user_text."""
+
+    async def go():
+        conn = FakeConn()
+        s, out = make_session(conn)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", said_by_her)
+        said(conn, "u1")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        await s.on_client({"type": "played"})  # her sound has ended: the tail starts counting
+        s._last_audio_at -= gap_s
+        conn.on_create = lambda _e: answer_events(conn, "r2", "Я тут.", item="item_b")
+        conn.push(type="input_audio_buffer.speech_started")
+        said(conn, "u2")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        conn.push(type="conversation.item.input_audio_transcription.completed", item_id="u2", transcript=user_text)
+        await pump()
+        dropped = any(m["type"] == "user_drop" and m["reason"] == "echo" for m in out)
+        users = [h["content"] for h in s.history if h["role"] == "user"]
+        await s.close()
+        return dropped, users
+
+    return asyncio.run(go())
+
+
+def test_a_one_word_scrap_right_after_her_voice_is_taken_for_the_tail_of_her_own_sound():
+    dropped, users = _scrap_case("Нарешті тебе чую, заходь сміливо в цей ритм.", "Хв.")
+    assert dropped and "Хв." not in users
+
+
+def test_the_same_scrap_later_is_a_real_word():
+    dropped, users = _scrap_case("Нарешті тебе чую, заходь сміливо в цей ритм.", "Хв.", gap_s=3.0)
+    assert not dropped and "Хв." in users
+
+
+def test_a_short_answer_to_her_question_is_not_a_scrap():
+    dropped, users = _scrap_case("Тобі це цікаво?", "Так.")
+    assert not dropped and "Так." in users
+
+
+def test_a_whole_phrase_right_after_her_voice_is_the_user():
+    dropped, users = _scrap_case("Нарешті тебе чую, заходь сміливо в цей ритм.", "Привіт, як твої справи?")
+    assert not dropped and "Привіт, як твої справи?" in users

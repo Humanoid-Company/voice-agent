@@ -149,18 +149,22 @@ class RealtimeLLM:
                 await self._send({"type": "conversation.item.create", "item": _text_item(role, text)})
 
     def _audio_input(self, language: str) -> dict:
-        return {
-            "format": {"type": "audio/pcm", "rate": 24000},
-            "transcription": {"model": self._cfg.realtime_transcribe_model, "language": language},
-            "turn_detection": {
+        # We decide when to answer (not while the agent is busy) and when to stop: both are the session's.
+        ours = {"create_response": False, "interrupt_response": False}
+        if self._cfg.realtime_turn == "semantic":
+            detection = {"type": "semantic_vad", "eagerness": self._cfg.realtime_eagerness, **ours}
+        else:
+            detection = {
                 "type": "server_vad",
                 "threshold": self._cfg.realtime_vad_threshold,
                 "prefix_padding_ms": 300,
                 "silence_duration_ms": self._cfg.realtime_silence_ms,
-                # We decide when to answer (not while the agent is busy) and when to stop: both are the session's.
-                "create_response": False,
-                "interrupt_response": False,
-            },
+                **ours,
+            }
+        return {
+            "format": {"type": "audio/pcm", "rate": 24000},
+            "transcription": {"model": self._cfg.realtime_transcribe_model, "language": language},
+            "turn_detection": detection,
         }
 
     async def set_language(self, language: str) -> None:

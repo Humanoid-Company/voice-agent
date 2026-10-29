@@ -1016,3 +1016,58 @@ def test_a_voice_that_gives_no_audio_one_generation_at_a_time_falls_back_to_sent
         await s.close()
 
     asyncio.run(go())
+
+
+def test_the_end_of_a_phrase_can_be_found_by_the_model_instead_of_by_silence():
+    async def go():
+        conn = FakeConn()
+
+        async def connect():
+            return conn
+
+        llm = RealtimeLLM(Config(realtime_turn="semantic", realtime_eagerness="high"), connect=connect)
+        await llm.open(language="uk")
+        det = conn.sent[0]["session"]["audio"]["input"]["turn_detection"]
+        assert det == {"type": "semantic_vad", "eagerness": "high", "create_response": False, "interrupt_response": False}
+        await llm.close()
+
+        conn2 = FakeConn()
+        await make_llm(conn2).open(language="uk")  # the default stays the silence detector
+        assert conn2.sent[0]["session"]["audio"]["input"]["turn_detection"]["type"] == "server_vad"
+
+    asyncio.run(go())
+
+
+def test_busy_queue_and_barge_in_work_the_same_with_semantic_turns(monkeypatch):
+    """The session only reacts to speech_started / speech_stopped, which semantic_vad sends like the other one."""
+
+    async def go():
+        conn = FakeConn()
+
+        async def connect():
+            return conn
+
+        out = []
+
+        async def sj(m):
+            out.append(m)
+
+        async def sb(_b):
+            pass
+
+        ears = RealtimeLLM(Config(realtime_turn="semantic"), connect=connect)
+        s = VoiceSession(llm=None, ears=ears, tts=FakeTTS(), send_json=sj, send_bytes=sb)
+        await s.start()
+        conn.on_create = lambda _e: answer_events(conn, "r1", "Привіт. Як справи?")
+        said(conn, "u1")
+        await pump()
+        await asyncio.gather(s._turn, return_exceptions=True)
+        assert " ".join(s.tts.said) == "Привіт. Як справи?"
+        # busy: a phrase that ends while she is still speaking is kept for later, not answered at once
+        s.state = "speaking"
+        conn.push(type="input_audio_buffer.speech_stopped", item_id="u2")
+        await pump()
+        assert "u2" in s._late and (s._turn is None or s._turn.done())
+        await s.close()
+
+    asyncio.run(go())

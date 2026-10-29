@@ -39,6 +39,10 @@ class Config:
     realtime_output: str = field(default_factory=lambda: os.getenv("REALTIME_OUTPUT", "auto").strip().lower())
     realtime_transcribe_model: str = field(default_factory=lambda: os.getenv("REALTIME_TRANSCRIBE_MODEL", "gpt-4o-transcribe"))
     realtime_silence_ms: int = field(default_factory=lambda: _int("REALTIME_SILENCE_MS", 700))  # quiet that ends a phrase
+    # How the end of a phrase is found: "server" (quiet for REALTIME_SILENCE_MS) or "semantic" (the model judges whether the
+    # person is done; REALTIME_EAGERNESS low|medium|high|auto says how soon it may decide: high = soonest).
+    realtime_turn: str = field(default_factory=lambda: os.getenv("REALTIME_TURN", "server").strip().lower())
+    realtime_eagerness: str = field(default_factory=lambda: os.getenv("REALTIME_EAGERNESS", "high").strip().lower())
     realtime_vad_threshold: float = field(default_factory=lambda: _float("REALTIME_VAD_THRESHOLD", 0.5))
 
     # One TTS generation per answer (text is added to it as the model writes) instead of one per sentence. "0" goes back.

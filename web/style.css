@@ -202,7 +202,7 @@ label.gap { margin-top: 12px; }
 h3 { font-size: 1rem; margin: 0; }
 .warnings { margin: 6px 0 0; padding-left: 18px; font-size: 0.85rem; color: var(--warn); }
 .warnings:empty { display: none; }
-.records { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 10px; }
+.records { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin-top: 10px; }
 .records > .hint { grid-column: 1 / -1; }
 .records[hidden] { display: none; }
 .record { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
@@ -211,10 +211,9 @@ h3 { font-size: 1rem; margin: 0; }
 .record.checked { border-color: var(--ok); }
 .check-badge { flex: 0 0 auto; font-size: 0.75rem; padding: 1px 8px; border-radius: 999px; color: var(--ok);
   border: 1px solid var(--ok); white-space: nowrap; }
-.record dl { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 2px 10px;
-  margin: 6px 0 0; font-size: 0.85rem; }
-.record dt { color: var(--muted); overflow-wrap: anywhere; }
-.record dd { margin: 0; overflow-wrap: anywhere; }
+.record dl { margin: 6px 0 0; font-size: 0.85rem; }
+.record dt { color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+.record dd { margin: 0 0 6px; overflow-wrap: anywhere; }
 .icon-btn { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--card); color: var(--muted); font: inherit; line-height: 1; cursor: pointer; }
 .icon-btn:hover { color: var(--err); border-color: var(--err); }

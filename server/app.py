@@ -43,7 +43,7 @@ from prompts.live_prompt import build_concierge_prompt, build_live_prompt
 from server import checkins, conversations, knowledge, usage
 from server.call_log import CallLogStore
 from server.db import StoreError
-from server.knowledge_import import KnowledgeImportError, make_openai_extract, parse_file
+from server.knowledge_import import KnowledgeImportError, make_openai_extract, make_openai_plan, parse_file
 from server.live_bridge import SidebandToolBridge
 from server.web_users import WebUser, WebUserRegistry
 from tools.live_schemas import (
@@ -791,6 +791,7 @@ def conversation_delete(
 # One store for everyone with the access code. Upload is two steps: /parse reads the file and returns the
 # records (nothing saved), the page shows them, and POST /api/knowledge saves what the user kept.
 _extract = None
+_plan = None
 
 
 def _kb(call, *args, **kwargs):
@@ -807,6 +808,16 @@ def _text_extract():
 
         _extract = make_openai_extract(OpenAI(api_key=OPENAI_API_KEY), OPENAI_LIVE_BACKEND_MODEL)
     return _extract
+
+
+def _column_plan():
+    """The model that names a table's person column and shortens question headers («Який твій улюблений…?»)."""
+    global _plan
+    if _plan is None:
+        from openai import OpenAI
+
+        _plan = make_openai_plan(OpenAI(api_key=OPENAI_API_KEY), OPENAI_LIVE_BACKEND_MODEL)
+    return _plan
 
 
 class KnowledgeItem(BaseModel):
@@ -836,7 +847,8 @@ async def knowledge_parse(request: Request) -> dict:
         raise HTTPException(status_code=413, detail="Файл завеликий: до 5 МБ.")
     data = await request.body()
     try:
-        parsed = await asyncio.to_thread(parse_file, filename, data, lambda text: _text_extract()(text))
+        parsed = await asyncio.to_thread(parse_file, filename, data, lambda text: _text_extract()(text),
+                                        lambda header, sample: _column_plan()(header, sample))
     except KnowledgeImportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     logger.info("knowledge.parsed ext=%s items=%s kind=%s", filename.rsplit(".", 1)[-1], len(parsed.items), parsed.kind)

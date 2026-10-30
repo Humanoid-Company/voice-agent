@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import server.app as web
-from server import knowledge
+from server import knowledge, knowledge_import
 from server.knowledge import KnowledgeStore, Record, _score
 from server.knowledge_import import KnowledgeImportError, parse_file, table_to_items
 from tools.executor import ToolExecutionContext
@@ -169,10 +169,13 @@ def test_score_matches_declined_and_misheard_names():
 
 
 # ── HTTP: the page's two steps, the switch, delete, the access code ──
-def test_upload_preview_then_save(client, store):
+def test_upload_preview_then_save(client, store, monkeypatch):
+    seen = []
+    monkeypatch.setattr(web, "_plan", lambda header, sample: seen.append(header) or {})  # no model call in tests
     res = client.post("/api/knowledge/parse", content=PEOPLE_CSV,
                       headers={"X-File-Name": urllib.parse.quote("люди корпоратив.csv")})
     assert res.status_code == 200 and len(res.json()["items"]) == 2
+    assert seen and seen[0][0] == "Ім'я"  # the model gets the table's headers
     assert client.get("/api/knowledge").json()["sets"] == []  # nothing saved by the preview
     items = res.json()["items"][:1]  # the user removed Марина in the preview
     saved = client.post("/api/knowledge", json={"name": "Корпоратив 20.10", "items": items, "source": "люди.csv"}).json()
@@ -276,3 +279,45 @@ def test_fast_lookup_ranks_like_scoring_record_by_record():
     for query in ("Олегові шахи", "хто любить йогу", "Алєг", "Катерину", "розробник", ""):
         slow = sorted(records, key=lambda r: -_score(query, r))[:7]
         assert [r.line() for r in _closest(query, records, 7)] == [r.line() for r in slow]
+
+
+def test_a_form_export_titles_records_by_the_name_not_the_timestamp():
+    rows = [["Позначка часу", "Твоє Ім'я та прізвище", "Улюблений фільм"],
+            ["2026-10-19 13:51", "Богдан Рудяк", "Сімпсони"], ["2026-10-19 13:56", "Олександра Іваченко", "Декстер"]]
+    assert [i["title"] for i in knowledge_import.table_to_items(rows)] == ["Богдан Рудяк", "Олександра Іваченко"]
+    # No name column at all: the first column that is not a time.
+    plain = [["Timestamp", "Нік", "Хобі"], ["2026-10-19", "Вовк", "шахи"]]
+    assert knowledge_import.table_to_items(plain)[0]["title"] == "Вовк"
+
+
+FORM_ROWS = [
+    ["Позначка часу", "Твоє Ім'я та прізвище", "Який твій улюблений фільм, серіал або гра?", "Два цікаві факти про себе"],
+    ["2026-10-19 13:51", "Богдан Рудяк", "Сімпсони", "Люблю спати"],
+]
+
+
+def test_the_model_names_the_title_and_shortens_question_headers():
+    asked = []
+
+    def plan(header, sample):
+        asked.append((header, sample))
+        return {"title": [1], "skip": [0],
+                "labels": {"2": "Улюблений фільм, серіал, гра?", "3": "Цікаві факти", "1": "x"}}
+
+    [item] = knowledge_import.table_to_items(FORM_ROWS, plan)
+    assert item == {"title": "Богдан Рудяк", "fields": {"Улюблений фільм, серіал, гра": "Сімпсони", "Цікаві факти": "Люблю спати"}}
+    assert asked[0][0][2].startswith("Який твій") and asked[0][1] == [FORM_ROWS[1]]
+
+
+def test_a_bad_plan_falls_back_to_the_plain_rules():
+    def broken(header, sample):
+        raise RuntimeError("model down")
+
+    wrong = lambda header, sample: {"title": [99, True, "1"], "labels": {"7": "x", "2": "  "}, "skip": "all"}  # noqa: E731
+    for plan in (broken, wrong, lambda h, s: "nonsense"):
+        [item] = knowledge_import.table_to_items(FORM_ROWS, plan)
+        assert item["title"] == "Богдан Рудяк"  # the loose name rule still finds it
+        assert "Який твій улюблений фільм, серіал або гра?" in item["fields"]
+    # Labels never collide: two columns shortened to the same words stay two facts.
+    twin = lambda h, s: {"labels": {"2": "Фільм", "3": "Фільм"}}  # noqa: E731
+    assert list(knowledge_import.table_to_items(FORM_ROWS, twin)[0]["fields"]) == ["Позначка часу", "Фільм", "Фільм (2)"]

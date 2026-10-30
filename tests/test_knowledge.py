@@ -216,12 +216,53 @@ def test_the_tool_and_the_prompts(store):
     store.create_set("Корпоратив 20.10", parse_file("a.csv", PEOPLE_CSV).items)
     found = asyncio.run(user.executor.execute("knowledge_lookup", {"query": "Олегові", "set": "корпоратив"}, ctx))
     assert found.ok and "Олег Петренко — Вік: 34" in found.message and "лише з них" in found.message
-    # «Знання» are the concierge's only: the assistant's call knows nothing of them and has no lookup.
-    plain = web._session_config(user)
-    assert "Корпоратив" not in plain["instructions"] and "TEAM KNOWLEDGE" not in plain["delegation"]["responses"]["instructions"]
-    assert not any(t["name"] == "knowledge_lookup" for t in plain["delegation"]["responses"]["tools"])
+    # The assistant knows people like an acquaintance: lookup + remember_person, a note on how, no check-in.
+    plain = web._session_config(user)["delegation"]["responses"]
+    names = {t["name"] for t in plain["tools"]}
+    assert {"knowledge_lookup", "remember_person"} <= names and not names & {"find_guest", "confirm_guest"}
+    assert "PEOPLE YOU KNOW" in plain["instructions"] and "no check question" in plain["instructions"]
     backend = web._session_config(user, concierge=True)["delegation"]["responses"]
     assert "knowledge_lookup" in backend["instructions"] and any(t["name"] == "knowledge_lookup" for t in backend["tools"])
+    assert "remember_person" not in {t["name"] for t in backend["tools"]} and "PEOPLE YOU KNOW" not in backend["instructions"]
+
+
+def test_eva_writes_down_people_and_adds_to_them(store):
+    user = web.users.get("kb-browser-0123456789abc")
+    ctx = ToolExecutionContext(session_id="s")
+
+    def run(tool, args):
+        return asyncio.run(user.executor.execute(tool, args, ctx))
+
+    first = run("remember_person", {"name": "Іра", "facts": {"Хто це": "сестра користувача", "Вік": "30"}})
+    assert first.ok and first.data["new"] is True
+    again = run("remember_person", {"name": "іра", "facts": {"Хобі": "йога", "Вік": "30"}})
+    assert again.ok and again.data["new"] is False  # same person: facts added, not a second record
+    more = run("remember_person", {"name": "Ірина Коваль", "facts": {"Хобі": "біг"}})
+    assert more.data["new"] is True  # another name is another person, never a guessed merge
+    sets = store.list_sets()
+    assert [s["name"] for s in sets] == [knowledge.MEMORY_SET]
+    assert sets[0]["count"] == 2 == len(store.get_set(sets[0]["id"])["items"])
+    found = run("knowledge_lookup", {"query": "Іра"})
+    assert "сестра користувача" in found.message and "Хобі: йога" in found.message
+    # Nothing is lost: a second value under the same label goes after the first.
+    run("remember_person", {"name": "Іра", "facts": {"Хобі": "малювання"}})
+    assert "йога; малювання" in run("knowledge_lookup", {"query": "Іра"}).message
+    assert not run("remember_person", {"name": "Іра", "facts": {}}).ok  # nothing to write
+
+
+def test_what_eva_wrote_down_is_never_the_guest_list(store):
+    user = web.users.get("kb-browser-0123456789abc")
+    ctx = ToolExecutionContext(session_id="s")
+    asyncio.run(user.executor.execute("remember_person", {"name": "Іван Шпак", "facts": {"Хобі": "шахи"}}, ctx))
+    store.create_set("Корпоратив", parse_file("a.csv", PEOPLE_CSV).items)
+    user.concierge = True
+    found = asyncio.run(user.executor.execute("find_guest", {"name": "Іван", "surname": "Шпак"}, ctx))
+    assert found.status == "not_found"  # written down in a talk is not on the list
+    confirmed = asyncio.run(user.executor.execute(
+        "confirm_guest", {"full_name": "Іван Шпак", "verified": True, "guest_answer": "шахи"}, ctx))
+    assert confirmed.status == "not_on_list"
+    assert "Шпак" not in asyncio.run(user.executor.execute("knowledge_lookup", {"query": "Іван"}, ctx)).message
+    assert "Петренко" in asyncio.run(user.executor.execute("knowledge_lookup", {"query": "Олег"}, ctx)).message
 
 
 def test_fast_lookup_ranks_like_scoring_record_by_record():

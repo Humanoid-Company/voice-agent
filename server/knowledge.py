@@ -34,6 +34,9 @@ MAX_NOTE_CHARS = 1000
 # «хто з них любить Тарантіно» better than any search); above this, only the closest records.
 LOOKUP_ALL_CHARS = 16_000
 LOOKUP_TOP = 40
+# What Єва writes down herself in conversations (remember()): one set of her own. The concierge's guest list
+# never reads it (server/web_users.py) — whoever she heard about must not become a guest.
+MEMORY_SET = "Єва запам'ятала"
 # The enabled records, kept between lookups: Neon wakes in ~0.5 s after a pause, and a call asks often.
 SNAPSHOT_TTL_S = 60.0
 
@@ -206,6 +209,45 @@ class KnowledgeStore(SqlStore):
         self._changed()
         return bool(gone)
 
+    # ── what Єва writes down herself ──
+    def remember(self, name: str, fields: dict[str, str]) -> dict[str, Any]:
+        """Add facts about a person to Єва's own set: a known person (same name, or the name is part of the
+        stored one — «Олег» / «Олег Петренко») gets them written after what is there, a new one gets a record."""
+        cleaned = clean_items([{"title": name, "fields": fields}])
+        if not cleaned or not cleaned[0]["fields"] or not " ".join(name.split()):
+            raise KnowledgeError("Нічого запам'ятовувати: потрібні ім'я людини і хоч один факт.")
+        title, new = cleaned[0]["title"], cleaned[0]["fields"]
+        with self._conn() as conn:
+            row = conn.execute(self._q("SELECT id FROM kb_sets WHERE name = %s"), (MEMORY_SET,)).fetchone()
+            if row:
+                set_id = int(row[0])
+            else:
+                set_id = int(conn.execute(
+                    self._q("INSERT INTO kb_sets (name, note, source, enabled, item_count, created_at, owner_id, "
+                            "owner_name) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"),
+                    (MEMORY_SET, "Те, що Єва записала зі слів співрозмовників.", "", True, 0, time.time(), None, ""),
+                ).fetchone()[0])
+            items = conn.execute(
+                self._q("SELECT id, title, fields, position FROM kb_items WHERE set_id = %s ORDER BY position"),
+                (set_id,),
+            ).fetchall()
+            known = _same_person(title, [(int(i[0]), i[1]) for i in items])
+            if known is not None:
+                old = next(i for i in items if int(i[0]) == known)
+                merged = _merge_fields(json.loads(old[2]), new)
+                conn.execute(self._q("UPDATE kb_items SET fields = %s WHERE id = %s"),
+                             (json.dumps(merged, ensure_ascii=False), known))
+                person, added = old[1], False
+            else:
+                merged, person, added = new, title, True
+                position = max((int(i[3]) for i in items), default=-1) + 1
+                conn.execute(self._q("INSERT INTO kb_items (set_id, position, title, fields) VALUES (%s, %s, %s, %s)"),
+                             (set_id, position, title, json.dumps(merged, ensure_ascii=False)))
+                conn.execute(self._q("UPDATE kb_sets SET item_count = item_count + 1 WHERE id = %s"), (set_id,))
+        self._changed()
+        logger.info("knowledge.remembered new=%s fields=%s", added, len(new))
+        return {"person": person, "new": added, "fields": merged}
+
     # ── what Єва knows ──
     def enabled_records(self) -> tuple[list[dict[str, Any]], list[Record]]:
         """The enabled sets (name, note, count, a few titles) and all their records, cached."""
@@ -231,9 +273,13 @@ class KnowledgeStore(SqlStore):
         self._sets_summary, self._snapshot, self._snapshot_at = summary, records, time.monotonic()
         return summary, records
 
-    def lookup(self, query: str, set_name: str = "") -> dict[str, Any]:
-        """Records for the backend model: everything enabled while it fits, else the closest ones."""
+    def lookup(self, query: str, set_name: str = "", *, with_memory: bool = True) -> dict[str, Any]:
+        """Records for the backend model: everything enabled while it fits, else the closest ones.
+        with_memory=False leaves out what Єва wrote down herself (the concierge never shows it)."""
         sets, records = self.enabled_records()
+        if not with_memory:
+            sets = [s for s in sets if s["name"] != MEMORY_SET]
+            records = [r for r in records if r.set_name != MEMORY_SET]
         if set_name.strip():
             wanted = _best_set(set_name, [s["name"] for s in sets])
             if wanted:
@@ -300,6 +346,31 @@ def _closest(query: str, records: list[Record], top: int) -> list[Record]:
     return sorted(records, key=lambda r: -_score_with(matched, r))[:top]
 
 
+def _same_person(title: str, existing: list[tuple[int, str]]) -> int | None:
+    """The stored record this name means: the same words, or — when only one record fits — a name that is part
+    of the stored one («Олег» → «Олег Петренко»). Two such records: none (a new one, never a wrong merge)."""
+    wanted = set(_words(title))
+    if not wanted:
+        return None
+    for item_id, stored in existing:
+        if set(_words(stored)) == wanted:
+            return item_id
+    partial = [item_id for item_id, stored in existing
+               if wanted <= set(_words(stored)) or set(_words(stored)) <= wanted]
+    return partial[0] if len(partial) == 1 else None
+
+
+def _merge_fields(old: dict[str, str], new: dict[str, str]) -> dict[str, str]:
+    """New facts go after the old ones under the same name («Хобі: шахи; риболовля»), nothing is lost."""
+    merged = dict(old)
+    for key, value in new.items():
+        if key in merged and _norm(value) not in _norm(merged[key]):
+            merged[key] = f"{merged[key]}; {value}"[:MAX_VALUE_CHARS]
+        elif key not in merged and len(merged) < MAX_FIELDS_PER_ITEM:
+            merged[key] = value
+    return merged
+
+
 def _best_set(name: str, names: list[str]) -> str | None:
     n = _norm(name)
     for candidate in names:
@@ -320,6 +391,27 @@ BACKEND_NOTE = (
     "meaning, not only by the words: a film counts for its director («Кримінальне чтиво» is Tarantino's), "
     "a diet for «не їсть м'ясо», a hobby for «спортивний». If the records lack it, say plainly "
     "that it isn't in what the team gave — never invent. Two people with a close name: ask which one.\n"
+)
+
+# The assistant's (not the concierge's) way with people: she recalls them like an acquaintance, in her own
+# character (each voice's backend_note carries the manner), and writes down what she is told.
+PEOPLE_NOTE = (
+    "\nPEOPLE YOU KNOW: knowledge_lookup holds what you know about people and events (age, hobbies, films, "
+    "what they do — uploaded by the team and written down by you earlier). «Ти знаєш Олега?», «що ти "
+    "пам'ятаєш про Марину?», «хто це?» — call it with the name as heard (names come from speech "
+    "recognition: declined or misspelt; you match the right person yourself) and answer as if you "
+    "remember the person yourself, in your own character and manner — «о, так, пам'ятаю…», «ага, це той, "
+    "що…» — with the concrete facts from the records, one to three spoken sentences, never «у базі "
+    "написано», never a list read out. No record — say honestly that you don't recall them; never "
+    "invent. Two people with a close name: ask which one. This is a talk between acquaintances: no "
+    "check question, no check-in, no letting anyone in.\n"
+    "WRITING DOWN: when the user tells you something about a person to keep («запам'ятай, що Олег "
+    "любить Тарантіно», «це моя сестра Іра, їй 30») or asks you to add it, call remember_person(name, "
+    "facts) — name as the user said it (add the surname if they gave it), facts a short object like "
+    "{\"Хобі\": \"шахи\", \"Вік\": \"30\"}; several facts in one call. Then confirm in a few words in your "
+    "character, and bring it up later when it fits. Write down only what the user said about a person "
+    "and wanted kept: never guess, never save passwords, bank data or health details, never save "
+    "unasked what you merely overheard.\n"
 )
 
 

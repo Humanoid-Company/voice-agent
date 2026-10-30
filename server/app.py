@@ -50,6 +50,7 @@ from tools.live_schemas import (
     CONFIRM_GUEST_TOOL,
     FIND_GUEST_TOOL,
     KNOWLEDGE_LOOKUP_TOOL,
+    REMEMBER_PERSON_TOOL,
     LIVE_BACKEND_TOOLS,
     LOOK_AT_CAMERA_TOOL,
 )
@@ -100,6 +101,13 @@ _CAMERA_NOTE = (
     "If you said something a look did not confirm, it was your mistake — say so, never blame the user."
 )
 # v5's camera rules, condensed the same way.
+# GPT-Live itself knows nothing of the records: people go to the backend, which looks them up and writes them down.
+_PEOPLE_NOTE = (
+    "\nPeople: «ти знаєш Олега?», «що пам'ятаєш про Марину?», «запам'ятай, що Іра любить йогу» always go to the "
+    "backend (it holds what you know about people and writes down new things). Say what it reports as your own "
+    "memory, in your own manner («О, так, пам'ятаю…») — never «в базі», never a list; nothing found — you "
+    "don't recall them. Never invent facts about a person."
+)
 _CAMERA_NOTE_V5 = (
     "\nCamera: you cannot see by yourself. Anything about what is visible — «що ти бачиш», «подивись на "
     "мене», «що в мене в руці», «що тут написано», or a short question pointing at something («а це "
@@ -192,8 +200,8 @@ def _user_voice(user: WebUser) -> str:
 
 
 def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
-    """«Знання» are the concierge's only (its guest list, the event's facts): the assistant's call gets no note
-    about them and no knowledge_lookup — «знання не мають працювати з помічниками, а тільки з консьєржами»."""
+    """The assistant knows people the way an acquaintance does (knowledge_lookup, remember_person, no check-in);
+    the concierge has its own protocol (_concierge_config) and never sees what Єва wrote down herself."""
     language = LANGUAGE_OPTIONS.get(user.language, LANGUAGE_OPTIONS["uk"])
     today = local_today()
     voice = _user_voice(user)
@@ -211,13 +219,15 @@ def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
             old_voice=voice in user.old_voices,
         )
         + _WEB_NOTE
-        + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE),
+        + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
+        + _PEOPLE_NOTE,
         "audio": {"output": {"voice": api_voice(voice, voice in user.old_voices)}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
+            + knowledge.PEOPLE_NOTE
             + (VOICE_PERSONAS[voice].backend_note if voice in VOICE_PERSONAS else ""),
-            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL],
+            tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL, REMEMBER_PERSON_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
         ),

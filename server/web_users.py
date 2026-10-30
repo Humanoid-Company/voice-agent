@@ -386,14 +386,14 @@ def _build_executor(user: WebUser) -> ToolExecutor:
     def knowledge_lookup(args: dict, ctx: ToolExecutionContext) -> ToolResult:
         query = str(args.get("query") or "").strip()[:300]
         try:
-            found = knowledge.store.lookup(query, str(args.get("set") or ""))
+            found = knowledge.store.lookup(query, str(args.get("set") or ""), with_memory=not user.concierge)
         except knowledge.KnowledgeError as exc:
             return ToolResult(ok=False, status="error", message=f"{exc} Скажи, що зараз не можеш заглянути в записи команди.")
         logger.info("web.knowledge.lookup total=%s shown=%s", found["total"], found["shown"])
         if not found["total"]:
             return ToolResult(
                 ok=True, status="empty",
-                message="Команда ще не завантажила знань (сторінка «Знання»). Скажи, що про це в тебе записів немає.",
+                message="Записів ще немає (сторінка «Знання»; ти й сама записуєш, що тобі розкажуть). Скажи, що нікого такого не пригадуєш.",
             )
         text = found["text"]
         if user.concierge:
@@ -405,11 +405,33 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         )
         return ToolResult(ok=True, status="ok", message=head + text, data={"total": found["total"], "shown": found["shown"]})
 
+    def _guest_records() -> list:
+        """The guest list is what the team uploaded: what Єва wrote down herself never lets anyone in."""
+        return [r for r in knowledge.store.enabled_records()[1] if r.set_name != knowledge.MEMORY_SET]
+
+    def remember_person(args: dict, ctx: ToolExecutionContext) -> ToolResult:
+        name = " ".join(str(args.get("name") or "").split())
+        facts = args.get("facts")
+        if isinstance(facts, dict):
+            facts = {str(k): str(v) for k, v in facts.items() if v is not None}
+        else:
+            facts = {}
+        try:
+            saved = knowledge.store.remember(name, facts)
+        except knowledge.KnowledgeError as exc:
+            return ToolResult(ok=False, status="error", message=f"{exc} Скажи, що цього не вдалося записати.")
+        logger.info("web.knowledge.remember new=%s", saved["new"])
+        return ToolResult(
+            ok=True, status="ok", data={"new": saved["new"]},
+            message=("Записала: " if saved["new"] else "Дописала до того, що знаєш про людину: ") + saved["person"]
+            + ". Підтверди одним коротким реченням у своєму характері, без «додано до бази».",
+        )
+
     def find_guest(args: dict, ctx: ToolExecutionContext) -> ToolResult:
         heard = " ".join(str(args.get("name") or "").split())[:100]
         surname = " ".join(str(args.get("surname") or "").split())[:100]
         try:
-            records = knowledge.store.enabled_records()[1]
+            records = _guest_records()
         except knowledge.KnowledgeError as exc:
             return ToolResult(ok=False, status="error", message=f"{exc} Скажи, що зараз не можеш перевірити список, і порадь звернутися до команди самостійно (покликати когось ти не можеш).")
         found = guests.find_guest(heard, surname, records)
@@ -470,7 +492,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
             )
         # Only for a person really on the list…
         try:
-            on_list = guests.is_on_list(name, knowledge.store.enabled_records()[1])
+            on_list = guests.is_on_list(name, _guest_records())
         except knowledge.KnowledgeError:
             on_list = True  # the list can't be read: the check question still guards it
         if not on_list:
@@ -525,6 +547,7 @@ def _build_executor(user: WebUser) -> ToolExecutor:
     executor.register("web_search", web_search, run_in_thread=True)  # network: off the event loop
     executor.register("look_at_camera", look_at_camera, run_in_thread=True)  # may wait for a frame
     executor.register("knowledge_lookup", knowledge_lookup, run_in_thread=True)  # database
+    executor.register("remember_person", remember_person, run_in_thread=True)  # database
     executor.register("find_guest", find_guest, run_in_thread=True)  # database
     executor.register("confirm_guest", confirm_guest, run_in_thread=True)
     return executor

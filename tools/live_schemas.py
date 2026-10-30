@@ -105,6 +105,24 @@ KNOWLEDGE_LOOKUP_TOOL: dict = _fn(
     required=["query"],
 )
 
+# Web: Єва writes down what she is told about a person (server/knowledge.py remember()) and recalls it with
+# knowledge_lookup. Not for the concierge.
+REMEMBER_PERSON_TOOL: dict = _fn(
+    "remember_person",
+    "Write down facts the user told you about a person, to remember them in later talks — «запам'ятай, що "
+    "Олег любить Тарантіно», «це моя сестра Іра, їй 30». A person already written down gets the new facts "
+    "added. Only what the user said and wants kept; never passwords, bank data or health details.",
+    {
+        "name": {"type": "string", "description": "The person's name as the user said it, with the surname if given"},
+        "facts": {
+            "type": "object",
+            "description": "Facts as short label → value, e.g. {\"Хобі\": \"шахи\", \"Вік\": \"30\", \"Хто це\": \"сестра користувача\"}",
+            "additionalProperties": {"type": "string"},
+        },
+    },
+    required=["name", "facts"],
+)
+
 # Web «Консьєрж» mode: the backend marks who the guest is once the check question confirmed it.
 CONFIRM_GUEST_TOOL: dict = _fn(
     "confirm_guest",

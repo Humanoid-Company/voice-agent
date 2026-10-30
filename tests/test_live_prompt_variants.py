@@ -71,3 +71,17 @@ def test_v5_never_invents_recent_news():
     assert "You read and browse nothing on your own" in v5 and "«вчора читала»" in v5
     assert "what happened today, yesterday or lately in any field" in v5
     assert "is small talk too, not a request for the news" in v5
+
+
+def test_examples_and_the_final_rule_follow_the_voice_gender():
+    from prompts.live_prompt import LIVE_PROMPT, build_live_prompt
+
+    assert "⟦" not in LIVE_PROMPT
+    for variant in ("v1", "v2", "v3", "v4", "v5"):
+        man = build_live_prompt(language_name="Ukrainian", assistant_name=None, today="x", voice="meridian", variant=variant)
+        woman = build_live_prompt(language_name="Ukrainian", assistant_name=None, today="x", voice="willow", variant=variant)
+        assert "⟦" not in man and "⟦" not in woman
+        assert "Final rule: you are a man (Тарас)" in man and "Final rule: you are a woman (Єва)" in woman
+        # Not one feminine example for a man to copy, and the other way round.
+        assert not any(w in man for w in ("розчула", "Записала", "знайшла»"))
+        assert "розчув" in man and "розчула" in woman and "розчув" not in woman

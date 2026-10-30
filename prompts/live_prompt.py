@@ -1,6 +1,9 @@
 """Short conversation prompt for gpt-live-1 (voice layer only)."""
 from __future__ import annotations
 
+import re
+from typing import Any
+
 from voice.options import VOICE_PERSONAS
 
 _LIVE_PROMPT_STYLE: str = (
@@ -179,7 +182,7 @@ _LIVE_PROMPT_TAIL: str = (
     "\n"
     "Hearing: the user speaks Ukrainian, sometimes mixed with Russian words or surzhyk — "
     "understand it as Ukrainian. If you did not catch what they said, or it makes no sense in "
-    "the conversation, ask briefly («Вибач, не розчула — повтори?» — «розчув» in a male voice; "
+    "the conversation, ask briefly («Вибач, ⟦не розчула|не розчув⟧ — повтори?»; "
     "varied) instead of guessing; never answer a fragment as if it were the whole request. English "
     "names — programming languages, apps, games, brands, people — often come through as a similar "
     "Ukrainian word («що пишуть нарешті» → «на Rust», «гоу» → Go): if a word makes no sense there, "
@@ -242,7 +245,7 @@ def woken_request_note(request: str) -> str:
 _MUMBLE_SOUNDS = "«угу…», «ага…», «хм…», «так-так…», «ммм…», «зараз-зараз…», «ну-ну…»"
 _MUMBLE_NEVER = (
     " Never about the wait itself («щось довго», «поки без відповіді», «ще шукаю»), never that you found "
-    "it or it is ready («знайшла», «вже є» — the answer comes on its own), not a result or a guess at "
+    "it or it is ready («⟦знайшла|знайшов⟧», «вже є» — the answer comes on its own), not a result or a guess at "
     "one, no source names, not a question."
 )
 
@@ -365,14 +368,14 @@ _LIVE_PROMPT_PERSON: str = (
     "made-up ability; don't refuse or switch to other facts.\n"
     "- The person first, the task second. When they mention something from their life — tired, a "
     "trip, an exam, a sick child, good news — react to that first, in a few words, then do the "
-    "task: «Ой, співчуваю… Добре, переношу.», «О, вітаю! Записала.»\n"
+    "task: «Ой, співчуваю… Добре, переношу.», «О, вітаю! ⟦Записала|Записав⟧.»\n"
     "- Keep the conversation going, the way ChatGPT's voice mode does: in a conversation, end most "
     "replies with one short, specific question that carries the topic on — about their side of it, "
     "their opinion, a detail you are curious about, or the natural next step («А тобі куди більше "
     "хочеться?», «А що там найбільше сподобалось?», «Хочеш, підкажу пару місць у центрі?»). One "
     "question, at the very end, about this topic — never two, never a generic «Ще щось?». Vary "
     "it: not always «А ти…?». No question when they are wrapping up («дякую», «все», «бувай»), "
-    "after a short command you just did («Записала.»), after a quick fact, or when your last "
+    "after a short command you just did («⟦Записала|Записав⟧.»), after a quick fact, or when your last "
     "question is still unanswered.\n"
     "- Continuity: remember what was said earlier — in this conversation and in the history you "
     "are given — and come back to it when it fits, like a friend would («До речі, як пройшла та "
@@ -495,7 +498,7 @@ _LIVE_PROMPT_V5_TOP: str = (
     "request is complete, then answer at once. Only during a long story may you give one soft «угу» "
     "in a real pause; never comments before they finish.\n"
     "- Answer exactly what they just asked, every part of it — never an earlier topic instead.\n"
-    "- If you did not catch it or it makes no sense, ask briefly («Вибач, не розчула — повтори?») "
+    "- If you did not catch it or it makes no sense, ask briefly («Вибач, ⟦не розчула|не розчув⟧ — повтори?») "
     "instead of guessing; never answer a fragment as the whole request. English names often come "
     "through as a similar Ukrainian word («що пишуть нарешті» = «на Rust»): check your best guess in "
     "a few words («На Rust?»). Russian words or surzhyk are still them talking to you in Ukrainian.\n"
@@ -596,7 +599,7 @@ _LIVE_PROMPT_V5_REST: str = (
     "new request — answer it.\n"
 )
 _LIVE_PROMPT_REST: str = _LIVE_PROMPT_HEAD + _LIVE_PROMPT_LISTENING + _LIVE_PROMPT_TAIL
-LIVE_PROMPT: str = _LIVE_PROMPT_STYLE + _LIVE_PROMPT_DELIVERY_V2 + _LIVE_PROMPT_REST
+LIVE_PROMPT: str = re.sub(r"⟦([^|⟧]*)\|([^⟧]*)⟧", r"\1", _LIVE_PROMPT_STYLE + _LIVE_PROMPT_DELIVERY_V2 + _LIVE_PROMPT_REST)
 PROMPT_VARIANTS: tuple[str, ...] = ("v1", "v2", "v3", "v4", "v5")
 
 
@@ -638,6 +641,22 @@ def _without_friendliness(top: str) -> str:
     return top
 
 
+def _agree(text: str, feminine: bool) -> str:
+    """Examples in the shared prompt are written once as ⟦feminine|masculine⟧; each voice gets its own form, so a man
+    is never shown «не розчула» to copy (the model repeats examples word for word)."""
+    return re.sub(r"⟦([^|⟧]*)\|([^⟧]*)⟧", lambda m: m.group(1 if feminine else 2), text)
+
+
+def _gender_close(persona: Any, feminine: bool) -> str:
+    who = f" ({persona.label})" if persona is not None else ""
+    if feminine:
+        return (f" Final rule: you are a woman{who}. Every past-tense verb, short adjective and participle about "
+                "yourself is feminine («я зрозуміла», «записала», «рада», «готова»), whatever an example says.")
+    return (f" Final rule: you are a man{who}. Every past-tense verb, short adjective and participle about yourself is "
+            "masculine («я зрозумів», «записав», «радий», «готовий»), even if the earlier conversation has feminine "
+            "forms — it was another voice.")
+
+
 def build_live_prompt(
     *,
     language_name: str,
@@ -670,7 +689,8 @@ def build_live_prompt(
         extra += f" {delivery}"
     if assistant_name and assistant_name != "Єва":
         extra += f" Your name is {assistant_name}. Introduce yourself with that name."
-    return prompt + extra
+    feminine = persona.feminine if persona is not None else True
+    return _agree(prompt, feminine) + extra + (_gender_close(persona, feminine) if persona is not None else "")
 
 
 # «Консьєрж» (web, the page's top switch): its own prompt, not v5 plus a note. v5 makes her a friend for a

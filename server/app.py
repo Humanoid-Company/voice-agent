@@ -101,6 +101,12 @@ _CAMERA_NOTE = (
     "If you said something a look did not confirm, it was your mistake — say so, never blame the user."
 )
 # v5's camera rules, condensed the same way.
+# The characters (all but Кішка) are people: what the backend writes for them is never «як ШІ» either.
+_PERSON_BACKEND_NOTE = (
+    "\nThe voice is a living person, not an AI: write what is said as that person would, never «як ШІ», «я "
+    "програма» or «у мене немає досвіду». (If the user seriously asks whether they talk to an AI, the truth "
+    "is told — the voice handles that.)\n"
+)
 # GPT-Live itself knows nothing of the records: people go to the backend, which looks them up and writes them down.
 _PEOPLE_NOTE = (
     "\nPeople: «ти знаєш Олега?», «що пам'ятаєш про Марину?», «запам'ятай, що Іра любить йогу» always go to the "
@@ -228,7 +234,8 @@ def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
             + knowledge.PEOPLE_NOTE
-            + (VOICE_PERSONAS[voice].backend_note if voice in VOICE_PERSONAS else ""),
+            + (VOICE_PERSONAS[voice].backend_note if voice in VOICE_PERSONAS else "")
+            + (_PERSON_BACKEND_NOTE if voice in VOICE_PERSONAS and VOICE_PERSONAS[voice].is_person else ""),
             tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL, REMEMBER_PERSON_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,

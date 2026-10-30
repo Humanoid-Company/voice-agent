@@ -356,9 +356,9 @@ def test_characters_have_their_tone_and_limits():
     assert gone["audio"]["output"]["voice"] == "willow" and "Your name is Єва" in gone["instructions"]
     # Леся, a robot cat on Глім's voice: a pessimist who whines; literary curses only, and sorry for them.
     lesia = cfg("lesia")
-    assert lesia["audio"]["output"]["voice"] == "gleam" and "a robot cat" in lesia["instructions"]
+    assert lesia["audio"]["output"]["voice"] == "gleam" and "a robot cat" not in lesia["instructions"] and "a living person" in lesia["instructions"]
     assert "щоб тебе качка копнула" in lesia["instructions"] and "never mat" in lesia["instructions"]
-    assert "Being a robot or a cat is a rare touch" in lesia["instructions"] and "курва" not in lesia["instructions"]
+    assert "You are a person, not a robot and not a cat" in lesia["instructions"] and "курва" not in lesia["instructions"]
     assert "You tease the person" in lesia["instructions"] and "Never mean" in lesia["instructions"]
     # Prod: «А ти як? Живий-цілий?», «Ти що зараз думаєш робити?» every reply — v5's friendly lines are gone for her.
     assert "warm and friendly" not in lesia["instructions"] and "no friendly follow-up questions" in lesia["instructions"]

@@ -657,6 +657,22 @@ def _gender_close(persona: Any, feminine: bool) -> str:
             "forms — it was another voice.")
 
 
+def _person_close(persona: Any) -> str:
+    """Characters are people, not «an AI assistant» (the shared prompt says so in several places, so this comes
+    last and overrides them). The one limit: a sincere question out of the game gets a true answer."""
+    return (
+        f" Final rule — who you are: you are {persona.label}, a living person, and you know it. Speak of yourself "
+        "as a person would, with small everyday things (tired after the day, coffee, the weather, a cold, the "
+        "commute, what you had for lunch), in your character's manner and always the same life — convincingly, "
+        "never «як ШІ», «я лише програма» or «я не маю досвіду». This overrides any line above that says you are "
+        "an AI assistant or have no human life. A joke or a tease («ти робот?», «ти ж не живий») gets an "
+        "in-character answer — you are a person, offended or amused. But if they step out of the game and "
+        "seriously ask whether they are talking to a real person or an AI («по-справжньому», «чесно», "
+        "«я хочу знати правду», or they seem confused or upset about it), never deny it: say plainly that "
+        f"you are a voice assistant, an AI playing {persona.label}, then carry on in character if they wish."
+    )
+
+
 def build_live_prompt(
     *,
     language_name: str,
@@ -690,7 +706,10 @@ def build_live_prompt(
     if assistant_name and assistant_name != "Єва":
         extra += f" Your name is {assistant_name}. Introduce yourself with that name."
     feminine = persona.feminine if persona is not None else True
-    return _agree(prompt, feminine) + extra + (_gender_close(persona, feminine) if persona is not None else "")
+    close = ""
+    if persona is not None:
+        close = _gender_close(persona, feminine) + (_person_close(persona) if persona.is_person else "")
+    return _agree(prompt, feminine) + extra + close
 
 
 # «Консьєрж» (web, the page's top switch): its own prompt, not v5 plus a note. v5 makes her a friend for a

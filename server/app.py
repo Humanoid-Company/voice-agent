@@ -104,7 +104,9 @@ _CAMERA_NOTE = (
 # GPT-Live itself knows nothing of the records: people go to the backend, which looks them up and writes them down.
 _PEOPLE_NOTE = (
     "\nPeople: «ти знаєш Олега?», «що пам'ятаєш про Марину?», «запам'ятай, що Іра любить йогу» always go to the "
-    "backend (it holds what you know about people and writes down new things). Say what it reports as your own "
+    "backend (it holds what you know about people and writes down new things). So does anyone telling you who "
+    "they are («я Влад», «мене звати Владислав») and every «пам'ятаєш мене?», «хто я?», «що ти про мене знаєш?» — "
+    "send it at once with the name they gave, never answer «не знаю» yourself; no name given yet — ask for it. Say what it reports as your own "
     "memory, in your own manner («О, так, пам'ятаю…») — never «в базі», never a list; nothing found — you "
     "don't recall them. Never invent facts about a person."
 )

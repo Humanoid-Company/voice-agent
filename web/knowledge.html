@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Голосові помічники — знання</title>
-  <meta name="description" content="Список гостей і факти про подію для консьєржа: завантаження таблиць і документів.">
+  <meta name="description" content="Що знає Єва: розділи із записами про людей і текстові розділи з правилами, подіями, історіями.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="style.css">
   <script src="config.js"></script>
@@ -15,8 +15,9 @@
     <header class="page-head">
       <div>
         <h1>Знання</h1>
-        <p class="sub">Для режиму «Консьєрж»: список гостей, з яким він звіряє імена, і факти про подію
-          («де гардероб?», «о котрій програма?»). Звичайна Єва теж знає ці записи як знайомих: «ти знаєш Олега?» — і згадує по-своєму. А що ти розкажеш («запам'ятай, що Іра любить йогу»), вона дописує сама в набір «Єва запам'ятала».</p>
+        <p class="sub">Що знає Єва. Записи про людей (з таблиці чи документа) — вона згадує їх як знайомих: «ти знаєш
+          Олега?». Текстові розділи під своїми заголовками — правила, подія, історії. Що ти розкажеш («запам'ятай, що Іра
+          любить йогу»), вона дописує сама в набір «Єва запам'ятала». Консьєрж звіряє гостей лише із записами.</p>
       </div>
       <a id="backLink" class="nav-btn header-link" href="index.html">← До помічника</a>
     </header>
@@ -24,19 +25,45 @@
     <p id="storageNote" class="banner" hidden></p>
 
     <section class="card">
-      <h2>Новий набір</h2>
-      <label for="setName">Назва</label>
-      <input id="setName" class="field" type="text" maxlength="120" placeholder="Напр.: Корпоратив 20.10">
+      <h2>Новий розділ</h2>
+      <label for="setName">Заголовок</label>
+      <input id="setName" class="field" type="text" maxlength="120" placeholder="Напр.: Гості, Правила свята, Сімейні історії">
       <label for="setNote" class="gap">Опис <span class="muted small">— необов'язково</span></label>
-      <input id="setNote" class="field" type="text" maxlength="1000" placeholder="Хто ці люди, що за подія">
+      <input id="setNote" class="field" type="text" maxlength="1000" placeholder="Що тут і для чого">
 
-      <label id="drop" class="drop" for="file">
-        <input id="file" type="file" accept=".csv,.tsv,.xlsx,.json,.docx,.txt,.md">
-        <span class="drop-title">Перетягніть файл сюди або натисніть, щоб вибрати</span>
-        <span class="muted small">CSV, Excel (.xlsx), JSON, DOCX, TXT · до 5 МБ</span>
-      </label>
-      <p class="hint">Таблиця: перший рядок — назви колонок (Ім'я, Вік, Хобі, Улюблені фільми…), далі по рядку
-        на людину. Документ чи текст розбере модель. <a id="exampleLink" href="examples/korporatyv.csv" download>Приклад CSV</a></p>
+      <nav class="mode-tabs" role="tablist" aria-label="Що додати">
+        <button id="tabFile" type="button" role="tab" aria-selected="true" aria-controls="paneFile">Записи з файлу</button>
+        <button id="tabText" type="button" role="tab" aria-selected="false" aria-controls="paneText">Текст</button>
+      </nav>
+
+      <div id="paneFile" role="tabpanel" aria-labelledby="tabFile">
+        <label id="drop" class="drop" for="file">
+          <input id="file" type="file" accept=".csv,.tsv,.xlsx,.json,.docx,.txt,.md">
+          <span class="drop-title">Перетягніть файл сюди або натисніть, щоб вибрати</span>
+          <span class="muted small">CSV, Excel (.xlsx), JSON, DOCX, TXT · до 5 МБ</span>
+        </label>
+        <p class="hint">Таблиця: перший рядок — назви колонок (Ім'я, Вік, Хобі, Улюблені фільми…), далі по рядку
+          на людину. Документ чи текст розбере модель. <a id="exampleLink" href="examples/korporatyv.csv" download>Приклад CSV</a></p>
+      </div>
+
+      <div id="paneText" role="tabpanel" aria-labelledby="tabText" hidden>
+        <label for="textBody" class="gap">Текст</label>
+        <textarea id="textBody" class="field" rows="12" maxlength="20000"
+          placeholder="## Подія&#10;Давидові виповнюється 11 років.&#10;&#10;## Як говорити&#10;Коротко, 1–3 речення…"></textarea>
+        <p class="hint">Підзаголовки «## …» ділять текст на частини: коли розділ не закріплений, Єва дістає з нього
+          лише потрібну частину. <span id="textCount" class="meter"></span></p>
+        <label class="setting gap">
+          <span class="setting-text">
+            <span class="setting-title">Завжди пам'ятати</span>
+            <span class="hint">Розділ іде в інструкції кожної розмови: правила, які треба тримати в кожній відповіді,
+              і головне про подію. Решту краще не закріплювати — Єва знайде, коли спитають.</span>
+          </span>
+          <input id="textPinned" type="checkbox" class="switch" role="switch">
+        </label>
+        <div class="row actions">
+          <button id="saveText" class="btn primary" type="button">Зберегти розділ</button>
+        </div>
+      </div>
       <p id="parseStatus" class="status-msg" role="status" hidden></p>
 
       <div id="preview" class="preview" hidden>
@@ -57,12 +84,15 @@
 
     <section class="card">
       <div class="card-head">
-        <h2>Набори</h2>
+        <h2>Розділи</h2>
         <span id="setsCount" class="muted small"></span>
       </div>
+      <p id="pinnedMeter" class="meter" hidden></p>
       <div id="sets" class="sets"><p class="muted empty">Завантаження…</p></div>
-      <p class="hint">Увімкнені набори Єва й консьєрж знають з наступної розмови. Вимкнений набір лишається тут, але
-        вони про нього не знають. Набір «Єва запам'ятала» консьєрж не бачить і до списку гостей його не рахує. Набори бачать і змінюють усі учасники команди.</p>
+      <p class="hint">Увімкнені розділи Єва знає з наступної розмови: закріплені («Завжди пам'ятати») — одразу, решту
+        знаходить, коли про це спитають. Вимкнений розділ лишається тут, але вона про нього не знає. Набір «Єва
+        запам'ятала» консьєрж не бачить і до списку гостей його не рахує; текстові розділи — теж не гості. Розділи
+        бачать і змінюють усі, хто відкриє цю сторінку.</p>
     </section>
   </main>
 </body>

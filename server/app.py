@@ -216,6 +216,8 @@ def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
     voice = _user_voice(user)
     if concierge:
         return _concierge_config(user, language, today, voice)
+    # «Завжди пам'ятати» last: the team's rules for this event come after (and over) the general ones.
+    standing = knowledge.pinned_note()
     config = {
         "model": OPENAI_LIVE_MODEL,
         "instructions": build_live_prompt(
@@ -229,14 +231,16 @@ def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
         )
         + _WEB_NOTE
         + (_CAMERA_NOTE_V5 if user.prompt_variant == "v5" else _CAMERA_NOTE)
-        + _PEOPLE_NOTE,
+        + _PEOPLE_NOTE
+        + standing,
         "audio": {"output": {"voice": api_voice(voice, voice in user.old_voices)}},
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language, camera=True)
             + knowledge.PEOPLE_NOTE
             + (VOICE_PERSONAS[voice].backend_note if voice in VOICE_PERSONAS else "")
-            + (_PERSON_BACKEND_NOTE if voice in VOICE_PERSONAS and VOICE_PERSONAS[voice].is_person else ""),
+            + (_PERSON_BACKEND_NOTE if voice in VOICE_PERSONAS and VOICE_PERSONAS[voice].is_person else "")
+            + knowledge.pinned_note(backend=True),
             tools=[*LIVE_BACKEND_TOOLS, LOOK_AT_CAMERA_TOOL, KNOWLEDGE_LOOKUP_TOOL, REMEMBER_PERSON_TOOL],
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
@@ -263,12 +267,14 @@ def _concierge_config(user: WebUser, language: str, today: str, voice: str) -> d
         "model": OPENAI_LIVE_MODEL,
         "instructions": build_concierge_prompt(language_name=language, today=today, voice=voice,
                                                check_question=user.check_question,
-                                               old_voice=voice in user.old_voices),
+                                               old_voice=voice in user.old_voices)
+        + knowledge.pinned_note(),
         "audio": {"output": {"voice": api_voice(voice, voice in user.old_voices)}},  # the voice only: a concierge never roasts guests
         "delegation": responses_delegation(
             model=OPENAI_LIVE_BACKEND_MODEL,
             instructions=build_backend_prompt(today=today, language_name=language)
-            + knowledge.BACKEND_NOTE + knowledge.concierge_backend_note(user.check_question),
+            + knowledge.BACKEND_NOTE + knowledge.concierge_backend_note(user.check_question)
+            + knowledge.pinned_note(backend=True),
             tools=tools,
             parallel_tools=OPENAI_LIVE_PARALLEL_TOOLS,
             effort=OPENAI_LIVE_BACKEND_EFFORT,
@@ -839,13 +845,19 @@ class KnowledgeSetIn(BaseModel):
     name: str
     note: str = ""
     source: str = ""
-    items: list[KnowledgeItem]
+    items: list[KnowledgeItem] = []
+    # "text": one text under the name (body), written on the page — «Правила», «Про подію», «Історії»…
+    kind: str = "records"
+    body: str = ""
+    pinned: bool = False  # «Завжди пам'ятати»: in the instructions of every call
 
 
 class KnowledgeSetPatch(BaseModel):
     enabled: bool | None = None
+    pinned: bool | None = None
     name: str | None = None
     note: str | None = None
+    body: str | None = None  # a text set's new text
 
 
 @app.post("/api/knowledge/parse")
@@ -868,13 +880,15 @@ async def knowledge_parse(request: Request) -> dict:
 @app.get("/api/knowledge")
 def knowledge_sets() -> dict:
     return {"storage": knowledge.store.kind, "persistent": knowledge.store.persistent,
-            "sets": [s for s in _kb(knowledge.store.list_sets)]}
+            "sets": [s for s in _kb(knowledge.store.list_sets)],
+            "pinned_chars": _kb(knowledge.store.pinned_chars), "pinned_max": knowledge.PINNED_MAX_CHARS}
 
 
 @app.post("/api/knowledge")
 def knowledge_create(body: KnowledgeSetIn) -> dict:
     items = [item.model_dump() for item in body.items]
-    created = _kb(knowledge.store.create_set, body.name, items, note=body.note, source=body.source)
+    created = _kb(knowledge.store.create_set, body.name, items, note=body.note, source=body.source,
+                  kind=body.kind, body=body.body, pinned=body.pinned)
     return created
 
 
@@ -888,8 +902,9 @@ def knowledge_get(set_id: int) -> dict:
 
 @app.post("/api/knowledge/{set_id}")
 def knowledge_update(set_id: int, body: KnowledgeSetPatch) -> dict:
-    """Turn a set on or off for Єва («Єва знає»), rename it, change its note."""
-    found = _kb(knowledge.store.update_set, set_id, enabled=body.enabled, name=body.name, note=body.note)
+    """Turn a set on or off for Єва («Єва знає»), pin it («Завжди пам'ятати»), rename it, change its note or text."""
+    found = _kb(knowledge.store.update_set, set_id, enabled=body.enabled, name=body.name, note=body.note,
+                pinned=body.pinned, body=body.body)
     if found is None:
         raise HTTPException(status_code=404, detail="Такого набору немає.")
     return found

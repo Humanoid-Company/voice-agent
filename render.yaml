@@ -26,6 +26,8 @@ services:
         sync: false
       - key: LOGS_TOKEN # password of the hidden /logs page (calls and tool calls); empty = logs are open
         sync: false
+      - key: KNOWLEDGE_TOKEN # password of «Знання» (people's details); empty = the page and its API are open
+        sync: false
       - key: TIMEZONE # for «сьогодні» and the time of day in the prompts
         value: Europe/Kyiv
       - key: WEB_SEARCH_API_KEY # Tavily, for the web_search tool; empty = she says search is unavailable

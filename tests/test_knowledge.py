@@ -436,3 +436,22 @@ def test_a_store_that_is_down_never_breaks_a_call(store, monkeypatch):
     monkeypatch.setattr(store, "pinned_block", down)
     assert knowledge.pinned_note() == ""
     assert web._session_config(web.users.get("kb-browser-0123456789abc"))["instructions"]
+
+
+def test_a_knowledge_password_closes_the_page_but_not_eva(client, store, monkeypatch):
+    monkeypatch.setattr(web, "KNOWLEDGE_TOKEN", "sekret-123")
+    assert client.get("/api/knowledge").status_code == 401
+    assert client.post("/api/knowledge", json={"name": "X", "kind": "text", "body": "т"}).status_code == 401
+    assert client.post("/api/knowledge/parse", content=PEOPLE_CSV, headers={"X-File-Name": "a.csv"}).status_code == 401
+    good = {"X-Knowledge-Token": "sekret-123"}
+    saved = client.post("/api/knowledge", json={"name": "X", "kind": "text", "body": "т"}, headers=good)
+    assert saved.status_code == 200
+    set_id = saved.json()["id"]
+    for call in (client.get, client.delete):
+        assert call(f"/api/knowledge/{set_id}", headers={"X-Knowledge-Token": "wrong"}).status_code == 401
+    assert client.post(f"/api/knowledge/{set_id}", json={"pinned": True}).status_code == 401
+    assert client.get("/api/knowledge", headers=good).json()["sets"][0]["name"] == "X"
+    # Єва's own lookup goes past the password: it runs on the server.
+    user = web.users.get("kb-browser-0123456789abc")
+    found = asyncio.run(user.executor.execute("knowledge_lookup", {"query": "т"}, ToolExecutionContext(session_id="s")))
+    assert found.ok

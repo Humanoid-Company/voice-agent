@@ -76,6 +76,9 @@ FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS",
 SERVER_STARTED_AT = time.time()
 # The hidden /logs page reads whole conversations: only with this token (unset = logs can't be read).
 LOGS_TOKEN = os.getenv("LOGS_TOKEN", "").strip()
+# «Знання» hold people's details (a family party: children's names, ages, hobbies). With this set the page and
+# its API need it (header X-Knowledge-Token); unset = open, as before. Єва's own lookups never need it.
+KNOWLEDGE_TOKEN = os.getenv("KNOWLEDGE_TOKEN", "").strip()
 # Cap on one Live session (cost guard: a tab left open in a noisy room kept a call going). 10 min, not 30: a
 # real talk goes on — the page opens a new session with the whole conversation (/api/me «expired»).
 MAX_SESSION_S = float(os.getenv("MAX_SESSION_MINUTES", "10")) * 60
@@ -810,6 +813,11 @@ _extract = None
 _plan = None
 
 
+def _kb_auth(token: str | None) -> None:
+    if KNOWLEDGE_TOKEN and not hmac.compare_digest((token or "").encode(), KNOWLEDGE_TOKEN.encode()):
+        raise HTTPException(status_code=401, detail="bad_knowledge_token")
+
+
 def _kb(call, *args, **kwargs):
     try:
         return call(*args, **kwargs)
@@ -861,8 +869,9 @@ class KnowledgeSetPatch(BaseModel):
 
 
 @app.post("/api/knowledge/parse")
-async def knowledge_parse(request: Request) -> dict:
+async def knowledge_parse(request: Request, x_knowledge_token: str | None = Header(default=None)) -> dict:
     """The file as the raw body, its name in X-File-Name (URL-encoded) → the records it holds."""
+    _kb_auth(x_knowledge_token)
     filename = urllib.parse.unquote(request.headers.get("x-file-name", ""))[:200]
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > 5_000_000:
@@ -878,14 +887,16 @@ async def knowledge_parse(request: Request) -> dict:
 
 
 @app.get("/api/knowledge")
-def knowledge_sets() -> dict:
+def knowledge_sets(x_knowledge_token: str | None = Header(default=None)) -> dict:
+    _kb_auth(x_knowledge_token)
     return {"storage": knowledge.store.kind, "persistent": knowledge.store.persistent,
             "sets": [s for s in _kb(knowledge.store.list_sets)],
             "pinned_chars": _kb(knowledge.store.pinned_chars), "pinned_max": knowledge.PINNED_MAX_CHARS}
 
 
 @app.post("/api/knowledge")
-def knowledge_create(body: KnowledgeSetIn) -> dict:
+def knowledge_create(body: KnowledgeSetIn, x_knowledge_token: str | None = Header(default=None)) -> dict:
+    _kb_auth(x_knowledge_token)
     items = [item.model_dump() for item in body.items]
     created = _kb(knowledge.store.create_set, body.name, items, note=body.note, source=body.source,
                   kind=body.kind, body=body.body, pinned=body.pinned)
@@ -893,7 +904,8 @@ def knowledge_create(body: KnowledgeSetIn) -> dict:
 
 
 @app.get("/api/knowledge/{set_id}")
-def knowledge_get(set_id: int) -> dict:
+def knowledge_get(set_id: int, x_knowledge_token: str | None = Header(default=None)) -> dict:
+    _kb_auth(x_knowledge_token)
     found = _kb(knowledge.store.get_set, set_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Такого набору немає.")
@@ -901,8 +913,9 @@ def knowledge_get(set_id: int) -> dict:
 
 
 @app.post("/api/knowledge/{set_id}")
-def knowledge_update(set_id: int, body: KnowledgeSetPatch) -> dict:
+def knowledge_update(set_id: int, body: KnowledgeSetPatch, x_knowledge_token: str | None = Header(default=None)) -> dict:
     """Turn a set on or off for Єва («Єва знає»), pin it («Завжди пам'ятати»), rename it, change its note or text."""
+    _kb_auth(x_knowledge_token)
     found = _kb(knowledge.store.update_set, set_id, enabled=body.enabled, name=body.name, note=body.note,
                 pinned=body.pinned, body=body.body)
     if found is None:
@@ -911,7 +924,8 @@ def knowledge_update(set_id: int, body: KnowledgeSetPatch) -> dict:
 
 
 @app.delete("/api/knowledge/{set_id}")
-def knowledge_delete(set_id: int) -> dict:
+def knowledge_delete(set_id: int, x_knowledge_token: str | None = Header(default=None)) -> dict:
+    _kb_auth(x_knowledge_token)
     found = _kb(knowledge.store.get_set, set_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Такого набору немає.")

@@ -41,7 +41,11 @@
   async function api(path, opts = {}) {
     const res = await fetch(BACKEND + path, {
       ...opts,
-      headers: { ...(opts.body && !(opts.body instanceof Blob) ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
+      headers: {
+        ...(opts.body && !(opts.body instanceof Blob) ? { "Content-Type": "application/json" } : {}),
+        ...(store.get("kb.token") ? { "X-Knowledge-Token": store.get("kb.token") } : {}),
+        ...(opts.headers || {}),
+      },
     });
     if (!res.ok) {
       let detail = "Помилка " + res.status;
@@ -196,7 +200,8 @@
       data = await api("/api/knowledge");
     } catch (err) {
       if (err instanceof ApiError) {
-        $("sets").replaceChildren(el("p", { class: "muted empty" }, err.status === 401 ? "Потрібен вхід." : err.message));
+        if (err.status === 401) { askToken(); return; }
+        $("sets").replaceChildren(el("p", { class: "muted empty" }, err.message));
         return;
       }
       // Render's free plan sleeps: the first request wakes it (up to a minute).
@@ -209,6 +214,24 @@
     pinnedMax = data.pinned_max || pinnedMax;
     showPinned(data.pinned_chars || 0);
     renderSets(data.sets);
+  }
+
+  // KNOWLEDGE_TOKEN on the server: «Знання» open only with its password, kept in this browser.
+  function askToken() {
+    const input = el("input", { type: "password", class: "field", autocomplete: "current-password", "aria-label": "Пароль «Знань»", placeholder: "Пароль" });
+    const go = () => {
+      if (!input.value.trim()) return;
+      if (!/^[\x21-\x7e]+$/.test(input.value.trim())) { status("Пароль — латиниця, цифри й знаки, без пробілів.", "err"); return; }
+      status("");
+      store.set("kb.token", input.value.trim());
+      loadSets();
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    const wrong = store.get("kb.token");
+    $("sets").replaceChildren(
+      el("p", { class: "hint" }, wrong ? "Пароль не підійшов — введіть ще раз." : "«Знання» захищені паролем (KNOWLEDGE_TOKEN на сервері)."),
+      el("div", { class: "row actions" }, input, el("button", { class: "btn primary", type: "button", onclick: go }, "Увійти")));
+    input.focus();
   }
 
   function showPinned(n) {

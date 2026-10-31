@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from voice import blunt_prompt, blunt_rough_prompt, stepan_prompt
+from voice import blunt_prompt, blunt_rough_prompt
 from voice.wake_phrases import NAME_FORMS as EVA_NAME_FORMS
 
 # The legacy Realtime engine only accepts these ten preset voice IDs. Exposed to the model as
@@ -38,10 +38,10 @@ class VoicePersona:
     # both willow); the preset still goes to the API (api_voice).
     key: str = ""
     special: bool = False  # «Особливі» in the picker; never picked for «зміни на чоловічий» / «інший»
-    # Not a warm friend (Толік, Ліна, Степан Петрович): v5's friendly lines go (prompts/live_prompt.py).
+    # Not a warm friend (Степан, Ліна, Степан Петрович): v5's friendly lines go (prompts/live_prompt.py).
     own_tone: bool = False
     backend_note: str = ""  # for the backend model too: it writes what is said after delegating
-    # The name as a recogniser writes it when they call this character («Толік, скажи», «Привіт, Мілано»),
+    # The name as a recogniser writes it when they call this character («Степан, скажи», «Привіт, Мілано»),
     # lower case — web/app.js wakes and pauses it with these instead of Єва's (voice/wake_phrases.py).
     wake_names: tuple[str, ...] = ()
     # Typical requests and how this character handles them: (request, behaviour in character). The model takes
@@ -52,7 +52,7 @@ class VoicePersona:
     # `voice_description` goes into the instructions as «Voice: …» — OpenAI: it keeps the sound steady.
     voice_env: str = ""
     voice_description: str = ""
-    # Several personas under one tab (two Толіки): the same `group`; `variant_label` names each in the «Голос» list.
+    # Several personas under one tab (two Степани): the same `group`; `variant_label` names each in the «Голос» list.
     group: str = ""
     variant_label: str = ""
 
@@ -328,8 +328,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
         ),
         # ── special ──
         VoicePersona(
-            "cedar", "Толік",
-            "Безпечний Толік: бидловатий дядько з лавки біля під'їзду, бурчить і кепкує — "
+            "cedar", "Степан",
+            "Безпечний Степан: бидловатий дядько з лавки біля під'їзду, бурчить і кепкує — "
             "без лайки і без злоби, з дітьми м'якший. Відповідає по суті. Голос Кедр.",
             False,
             blunt_prompt.character(),  # the whole prompt is in voice/blunt_prompt.py — edit it there
@@ -340,13 +340,13 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             backend_note=blunt_prompt.backend_note(),
             voice_env="OPENAI_VOICE_TOLIK",
             voice_description=_TOLIK_VOICE,
-            wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
+            wake_names=("степан", "степане", "степа", "степку", "степані", "stepan", "толік", "толіку"),
             group="blunt",
-            variant_label="Безпечний Толік",
+            variant_label="Безпечний Степан",
         ),
         VoicePersona(
-            "ash", "Толік",
-            "Старий Толік: бурчить, кепкує, зрідка кине «йолопе» чи «трясця» — "
+            "ash", "Степан",
+            "Старий Степан: бурчить, кепкує, зрідка кине «йолопе» чи «трясця» — "
             "без злоби. Без особливих послаблень для дітей. Голос Ash.",
             False,
             blunt_rough_prompt.character(),  # the whole prompt is in voice/blunt_rough_prompt.py — edit it there
@@ -357,24 +357,9 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             backend_note=blunt_rough_prompt.backend_note(),
             voice_env="OPENAI_VOICE_TOLIK_RAW",
             voice_description=_TOLIK_VOICE,
-            wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
+            wake_names=("степан", "степане", "степа", "степку", "степані", "stepan", "толік", "толіку"),
             group="blunt",
-            variant_label="Старий Толік",
-        ),
-        VoicePersona(
-            "ash", "Степан",
-            "Характер безпечного Толіка, але активніший: жвавий, діловий, одразу береться за справу й підказує, що "
-            "робити далі. Без лайки, з дітьми м'який. Голос Ash.",
-            False,
-            stepan_prompt.character(),  # the whole prompt is in voice/stepan_prompt.py — edit it there
-            stepan_prompt.SAMPLES,
-            key="stepan",
-            special=True,
-            own_tone=True,
-            backend_note=stepan_prompt.backend_note(),
-            voice_env="OPENAI_VOICE_TOLIK_RAW",  # the same voice as the old Толік
-            voice_description=_TOLIK_VOICE,
-            wake_names=("степан", "степане", "степа", "степку", "степані", "stepan"),
+            variant_label="Старий Степан",
         ),
         VoicePersona(
             "gleam", "Леся",
@@ -488,9 +473,9 @@ _VOICE_NAME_STEMS: dict[str, str] = {
     "галя": "marin", "галю": "marin", "галі": "marin", "бабус": "marin", "бабу": "marin",
     "ліна": "lina", "ліну": "lina", "ліно": "lina", "ліни": "lina", "готк": "lina",
     "вітя": "ripple", "вітю": "ripple", "віть": "ripple", "віті": "ripple", "ботанік": "ripple",
-    "тарас": "meridian", "степан": "stepan", "степа": "stepan", "петрович": "stone", "бюрократ": "stone",
+    "тарас": "meridian", "петрович": "stone", "бюрократ": "stone",
     "груб": "blunt_rough", "стар": "blunt_rough", "справжн": "blunt_rough", "нецензур": "blunt_rough",
-    "простог": "blunt_rough", "толік": "blunt", "толя": "blunt", "толю": "blunt", "хуліган": "blunt", "прямолін": "blunt",
+    "простог": "blunt_rough", "степан": "blunt", "степа": "blunt", "толік": "blunt", "толя": "blunt", "толю": "blunt", "хуліган": "blunt", "прямолін": "blunt",
     "леся": "lesia", "лесю": "lesia", "лесі": "lesia", "робокіт": "lesia", "робокот": "lesia", "робокішк": "lesia",
     "кота": "kit", "котик": "kit", "котяр": "kit", "кіт": "kit", "кішк": "kit", "киц": "kit",
 }
@@ -510,7 +495,7 @@ def asked_for_voice_change(utterances: list[str] | None) -> bool:
     words = re.findall(r"[a-zа-яіїєґ']+", text)
     if any(w in text for w in _VOICE_WORDS):
         return True
-    # A character's name only with a wish to switch: they call each one by name («Толік, розкажи щось»).
+    # A character's name only with a wish to switch: they call each one by name («Степан, розкажи щось»).
     named = any(w in VOICE_PERSONAS or any(w.startswith(stem) for stem in _VOICE_NAME_STEMS) for w in words)
     return named and any(w.startswith(_SWITCH_VERBS) for w in words)
 

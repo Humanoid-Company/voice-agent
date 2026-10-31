@@ -181,7 +181,7 @@ def test_keeps_itself_awake_only_when_deployed(monkeypatch):
 def test_voice_picker_lists_live_voices_and_saves_choice(client):
     data = client.get("/api/voices").json()
     ids = [v["id"] for v in data["voices"]]
-    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "blunt_rough", "stepan", "lesia", "kit"} == set(ids)
+    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "blunt_rough", "lesia", "kit"} == set(ids)
     assert data["default"] == "willow"  # Єва; OPENAI_LIVE_VOICE=gleam is no character any more
     assert any(v["feminine"] for v in data["voices"]) and not all(v["feminine"] for v in data["voices"])
     assert all(v["label"] and v["description"] for v in data["voices"])
@@ -285,17 +285,17 @@ def test_own_voice_is_accepted_by_the_desktop_change_voice():
 
 
 def test_tolik_is_a_character_on_cedar(client):
-    """Толік, the courtyard hooligan: Кедр's voice — apart in the picker, only on request, and never at the
+    """Степан, the courtyard hooligan: Кедр's voice — apart in the picker, only on request, and never at the
     concierge's door."""
     from voice.options import voice_request_target as target
 
     tolik = next(v for v in client.get("/api/voices").json()["voices"] if v["id"] == "blunt")
-    assert tolik["special"] and tolik["sample"] == "cedar" and tolik["label"] == "Толік"
+    assert tolik["special"] and tolik["sample"] == "cedar" and tolik["label"] == "Степан"
     user = web.users.get("blunt-0123456789abcdef")
     assert client.post("/api/voice", json={"voice": "blunt"}, headers={"X-Client-Id": "blunt-0123456789abcdef"}).status_code == 200
     config = web._session_config(user)
     assert config["audio"]["output"]["voice"] == "cedar"  # the API gets the preset
-    assert "You are Толік" in config["instructions"] and "Your name is Толік" in config["instructions"]
+    assert "You are Степан" in config["instructions"] and "Your name is Степан" in config["instructions"]
     assert "masculine grammatical gender" in config["instructions"]
     # The softest version: a human (not a cat), boorish but not aggressive, no swearing at all.
     assert "never a cat, a robot or any animal" in config["instructions"]
@@ -308,23 +308,23 @@ def test_tolik_is_a_character_on_cedar(client):
     # v5's friendly lines are gone for him (they won: «Та нормально, з тобою от балакаю. А в тебе як?»).
     assert "з тобою от балакаю" not in config["instructions"] and "warm and friendly" not in config["instructions"]
     assert "end with one short, specific question" not in config["instructions"]
-    assert "VOICE CHARACTER: the voice is Толік" in config["delegation"]["responses"]["instructions"]
+    assert "VOICE CHARACTER: the voice is Степан" in config["delegation"]["responses"]["instructions"]
     conc = web._session_config(user, concierge=True)
     assert conc["audio"]["output"]["voice"] == "cedar" and "courtyard hooligan" not in conc["instructions"]
-    assert "You are Толік, the concierge" in conc["instructions"]  # his name at the door, not his roast
+    assert "You are Степан, the concierge" in conc["instructions"]  # his name at the door, not his roast
     assert "VOICE CHARACTER" not in conc["delegation"]["responses"]["instructions"]
     # Others keep their own character and none of his.
     plain = web._session_config(web.users.get("blunt-plain-0123456789a"))
     assert "з тобою от балакаю" in plain["instructions"]  # Єва, the default: a warm one keeps v5 as it is
-    assert "You are Толік" not in plain["instructions"] and "Толік" not in plain["delegation"]["responses"]["instructions"]
+    assert "You are Степан" not in plain["instructions"] and "Степан" not in plain["delegation"]["responses"]["instructions"]
 
-    assert target("зміни голос на Толіка", "willow") == "blunt" and target("зміни голос на хуліган", "willow") == "blunt"
+    assert target("зміни голос на Степана", "willow") == "blunt" and target("зміни голос на Толіка", "willow") == "blunt" and target("зміни голос на хуліган", "willow") == "blunt"
     for current in ("willow", "meridian", "ripple", "stone"):  # never by «чоловічий» / «інший»
         assert target("зміни голос на чоловічий", current) != "blunt"
         assert target("зміни голос на інший", current) != "blunt"
     other = web.users.get("blunt-tool-0123456789ab")
     ok = asyncio.run(other.executor.execute("change_voice", {"voice": "blunt"},
-                                            ToolExecutionContext(session_id="s", user_utterances=["постав Толіка"])))
+                                            ToolExecutionContext(session_id="s", user_utterances=["постав Степана"])))
     assert ok.ok and other.voice == "blunt"
 
 
@@ -332,11 +332,11 @@ def test_each_character_answers_to_its_own_name(client):
     """«хай кожен персонаж відкликається на своє імя»: the page wakes and pauses each by its name."""
     voices = {v["id"]: v for v in client.get("/api/voices").json()["voices"]}
     assert voices["willow"]["label"] == "Єва" and "єва" in voices["willow"]["wake"]
-    assert {"толік", "толя"} <= set(voices["blunt"]["wake"]) and "мілано" in voices["bossa"]["wake"]
+    assert {"степан", "степане", "толік"} <= set(voices["blunt"]["wake"]) and "мілано" in voices["bossa"]["wake"]
     assert all(v["wake"] for v in voices.values())
     tolik = web.users.get("wake-tolik-0123456789a")
     tolik.voice = "blunt"
-    assert "«Толік, скажи»" in web._session_config(tolik)["instructions"]
+    assert "«Степан, скажи»" in web._session_config(tolik)["instructions"]
 
 
 def test_characters_have_their_tone_and_limits():
@@ -508,7 +508,7 @@ def test_voice_request_picks_the_voice():
     assert target("зроби голос спокійніший", "bossa") == "willow"
     assert target("зроби голос спокійніший", "stone") == "meridian"
     assert target("постав голос Мілани", "willow") == "bossa"
-    assert target("переключи голос на Степана", "willow") == "stepan"  # the new Степан; the bureaucrat is «Петрович»
+    assert target("переключи голос на Степана", "willow") == "blunt"  # the Степан; the bureaucrat is «Петрович»
     assert target("переключи голос на Петровича", "willow") == "stone"
     assert target("зміни голос на Бабу Галю", "willow") == "marin"
     assert target("зміни голос на Ліну", "willow") == "lina"
@@ -639,7 +639,7 @@ def test_the_language_changes_only_when_asked():
         (["Як справи", "Розкажи щось цікаве"], False),
         (["Давай іншим голосом"], True),
         (["Хочу Мілану"], True),
-        (["Толік, розкажи щось"], False),  # they call each character by name: not a wish to switch
+        (["Степан, розкажи щось"], False),  # they call each character by name: not a wish to switch
         (["Мілано, як справи?"], False),
         (["Поклич Степана Петровича"], True),
         (["зроби чоловічий"], True),
@@ -804,11 +804,11 @@ def test_concierge_mode_and_confirm_guest(client):
 
 
 def test_two_toliks_safe_and_rough(client):
-    """Безпечний Толік (blunt, cedar): no swearing, softer with children. Звичайний (blunt_rough, ash): the old one."""
+    """Безпечний Степан (blunt, cedar): no swearing, softer with children. Звичайний (blunt_rough, ash): the old one."""
     voices = {v["id"]: v for v in client.get("/api/voices").json()["voices"]}
-    assert voices["blunt"]["label"] == voices["blunt_rough"]["label"] == "Толік"  # one tab, two variants
+    assert voices["blunt"]["label"] == voices["blunt_rough"]["label"] == "Степан"  # one tab, two variants
     assert voices["blunt"]["group"] == voices["blunt_rough"]["group"] == "blunt"
-    assert voices["blunt"]["variant_label"] == "Безпечний Толік" and voices["blunt_rough"]["variant_label"] == "Старий Толік"
+    assert voices["blunt"]["variant_label"] == "Безпечний Степан" and voices["blunt_rough"]["variant_label"] == "Старий Степан"
     assert voices["blunt"]["sample"] == "cedar" and voices["blunt_rough"]["sample"] == "ash"
     safe = web.users.get("tolik-safe-0123456789abc")
     safe.voice = "blunt"
@@ -818,30 +818,12 @@ def test_two_toliks_safe_and_rough(client):
     assert safe_cfg["audio"]["output"]["voice"] == "cedar" and rough_cfg["audio"]["output"]["voice"] == "ash"
     assert "No swearing at all" in safe_cfg["instructions"] and "With children" in safe_cfg["instructions"]
     assert "How you swear" in rough_cfg["instructions"] and "No swearing at all" not in rough_cfg["instructions"]
-    assert "You are Толік" in rough_cfg["instructions"] and "Your name is Толік" in rough_cfg["instructions"]
+    assert "You are Степан" in rough_cfg["instructions"] and "Your name is Степан" in rough_cfg["instructions"]
     assert "no swearing at all" in safe_cfg["delegation"]["responses"]["instructions"]
     assert "no swearing at all" not in rough_cfg["delegation"]["responses"]["instructions"]
     from voice.options import voice_request_target as target
-    assert target("зміни голос на Толіка", "willow") == "blunt"  # by default the safe one
-    assert target("зміни голос на грубого Толіка", "willow") == "blunt_rough"
-    assert target("зміни голос на старого Толіка", "willow") == "blunt_rough"
+    assert target("зміни голос на Степана", "willow") == "blunt"  # by default the safe one
+    assert target("зміни голос на грубого Степана", "willow") == "blunt_rough"
+    assert target("зміни голос на старого Степана", "willow") == "blunt_rough"
     for current in ("willow", "meridian", "ripple", "stone"):  # never by «чоловічий» / «інший»
         assert target("зміни голос на чоловічий", current) not in ("blunt", "blunt_rough")
-
-
-def test_stepan_is_the_safe_tolik_but_livelier(client):
-    """Степан: the safe Толік's character (no swearing, soft with children), livelier, on the old Толік's voice."""
-    from voice.options import voice_request_target as target
-    voices = {v["id"]: v for v in client.get("/api/voices").json()["voices"]}
-    assert voices["stepan"]["label"] == "Степан" and voices["stepan"]["sample"] == "ash"
-    assert {"степан", "степане"} <= set(voices["stepan"]["wake"]) and "степан" not in voices["stone"]["wake"]
-    user = web.users.get("stepan-0123456789abcdef")
-    user.voice = "stepan"
-    config = web._session_config(user)
-    assert config["audio"]["output"]["voice"] == "ash"
-    ins = config["instructions"]
-    assert "You are Степан" in ins and "Your name is Степан" in ins and "Толік" not in ins
-    assert "No swearing at all" in ins and "With children" in ins and "livelier and more active" in ins
-    assert "VOICE CHARACTER: the voice is Степан" in config["delegation"]["responses"]["instructions"]
-    assert target("зміни голос на Степана", "willow") == "stepan"
-    assert target("зміни голос на Петровича", "willow") == "stone"

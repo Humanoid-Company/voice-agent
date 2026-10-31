@@ -607,7 +607,7 @@ def _person(variant: str) -> str:
     """v3's «being a person» block — what she says, so it goes with any delivery (v4 builds its own)."""
     return _LIVE_PROMPT_PERSON if variant == "v3" else ""
 
-# A character with its own tone (Толік, Ліна, Степан Петрович) is not a warm friend: v5's friendly lines go, or
+# A character with its own tone (Степан, Ліна, Степан Петрович) is not a warm friend: v5's friendly lines go, or
 # they win — on prod he answered «Як справи?» with v5's own «Та нормально, з тобою от балакаю. А в тебе як?»,
 # and after a rant gave a calm answer and «Хочеш, можу…».
 _V5_FRIENDLY_LINES: tuple[tuple[str, str], ...] = (

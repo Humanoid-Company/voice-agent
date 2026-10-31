@@ -389,7 +389,7 @@
   ];
   const EVA_STOP_VERBS = ["дякую", "дякуємо"]; // one pause phrase: «Дякую, Єва»
   const EVA_MAX_GAP = 2;
-  // The names she answers to: the picked character's («Толік, скажи»; /api/voices «wake»), Єва's until known.
+  // The names she answers to: the picked character's («Степан, скажи»; /api/voices «wake»), Єва's until known.
   let wakeNames = EVA_NAME_FORMS;
   let wakeSizes = [4, 3]; // the name lengths unglue tries
   function setWakeNames(list) {
@@ -1543,7 +1543,7 @@
   // ── voice settings ──
   const voiceLabel = (id) => { const v = voices.find((x) => x.id === id) || { label: id }; return groupMembers(v).length > 1 && v.variant_label ? v.variant_label : v.label; };
 
-  // How the applied character is called: its name wakes and pauses it («Толік, скажи», «Дякую, Толік»).
+  // How the applied character is called: its name wakes and pauses it («Степан, скажи», «Дякую, Степан»).
   function showWakeHint() {
     const n = callName;
     $("wakeHint").textContent = eva.wakeSupported
@@ -1569,7 +1569,7 @@
     showVoiceVariant(picked);
   }
 
-  // «Голос»: one tab may hold several characters (Толік: безпечний / старий), each with a new (own) and an old (preset)
+  // «Голос»: one tab may hold several characters (Степан: безпечний / старий), each with a new (own) and an old (preset)
   // voice when the server has an own one for it (own_voice). Options are "id|own" or "id|preset".
   const variantOf = (id) => (store.get("va-voice-variant-" + id) === "preset" ? "preset" : "own");
   const groupOf = (x) => x.group || x.id;
@@ -1624,7 +1624,7 @@
     const target = voices.find((x) => x.id === id);
     if (!target) return;
     const variant = kind === "preset" ? "preset" : "own";
-    if (id !== voice) { // another character of the same tab (Толік: безпечний ↔ старий)
+    if (id !== voice) { // another character of the same tab (Степан: безпечний ↔ старий)
       if (target.own_voice) store.set("va-voice-variant-" + id, variant);
       $("voice").value = id;
       stopPreview();
@@ -1643,7 +1643,7 @@
     });
   }
 
-  const CHARACTERS = ["meridian", "blunt", "blunt_rough", "stepan", "lesia", "kit"]; // Тарас, Толік (безпечний, старий), Степан, Леся, Кішка
+  const CHARACTERS = ["meridian", "blunt", "blunt_rough", "lesia", "kit"]; // Тарас, Степан (безпечний, старий), Леся, Кішка
 
   async function loadVoices() {
     try {
@@ -1657,7 +1657,7 @@
       if (!voices.some((x) => x.id === voice)) voice = voices.some((x) => x.id === data.default) ? data.default : "";
       if (!voices.some((x) => x.id === voice) && voices.length) voice = voices[0].id;
       $("voice").replaceChildren(...voices.map((x) => new Option(x.label, x.id)));
-      // One tab per group: both Толіки sit under «Толік», the «Голос» list picks between them.
+      // One tab per group: both Степани sit under «Степан», the «Голос» list picks between them.
       $("characters").replaceChildren(...voices.filter((x, i) => voices.findIndex((m) => groupOf(m) === groupOf(x)) === i).map((x) => {
         const b = document.createElement("button");
         b.type = "button";

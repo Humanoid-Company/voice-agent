@@ -18,7 +18,7 @@ services:
         sync: false
       - key: OPENAI_VOICE_TOLIK
         sync: false
-      - key: OPENAI_VOICE_TOLIK_RAW # the «звичайний» Толік; empty → the ash preset
+      - key: OPENAI_VOICE_TOLIK_RAW # the «старий» Степан; empty → the ash preset
         sync: false
       - key: OPENAI_VOICE_KISHKA
         sync: false

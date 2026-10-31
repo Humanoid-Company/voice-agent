@@ -1643,7 +1643,7 @@
     });
   }
 
-  const CHARACTERS = ["meridian", "blunt", "blunt_rough", "lesia", "kit"]; // Тарас, Толік (безпечний, старий), Леся, Кішка
+  const CHARACTERS = ["meridian", "blunt", "blunt_rough", "stepan", "lesia", "kit"]; // Тарас, Толік (безпечний, старий), Степан, Леся, Кішка
 
   async function loadVoices() {
     try {

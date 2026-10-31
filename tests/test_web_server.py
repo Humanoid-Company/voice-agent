@@ -181,7 +181,7 @@ def test_keeps_itself_awake_only_when_deployed(monkeypatch):
 def test_voice_picker_lists_live_voices_and_saves_choice(client):
     data = client.get("/api/voices").json()
     ids = [v["id"] for v in data["voices"]]
-    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "blunt_rough", "lesia", "kit"} == set(ids)
+    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "blunt_rough", "stepan", "lesia", "kit"} == set(ids)
     assert data["default"] == "willow"  # Єва; OPENAI_LIVE_VOICE=gleam is no character any more
     assert any(v["feminine"] for v in data["voices"]) and not all(v["feminine"] for v in data["voices"])
     assert all(v["label"] and v["description"] for v in data["voices"])
@@ -508,7 +508,8 @@ def test_voice_request_picks_the_voice():
     assert target("зроби голос спокійніший", "bossa") == "willow"
     assert target("зроби голос спокійніший", "stone") == "meridian"
     assert target("постав голос Мілани", "willow") == "bossa"
-    assert target("переключи голос на Степана", "willow") == "stone"
+    assert target("переключи голос на Степана", "willow") == "stepan"  # the new Степан; the bureaucrat is «Петрович»
+    assert target("переключи голос на Петровича", "willow") == "stone"
     assert target("зміни голос на Бабу Галю", "willow") == "marin"
     assert target("зміни голос на Ліну", "willow") == "lina"
     assert target("зміни голос на Лесю", "willow") == "lesia"
@@ -826,3 +827,21 @@ def test_two_toliks_safe_and_rough(client):
     assert target("зміни голос на старого Толіка", "willow") == "blunt_rough"
     for current in ("willow", "meridian", "ripple", "stone"):  # never by «чоловічий» / «інший»
         assert target("зміни голос на чоловічий", current) not in ("blunt", "blunt_rough")
+
+
+def test_stepan_is_the_safe_tolik_but_livelier(client):
+    """Степан: the safe Толік's character (no swearing, soft with children), livelier, on the old Толік's voice."""
+    from voice.options import voice_request_target as target
+    voices = {v["id"]: v for v in client.get("/api/voices").json()["voices"]}
+    assert voices["stepan"]["label"] == "Степан" and voices["stepan"]["sample"] == "ash"
+    assert {"степан", "степане"} <= set(voices["stepan"]["wake"]) and "степан" not in voices["stone"]["wake"]
+    user = web.users.get("stepan-0123456789abcdef")
+    user.voice = "stepan"
+    config = web._session_config(user)
+    assert config["audio"]["output"]["voice"] == "ash"
+    ins = config["instructions"]
+    assert "You are Степан" in ins and "Your name is Степан" in ins and "Толік" not in ins
+    assert "No swearing at all" in ins and "With children" in ins and "livelier and more active" in ins
+    assert "VOICE CHARACTER: the voice is Степан" in config["delegation"]["responses"]["instructions"]
+    assert target("зміни голос на Степана", "willow") == "stepan"
+    assert target("зміни голос на Петровича", "willow") == "stone"

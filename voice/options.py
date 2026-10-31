@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from voice import blunt_prompt, blunt_rough_prompt
+from voice import blunt_prompt, blunt_rough_prompt, stepan_prompt
 from voice.wake_phrases import NAME_FORMS as EVA_NAME_FORMS
 
 # The legacy Realtime engine only accepts these ten preset voice IDs. Exposed to the model as
@@ -324,7 +324,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             ),
             own_tone=True,
             backend_note=_note("Степан Петрович — a formal bureaucrat on «ви»: «ваше звернення», numbered points"),
-            wake_names=("степан", "степане", "петрович", "петровичу", "stepan"),
+            wake_names=("петрович", "петровичу", "stepanovych"),
         ),
         # ── special ──
         VoicePersona(
@@ -360,6 +360,21 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
             group="blunt",
             variant_label="Старий Толік",
+        ),
+        VoicePersona(
+            "ash", "Степан",
+            "Характер безпечного Толіка, але активніший: жвавий, діловий, одразу береться за справу й підказує, що "
+            "робити далі. Без лайки, з дітьми м'який. Голос Ash.",
+            False,
+            stepan_prompt.character(),  # the whole prompt is in voice/stepan_prompt.py — edit it there
+            stepan_prompt.SAMPLES,
+            key="stepan",
+            special=True,
+            own_tone=True,
+            backend_note=stepan_prompt.backend_note(),
+            voice_env="OPENAI_VOICE_TOLIK_RAW",  # the same voice as the old Толік
+            voice_description=_TOLIK_VOICE,
+            wake_names=("степан", "степане", "степа", "степку", "степані", "stepan"),
         ),
         VoicePersona(
             "gleam", "Леся",
@@ -473,7 +488,7 @@ _VOICE_NAME_STEMS: dict[str, str] = {
     "галя": "marin", "галю": "marin", "галі": "marin", "бабус": "marin", "бабу": "marin",
     "ліна": "lina", "ліну": "lina", "ліно": "lina", "ліни": "lina", "готк": "lina",
     "вітя": "ripple", "вітю": "ripple", "віть": "ripple", "віті": "ripple", "ботанік": "ripple",
-    "тарас": "meridian", "степан": "stone", "бюрократ": "stone",
+    "тарас": "meridian", "степан": "stepan", "степа": "stepan", "петрович": "stone", "бюрократ": "stone",
     "груб": "blunt_rough", "стар": "blunt_rough", "справжн": "blunt_rough", "нецензур": "blunt_rough",
     "простог": "blunt_rough", "толік": "blunt", "толя": "blunt", "толю": "blunt", "хуліган": "blunt", "прямолін": "blunt",
     "леся": "lesia", "лесю": "lesia", "лесі": "lesia", "робокіт": "lesia", "робокот": "lesia", "робокішк": "lesia",

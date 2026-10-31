@@ -43,9 +43,9 @@ def test_client_id_is_validated(client):
 def test_each_browser_has_its_own_conversation_and_voice(client):
     gina, hal = "gina-browser-0123456789ab", "hal-browser-0123456789abc"
     web.users.get(gina).conversation.add("user", "секрет Джини")
-    client.post("/api/voice", json={"voice": "stone"}, headers={"X-Client-Id": gina})
-    assert len(web.users.get(hal).conversation) == 0 and web.users.get(hal).voice != "stone"
-    assert client.get("/api/me", headers={"X-Client-Id": gina}).json()["voice"] == "stone"
+    client.post("/api/voice", json={"voice": "ripple"}, headers={"X-Client-Id": gina})
+    assert len(web.users.get(hal).conversation) == 0 and web.users.get(hal).voice != "ripple"
+    assert client.get("/api/me", headers={"X-Client-Id": gina}).json()["voice"] == "ripple"
 
 
 def test_session_tools_run_per_browser():
@@ -181,7 +181,7 @@ def test_keeps_itself_awake_only_when_deployed(monkeypatch):
 def test_voice_picker_lists_live_voices_and_saves_choice(client):
     data = client.get("/api/voices").json()
     ids = [v["id"] for v in data["voices"]]
-    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "stone", "blunt", "blunt_rough", "lesia", "kit"} == set(ids)
+    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "blunt", "blunt_rough", "lesia", "kit"} == set(ids)
     assert data["default"] == "willow"  # Єва; OPENAI_LIVE_VOICE=gleam is no character any more
     assert any(v["feminine"] for v in data["voices"]) and not all(v["feminine"] for v in data["voices"])
     assert all(v["label"] and v["description"] for v in data["voices"])
@@ -319,7 +319,7 @@ def test_tolik_is_a_character_on_cedar(client):
     assert "You are Степан" not in plain["instructions"] and "Степан" not in plain["delegation"]["responses"]["instructions"]
 
     assert target("зміни голос на Степана", "willow") == "blunt" and target("зміни голос на Толіка", "willow") == "blunt" and target("зміни голос на хуліган", "willow") == "blunt"
-    for current in ("willow", "meridian", "ripple", "stone"):  # never by «чоловічий» / «інший»
+    for current in ("willow", "meridian", "ripple"):  # never by «чоловічий» / «інший»
         assert target("зміни голос на чоловічий", current) != "blunt"
         assert target("зміни голос на інший", current) != "blunt"
     other = web.users.get("blunt-tool-0123456789ab")
@@ -340,18 +340,17 @@ def test_each_character_answers_to_its_own_name(client):
 
 
 def test_characters_have_their_tone_and_limits():
-    """Мілана flirts lightly, Ліна is gloomy only in manner, Степан Петрович is on «ви»; the gone plain voices
+    """Мілана flirts lightly, Ліна is gloomy only in manner; the gone plain voices
     fall back to Єва."""
     def cfg(voice):
         user = web.users.get(f"char-{voice}-0123456789abc"[:24])
         user.voice = voice
         return web._session_config(user)
 
-    milana, lina, stepan = cfg("bossa"), cfg("lina"), cfg("stone")
+    milana, lina = cfg("bossa"), cfg("lina")
     assert "nothing explicit or intimate" in milana["instructions"] and "з тобою от балакаю" in milana["instructions"]
     assert lina["audio"]["output"]["voice"] == "willow" and "never death" in lina["instructions"]
     assert "warm and friendly" not in lina["instructions"]  # her own tone
-    assert "«ви»" in stepan["instructions"] and "warm and friendly" not in stepan["instructions"]
     assert "VOICE CHARACTER: the voice is Ліна" in lina["delegation"]["responses"]["instructions"]
     gone = cfg("tempo")  # picked before the characters
     assert gone["audio"]["output"]["voice"] == "willow" and "Your name is Єва" in gone["instructions"]
@@ -480,10 +479,10 @@ def test_voice_change_closes_the_call_without_a_spoken_confirmation():
     user.bridges.add(bridge)
     asyncio.run(
         bridge._execute_and_continue(
-            name="change_voice", arguments={"voice": "stone"}, call_id="c1", delegation_id=None, key=""
+            name="change_voice", arguments={"voice": "ripple"}, call_id="c1", delegation_id=None, key=""
         )
     )
-    assert user.voice == "stone" and user.reconnect_pending
+    assert user.voice == "ripple" and user.reconnect_pending
     assert sent == ["close"]  # no tool output / response.create → she says nothing in the old voice
     user.bridges.clear()
 
@@ -503,13 +502,12 @@ def test_voice_request_picks_the_voice():
 
     assert target("Єва, зміни голос на чоловічий", "willow") == "meridian"  # Тарас first
     assert target("зміни голос на чоловічий", "meridian") == "ripple"  # already a man: the next one
-    assert target("постав жіночий голос", "stone") == "willow"
+    assert target("постав жіночий голос", "ripple") == "willow"
     assert target("зміни голос на інший", "willow") == "bossa"
     assert target("зроби голос спокійніший", "bossa") == "willow"
-    assert target("зроби голос спокійніший", "stone") == "meridian"
+    assert target("зроби голос спокійніший", "ripple") == "meridian"
     assert target("постав голос Мілани", "willow") == "bossa"
-    assert target("переключи голос на Степана", "willow") == "blunt"  # the Степан; the bureaucrat is «Петрович»
-    assert target("переключи голос на Петровича", "willow") == "stone"
+    assert target("переключи голос на Степана", "willow") == "blunt"
     assert target("зміни голос на Бабу Галю", "willow") == "marin"
     assert target("зміни голос на Ліну", "willow") == "lina"
     assert target("зміни голос на Лесю", "willow") == "lesia"
@@ -641,7 +639,7 @@ def test_the_language_changes_only_when_asked():
         (["Хочу Мілану"], True),
         (["Степан, розкажи щось"], False),  # they call each character by name: not a wish to switch
         (["Мілано, як справи?"], False),
-        (["Поклич Степана Петровича"], True),
+        (["Поклич Тараса"], True),
         (["зроби чоловічий"], True),
         (["говори спокійніше"], True),
     ],
@@ -825,5 +823,5 @@ def test_two_toliks_safe_and_rough(client):
     assert target("зміни голос на Степана", "willow") == "blunt"  # by default the safe one
     assert target("зміни голос на грубого Степана", "willow") == "blunt_rough"
     assert target("зміни голос на старого Степана", "willow") == "blunt_rough"
-    for current in ("willow", "meridian", "ripple", "stone"):  # never by «чоловічий» / «інший»
+    for current in ("willow", "meridian", "ripple"):  # never by «чоловічий» / «інший»
         assert target("зміни голос на чоловічий", current) not in ("blunt", "blunt_rough")

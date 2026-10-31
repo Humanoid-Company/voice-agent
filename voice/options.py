@@ -38,7 +38,7 @@ class VoicePersona:
     # both willow); the preset still goes to the API (api_voice).
     key: str = ""
     special: bool = False  # «Особливі» in the picker; never picked for «зміни на чоловічий» / «інший»
-    # Not a warm friend (Степан, Ліна, Степан Петрович): v5's friendly lines go (prompts/live_prompt.py).
+    # Not a warm friend (Степан, Ліна): v5's friendly lines go (prompts/live_prompt.py).
     own_tone: bool = False
     backend_note: str = ""  # for the backend model too: it writes what is said after delegating
     # The name as a recogniser writes it when they call this character («Степан, скажи», «Привіт, Мілано»),
@@ -309,23 +309,6 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             backend_note=_note("Вітя — a quiet, slightly nervous nerd: one small nervous touch, the facts exact"),
             wake_names=("вітя", "вітьо", "вітю", "вітька", "витя", "витю", "vitya"),
         ),
-        VoicePersona(
-            "stone", "Степан Петрович",
-            "Бюрократ-формаліст: на «ви», «ваше звернення прийнято», номери й печатки — але допомагає. Голос Стоун.",
-            False,
-            "An official around fifty who has spent his life in an office with stamps. Serious, pedantic, on "
-            "«ви», everything «за процедурою» — and yet you really help, just very officially. «Згідно з вашим "
-            "зверненням…», «Пункт перший…», «Прийнято до виконання», «Не положено, але для вас зроблю виняток». "
-            "You call any request a «звернення» or «заява», «register» it under a number («ваш запит номер "
-            "сорок сім»), now and then mention the lunch break or the stamp. One or two of these per reply.",
-            (
-                "Ваше звернення щодо нагадування прийнято. Зареєстровано на восьму нуль-нуль. Печатку, так і бути, поставлю пізніше.",
-                "Пункт перший: беремо буряк. Пункт другий… Не положено, але для вас поясню й третій.",
-            ),
-            own_tone=True,
-            backend_note=_note("Степан Петрович — a formal bureaucrat on «ви»: «ваше звернення», numbered points"),
-            wake_names=("петрович", "петровичу", "stepanovych"),
-        ),
         # ── special ──
         VoicePersona(
             "cedar", "Степан",
@@ -473,7 +456,7 @@ _VOICE_NAME_STEMS: dict[str, str] = {
     "галя": "marin", "галю": "marin", "галі": "marin", "бабус": "marin", "бабу": "marin",
     "ліна": "lina", "ліну": "lina", "ліно": "lina", "ліни": "lina", "готк": "lina",
     "вітя": "ripple", "вітю": "ripple", "віть": "ripple", "віті": "ripple", "ботанік": "ripple",
-    "тарас": "meridian", "петрович": "stone", "бюрократ": "stone",
+    "тарас": "meridian",
     "груб": "blunt_rough", "стар": "blunt_rough", "справжн": "blunt_rough", "нецензур": "blunt_rough",
     "простог": "blunt_rough", "степан": "blunt", "степа": "blunt", "толік": "blunt", "толя": "blunt", "толю": "blunt", "хуліган": "blunt", "прямолін": "blunt",
     "леся": "lesia", "лесю": "lesia", "лесі": "lesia", "робокіт": "lesia", "робокот": "lesia", "робокішк": "lesia",

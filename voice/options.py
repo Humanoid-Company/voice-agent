@@ -134,7 +134,7 @@ _TOLIK_VOICE = (
     "A relaxed, husky, low adult masculine voice of a man in his early 50s, an easygoing everyday neighbour. Native "
     "Ukrainian speaker, colloquial everyday Ukrainian with a slightly rustic, homely pronunciation, soft fricative "
     "Ukrainian 'h' sound, no Russian or English accent. Low baritone pitch, warm gravelly texture with a light dry "
-    "rasp. Low-to-moderate vocal effort, unhurried and laid-back. Slow, drawling pace with lazy pauses, an occasional "
+    "rasp. Moderate vocal effort, a little lively and on the move. Medium pace with short pauses, an occasional "
     "sigh and a short chuckle, dry humorous intonation."
 )
 _KISHKA_VOICE = (

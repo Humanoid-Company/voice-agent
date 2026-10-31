@@ -290,7 +290,7 @@ def test_tolik_is_a_character_on_cedar(client):
     from voice.options import voice_request_target as target
 
     tolik = next(v for v in client.get("/api/voices").json()["voices"] if v["id"] == "blunt")
-    assert tolik["special"] and tolik["sample"] == "cedar" and tolik["label"] == "Толік (безпечний)"
+    assert tolik["special"] and tolik["sample"] == "cedar" and tolik["label"] == "Толік"
     user = web.users.get("blunt-0123456789abcdef")
     assert client.post("/api/voice", json={"voice": "blunt"}, headers={"X-Client-Id": "blunt-0123456789abcdef"}).status_code == 200
     config = web._session_config(user)
@@ -805,7 +805,9 @@ def test_concierge_mode_and_confirm_guest(client):
 def test_two_toliks_safe_and_rough(client):
     """Безпечний Толік (blunt, cedar): no swearing, softer with children. Звичайний (blunt_rough, ash): the old one."""
     voices = {v["id"]: v for v in client.get("/api/voices").json()["voices"]}
-    assert voices["blunt"]["label"] == "Толік (безпечний)" and voices["blunt_rough"]["label"] == "Толік"
+    assert voices["blunt"]["label"] == voices["blunt_rough"]["label"] == "Толік"  # one tab, two variants
+    assert voices["blunt"]["group"] == voices["blunt_rough"]["group"] == "blunt"
+    assert voices["blunt"]["variant_label"] == "Безпечний Толік" and voices["blunt_rough"]["variant_label"] == "Старий Толік"
     assert voices["blunt"]["sample"] == "cedar" and voices["blunt_rough"]["sample"] == "ash"
     safe = web.users.get("tolik-safe-0123456789abc")
     safe.voice = "blunt"

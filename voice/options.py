@@ -52,7 +52,9 @@ class VoicePersona:
     # `voice_description` goes into the instructions as «Voice: …» — OpenAI: it keeps the sound steady.
     voice_env: str = ""
     voice_description: str = ""
-    picker_label: str = ""  # what the picker shows when it differs from the name she is called by (two Толіки)
+    # Several personas under one tab (two Толіки): the same `group`; `variant_label` names each in the «Голос» list.
+    group: str = ""
+    variant_label: str = ""
 
     @property
     def id(self) -> str:
@@ -339,11 +341,12 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             voice_env="OPENAI_VOICE_TOLIK",
             voice_description=_TOLIK_VOICE,
             wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
-            picker_label="Толік (безпечний)",
+            group="blunt",
+            variant_label="Безпечний Толік",
         ),
         VoicePersona(
             "ash", "Толік",
-            "Той самий Толік, але звичайний: бурчить, кепкує, зрідка кине «йолопе» чи «трясця» — "
+            "Старий Толік: бурчить, кепкує, зрідка кине «йолопе» чи «трясця» — "
             "без злоби. Без особливих послаблень для дітей. Голос Ash.",
             False,
             blunt_rough_prompt.character(),  # the whole prompt is in voice/blunt_rough_prompt.py — edit it there
@@ -355,7 +358,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             voice_env="OPENAI_VOICE_TOLIK_RAW",
             voice_description=_TOLIK_VOICE,
             wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
-            picker_label="Толік",
+            group="blunt",
+            variant_label="Старий Толік",
         ),
         VoicePersona(
             "gleam", "Леся",

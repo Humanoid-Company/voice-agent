@@ -1541,7 +1541,7 @@
   }
 
   // ── voice settings ──
-  const voiceLabel = (id) => (voices.find((x) => x.id === id) || { label: id }).label;
+  const voiceLabel = (id) => { const v = voices.find((x) => x.id === id) || { label: id }; return groupMembers(v).length > 1 && v.variant_label ? v.variant_label : v.label; };
 
   // How the applied character is called: its name wakes and pauses it («Толік, скажи», «Дякую, Толік»).
   function showWakeHint() {
@@ -1565,17 +1565,38 @@
     const picked = voices.find((x) => x.id === $("voice").value);
     $("voiceInfo").textContent = picked ? picked.description : "";
     $("voiceApply").hidden = !picked || picked.id === voice;
-    for (const b of $("characters").children) b.setAttribute("aria-selected", String(picked ? b.dataset.id === picked.id : false));
+    for (const b of $("characters").children) b.setAttribute("aria-selected", String(picked ? b.dataset.group === groupOf(picked) : false));
     showVoiceVariant(picked);
   }
 
-  // «Новий / старий голос»: only for a character that has an own voice (the server says so: own_voice).
+  // «Голос»: one tab may hold several characters (Толік: безпечний / старий), each with a new (own) and an old (preset)
+  // voice when the server has an own one for it (own_voice). Options are "id|own" or "id|preset".
   const variantOf = (id) => (store.get("va-voice-variant-" + id) === "preset" ? "preset" : "own");
+  const groupOf = (x) => x.group || x.id;
+  const groupMembers = (x) => voices.filter((m) => groupOf(m) === groupOf(x));
+  function voiceChoices(picked) {
+    const members = groupMembers(picked);
+    const out = [];
+    for (const m of members) {
+      const name = members.length > 1 ? (m.variant_label || m.label) : "";
+      if (m.own_voice) {
+        out.push([m.id + "|own", name ? name + " — створений голос (новий)" : "Створений голос (новий)"]);
+        out.push([m.id + "|preset", name ? name + " — старий голос (пресет)" : "Старий голос (пресет)"]);
+      } else if (members.length > 1) {
+        out.push([m.id + "|preset", name]);
+      }
+    }
+    return out;
+  }
   function showVoiceVariant(picked) {
+    const choices = picked ? voiceChoices(picked) : [];
+    $("voiceVariantRow").hidden = choices.length < 2;
+    if (choices.length >= 2) {
+      $("voiceVariant").replaceChildren(...choices.map(([v, t]) => new Option(t, v)));
+      $("voiceVariant").value = picked.id + "|" + (picked.own_voice ? variantOf(picked.id) : "preset");
+    }
     const has = Boolean(picked && picked.own_voice);
-    $("voiceVariantRow").hidden = !has;
     const own = !has || variantOf(picked.id) === "own";
-    if (has) $("voiceVariant").value = variantOf(picked.id);
     // A prompt-generated voice is not in the speech endpoint, so it has no sample: only the old one does.
     $("voicePreview").disabled = !voices.length || (has && own);
     $("voiceVariantInfo").textContent = has && own
@@ -1599,12 +1620,20 @@
   }
 
   async function applyVoiceVariant() {
-    const picked = voices.find((x) => x.id === voice);
-    if (!picked || !picked.own_voice) return;
-    const variant = $("voiceVariant").value === "preset" ? "preset" : "own";
-    if (variant === variantOf(voice)) return;
+    const [id, kind] = $("voiceVariant").value.split("|");
+    const target = voices.find((x) => x.id === id);
+    if (!target) return;
+    const variant = kind === "preset" ? "preset" : "own";
+    if (id !== voice) { // another character of the same tab (Толік: безпечний ↔ старий)
+      if (target.own_voice) store.set("va-voice-variant-" + id, variant);
+      $("voice").value = id;
+      stopPreview();
+      applyVoice();
+      return;
+    }
+    if (!target.own_voice || variant === variantOf(voice)) return;
     store.set("va-voice-variant-" + voice, variant);
-    showVoiceVariant(picked);
+    showVoiceVariant(target);
     stopPreview();
     fetch(BACKEND + "/api/voice", { method: "POST", headers: headers(), body: JSON.stringify({ voice, voice_variant: variant }) }).catch(() => {});
     const name = variant === "own" ? "новий голос" : "старий голос";
@@ -1614,7 +1643,7 @@
     });
   }
 
-  const CHARACTERS = ["meridian", "blunt", "lesia", "kit"]; // Тарас, Толік, Леся, Кішка
+  const CHARACTERS = ["meridian", "blunt", "blunt_rough", "lesia", "kit"]; // Тарас, Толік (безпечний, старий), Леся, Кішка
 
   async function loadVoices() {
     try {
@@ -1628,14 +1657,20 @@
       if (!voices.some((x) => x.id === voice)) voice = voices.some((x) => x.id === data.default) ? data.default : "";
       if (!voices.some((x) => x.id === voice) && voices.length) voice = voices[0].id;
       $("voice").replaceChildren(...voices.map((x) => new Option(x.label, x.id)));
-      $("characters").replaceChildren(...voices.map((x) => {
+      // One tab per group: both Толіки sit under «Толік», the «Голос» list picks between them.
+      $("characters").replaceChildren(...voices.filter((x, i) => voices.findIndex((m) => groupOf(m) === groupOf(x)) === i).map((x) => {
         const b = document.createElement("button");
         b.type = "button";
         b.setAttribute("role", "tab");
         b.dataset.id = x.id;
         b.textContent = x.label;
         b.title = x.description;
-        b.addEventListener("click", () => { $("voice").value = x.id; stopPreview(); applyVoice(); });
+        b.dataset.group = groupOf(x);
+        b.addEventListener("click", () => {
+          const now = voices.find((m) => m.id === voice);
+          if (now && groupOf(now) === groupOf(x)) return; // already on this tab
+          $("voice").value = x.id; stopPreview(); applyVoice();
+        });
         return b;
       }));
       $("voice").disabled = !voices.length;

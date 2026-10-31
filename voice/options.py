@@ -326,8 +326,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
         # ── special ──
         VoicePersona(
             "cedar", "Толік",
-            "Бидловатий дядько з лавки біля під'їзду: бурчить, кепкує, зрідка кине «йолопе» чи «трясця» — "
-            "без злоби. Відповідає по суті. Голос Кедр.",
+            "Бидловатий дядько з лавки біля під'їзду: бурчить, кепкує — "
+            "без лайки і без злоби. Відповідає по суті. Голос Кедр.",
             False,
             blunt_prompt.character(),  # the whole prompt is in voice/blunt_prompt.py — edit it there
             blunt_prompt.SAMPLES,

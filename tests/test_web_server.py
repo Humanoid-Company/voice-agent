@@ -297,9 +297,9 @@ def test_tolik_is_a_character_on_cedar(client):
     assert config["audio"]["output"]["voice"] == "cedar"  # the API gets the preset
     assert "You are Толік" in config["instructions"] and "Your name is Толік" in config["instructions"]
     assert "masculine grammatical gender" in config["instructions"]
-    # The softest version: a human (not a cat), boorish but not aggressive, a rare «йолопе», no mat.
-    assert "never a cat, a robot or any animal" in config["instructions"] and "«йолопе»" in config["instructions"]
-    assert "no mat and no strong curses at all" in config["instructions"] and "not aggressive" in config["instructions"]
+    # The softest version: a human (not a cat), boorish but not aggressive, no swearing at all.
+    assert "never a cat, a robot or any animal" in config["instructions"]
+    assert "No swearing at all" in config["instructions"] and "not aggressive" in config["instructions"]
     # Prod: a rant, then a calm helpful answer; «Вибач, я справді занадто складно пояснив»; «Да, я здесь».
     assert "never a normal assistant's tone" in config["instructions"] and "Never apologise" in config["instructions"]
     assert "that is the game, not distress" in config["instructions"] and "never a word of Russian" in config["instructions"]

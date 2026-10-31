@@ -300,6 +300,7 @@ def test_tolik_is_a_character_on_cedar(client):
     # The softest version: a human (not a cat), boorish but not aggressive, no swearing at all.
     assert "never a cat, a robot or any animal" in config["instructions"]
     assert "No swearing at all" in config["instructions"] and "not aggressive" in config["instructions"]
+    assert "With children" in config["instructions"] and "noticeably softer" in config["instructions"]
     # Prod: a rant, then a calm helpful answer; «Вибач, я справді занадто складно пояснив»; «Да, я здесь».
     assert "never a normal assistant's tone" in config["instructions"] and "Never apologise" in config["instructions"]
     assert "that is the game, not distress" in config["instructions"] and "never a word of Russian" in config["instructions"]

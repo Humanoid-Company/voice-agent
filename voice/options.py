@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from voice import blunt_prompt
+from voice import blunt_prompt, blunt_rough_prompt
 from voice.wake_phrases import NAME_FORMS as EVA_NAME_FORMS
 
 # The legacy Realtime engine only accepts these ten preset voice IDs. Exposed to the model as
@@ -52,6 +52,7 @@ class VoicePersona:
     # `voice_description` goes into the instructions as «Voice: …» — OpenAI: it keeps the sound steady.
     voice_env: str = ""
     voice_description: str = ""
+    picker_label: str = ""  # what the picker shows when it differs from the name she is called by (two Толіки)
 
     @property
     def id(self) -> str:
@@ -326,8 +327,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
         # ── special ──
         VoicePersona(
             "cedar", "Толік",
-            "Бидловатий дядько з лавки біля під'їзду: бурчить, кепкує — "
-            "без лайки і без злоби. Відповідає по суті. Голос Кедр.",
+            "Безпечний Толік: бидловатий дядько з лавки біля під'їзду, бурчить і кепкує — "
+            "без лайки і без злоби, з дітьми м'якший. Відповідає по суті. Голос Кедр.",
             False,
             blunt_prompt.character(),  # the whole prompt is in voice/blunt_prompt.py — edit it there
             blunt_prompt.SAMPLES,
@@ -338,6 +339,23 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             voice_env="OPENAI_VOICE_TOLIK",
             voice_description=_TOLIK_VOICE,
             wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
+            picker_label="Толік (безпечний)",
+        ),
+        VoicePersona(
+            "ash", "Толік",
+            "Той самий Толік, але звичайний: бурчить, кепкує, зрідка кине «йолопе» чи «трясця» — "
+            "без злоби. Без особливих послаблень для дітей. Голос Ash.",
+            False,
+            blunt_rough_prompt.character(),  # the whole prompt is in voice/blunt_rough_prompt.py — edit it there
+            blunt_rough_prompt.SAMPLES,
+            key="blunt_rough",
+            special=True,
+            own_tone=True,
+            backend_note=blunt_rough_prompt.backend_note(),
+            voice_env="OPENAI_VOICE_TOLIK_RAW",
+            voice_description=_TOLIK_VOICE,
+            wake_names=("толік", "толіку", "толя", "толю", "толик", "толику", "tolik"),
+            picker_label="Толік",
         ),
         VoicePersona(
             "gleam", "Леся",
@@ -452,7 +470,8 @@ _VOICE_NAME_STEMS: dict[str, str] = {
     "ліна": "lina", "ліну": "lina", "ліно": "lina", "ліни": "lina", "готк": "lina",
     "вітя": "ripple", "вітю": "ripple", "віть": "ripple", "віті": "ripple", "ботанік": "ripple",
     "тарас": "meridian", "степан": "stone", "бюрократ": "stone",
-    "толік": "blunt", "толя": "blunt", "толю": "blunt", "хуліган": "blunt", "прямолін": "blunt",
+    "груб": "blunt_rough", "стар": "blunt_rough", "справжн": "blunt_rough", "нецензур": "blunt_rough",
+    "простог": "blunt_rough", "толік": "blunt", "толя": "blunt", "толю": "blunt", "хуліган": "blunt", "прямолін": "blunt",
     "леся": "lesia", "лесю": "lesia", "лесі": "lesia", "робокіт": "lesia", "робокот": "lesia", "робокішк": "lesia",
     "кота": "kit", "котик": "kit", "котяр": "kit", "кіт": "kit", "кішк": "kit", "киц": "kit",
 }

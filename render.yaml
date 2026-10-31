@@ -18,6 +18,8 @@ services:
         sync: false
       - key: OPENAI_VOICE_TOLIK
         sync: false
+      - key: OPENAI_VOICE_TOLIK_RAW # the «звичайний» Толік; empty → the ash preset
+        sync: false
       - key: OPENAI_VOICE_KISHKA
         sync: false
       - key: PUBLIC_BACKEND_URL # e.g. https://voice-agent-backend.onrender.com

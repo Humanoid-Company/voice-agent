@@ -321,3 +321,118 @@ def test_a_bad_plan_falls_back_to_the_plain_rules():
     # Labels never collide: two columns shortened to the same words stay two facts.
     twin = lambda h, s: {"labels": {"2": "Фільм", "3": "Фільм"}}  # noqa: E731
     assert list(knowledge_import.table_to_items(FORM_ROWS, twin)[0]["fields"]) == ["Позначка часу", "Фільм", "Фільм (2)"]
+
+
+# ── text sections and «Завжди пам'ятати» ──
+RULES = "## Як говорити\nКоротко, 1–3 речення.\n\n## Теми\nНе говори про політику."
+STORIES = "Вступ без заголовка.\n\n## Кавуни\nДавид виростив кавуни з бабусею.\n\n## Коти\nЮліко годує котів."
+
+
+def test_text_sections_split_at_headings():
+    records = knowledge.text_sections("Історії", STORIES)
+    assert [r.title for r in records] == ["Історії", "Кавуни", "Коти"]
+    assert records[1].fields == {"Текст": "Давид виростив кавуни з бабусею."}
+    assert [r.title for r in knowledge.text_sections("Нотатка", "просто текст")] == ["Нотатка"]
+
+
+def test_a_text_set_is_looked_up_by_section_and_is_never_a_guest(store):
+    store.create_set("Гості", parse_file("a.csv", PEOPLE_CSV).items)
+    created = store.create_set("Історії", [], kind="text", body=STORIES + "\n\n\n\n  ")
+    assert created["kind"] == "text" and created["count"] == 0 and created["body"].endswith("котів.")
+    assert "body" not in store.list_sets()[0] and store.list_sets()[0]["chars"] == len(created["body"])
+    found = store.lookup("кавуни")
+    assert "[Історії] Кавуни — Текст: Давид виростив кавуни" in found["text"] and "Олег Петренко" in found["text"]
+    sets, people = store.enabled_records()  # the concierge's guest list: people only
+    assert [s["name"] for s in sets] == ["Гості"] and {r.title for r in people} == {"Олег Петренко", "Марина Коваль"}
+    store.update_set(created["id"], body="## Нове\nІнша історія.")
+    assert "Інша історія" in store.lookup("історія")["text"] and "кавуни" not in store.lookup("кавуни")["text"]
+    with pytest.raises(knowledge.KnowledgeError, match="порожній"):
+        store.update_set(created["id"], body="   ")
+    with pytest.raises(knowledge.KnowledgeError, match="порожній"):
+        store.create_set("Порожній", [], kind="text", body="")
+    people_set = store.list_sets()[-1]
+    with pytest.raises(knowledge.KnowledgeError, match="текстовому"):
+        store.update_set(people_set["id"], body="текст")
+
+
+def test_pinned_sets_go_to_the_prompt_not_to_the_lookup(store, monkeypatch):
+    rules = store.create_set("Правила свята", [], kind="text", body=RULES, pinned=True)
+    guests = store.create_set("Гості", parse_file("a.csv", PEOPLE_CSV).items)
+    assert store.pinned_block() == "## Правила свята\n" + RULES.replace("## ", "### ")
+    assert "Правила" not in store.lookup("політика")["text"]  # in the instructions already
+    store.update_set(guests["id"], pinned=True)  # a short guest table, pinned too
+    block = store.pinned_block()
+    assert block.startswith("## Правила свята") and "## Гості\nОлег Петренко — Вік: 34" in block
+    assert store.lookup("Олег")["total"] == 0
+    assert len(store.enabled_records()[1]) == 2  # still the guest list
+    store.update_set(rules["id"], enabled=False)  # off: not in the prompt either
+    assert "Правила" not in store.pinned_block()
+    monkeypatch.setattr(knowledge, "PINNED_MAX_CHARS", 30)
+    store._changed()
+    assert store.pinned_block().endswith("забагато в «Завжди пам'ятати»]")
+
+
+def test_evas_own_set_is_never_pinned_or_renamed(store):
+    store.remember("Іра", {"Хобі": "йога"})
+    own = store.list_sets()[0]
+    with pytest.raises(knowledge.KnowledgeError):
+        store.update_set(own["id"], pinned=True)
+    with pytest.raises(knowledge.KnowledgeError):
+        store.update_set(own["id"], name="Інше")
+    with pytest.raises(knowledge.KnowledgeError):
+        store.create_set(knowledge.MEMORY_SET, [{"title": "Олег"}])
+
+
+def test_a_database_from_before_text_sets_gets_the_columns(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "old.db")
+    with sqlite3.connect(path) as conn:  # kb_sets as prod has it now
+        conn.execute("""CREATE TABLE kb_sets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+            item_count INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, owner_id INTEGER,
+            owner_name TEXT NOT NULL DEFAULT '')""")
+        conn.execute("INSERT INTO kb_sets (name, item_count, created_at) VALUES ('Старий', 0, 1)")
+    s = KnowledgeStore("", path)
+    old = s.list_sets()[0]
+    assert (old["kind"], old["pinned"], old["chars"]) == ("records", False, 0)
+    s.create_set("Правила", [], kind="text", body="Коротко.", pinned=True)
+    assert s.pinned_block() == "## Правила\nКоротко."
+
+
+def test_http_text_sections_and_pinning(client, store):
+    saved = client.post("/api/knowledge", json={"name": "Правила свята", "kind": "text", "body": RULES, "pinned": True})
+    assert saved.status_code == 200 and saved.json()["pinned"] is True
+    listing = client.get("/api/knowledge").json()
+    assert listing["pinned_chars"] == len("## Правила свята\n" + RULES.replace("## ", "### ")) and listing["pinned_max"] == knowledge.PINNED_MAX_CHARS
+    set_id = saved.json()["id"]
+    assert client.get(f"/api/knowledge/{set_id}").json()["body"] == RULES
+    changed = client.post(f"/api/knowledge/{set_id}", json={"body": "Нові правила.", "name": "Правила"}).json()
+    assert changed["body"] == "Нові правила." and changed["name"] == "Правила"
+    assert client.post(f"/api/knowledge/{set_id}", json={"pinned": False}).json()["pinned"] is False
+    assert client.get("/api/knowledge").json()["pinned_chars"] == 0
+    assert client.post("/api/knowledge", json={"name": "X", "kind": "text", "body": ""}).status_code == 503
+    assert client.post("/api/knowledge", json={"name": "X", "kind": "щось"}).status_code == 503
+    assert client.post("/api/knowledge/999", json={"pinned": True}).status_code == 404
+
+
+def test_pinned_knowledge_is_in_every_call(store):
+    user = web.users.get("kb-browser-0123456789abc")
+    plain = web._session_config(user)
+    assert "STANDING KNOWLEDGE" not in plain["instructions"]  # nothing pinned: the prompt as before
+    store.create_set("Правила свята", [], kind="text", body=RULES, pinned=True)
+    plain = web._session_config(user)
+    assert plain["instructions"].rstrip().endswith("Не говори про політику.")  # last: over the general rules
+    assert "Не говори про політику." in plain["delegation"]["responses"]["instructions"]
+    door = web._session_config(user, concierge=True)
+    assert "Не говори про політику." in door["instructions"]
+    assert "Не говори про політику." in door["delegation"]["responses"]["instructions"]
+
+
+def test_a_store_that_is_down_never_breaks_a_call(store, monkeypatch):
+    def down():
+        raise knowledge.KnowledgeError("База знань недоступна")
+
+    monkeypatch.setattr(store, "pinned_block", down)
+    assert knowledge.pinned_note() == ""
+    assert web._session_config(web.users.get("kb-browser-0123456789abc"))["instructions"]

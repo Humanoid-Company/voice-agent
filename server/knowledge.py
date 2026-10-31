@@ -30,6 +30,17 @@ MAX_VALUE_CHARS = 1000
 MAX_TITLE_CHARS = 200
 MAX_SET_NAME_CHARS = 120
 MAX_NOTE_CHARS = 1000
+# A set is either records (people, from a table or a document) or one text under its own heading («Правила»,
+# «Про подію», «Історії»…), written on the page.
+KINDS = ("records", "text")
+MAX_BODY_CHARS = 20_000
+# «Завжди пам'ятати»: the pinned sets go into the instructions of every call, not through knowledge_lookup —
+# rules she must keep in every reply, the event's basics. All of them together up to this many characters
+# (GPT-Live reads its instructions each turn: a long block slows her and blurs the rest of the prompt).
+PINNED_MAX_CHARS = 12_000
+# A text set looked up (not pinned) is split at its markdown headings: one record per section, so the
+# closest sections come back when everything doesn't fit.
+_HEADING = re.compile(r"^#{1,4}\s+(.+?)\s*#*\s*$", re.M)
 # Everything enabled goes to the backend model at once while it fits (it matches names and answers
 # «хто з них любить Тарантіно» better than any search); above this, only the closest records.
 LOOKUP_ALL_CHARS = 16_000
@@ -46,7 +57,8 @@ _SCHEMA = {
             id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
             source TEXT NOT NULL DEFAULT '', enabled BOOLEAN NOT NULL DEFAULT TRUE,
             item_count INTEGER NOT NULL DEFAULT 0, created_at DOUBLE PRECISION NOT NULL,
-            owner_id BIGINT, owner_name TEXT NOT NULL DEFAULT '')""",
+            owner_id BIGINT, owner_name TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'records',
+            body TEXT NOT NULL DEFAULT '', pinned BOOLEAN NOT NULL DEFAULT FALSE)""",
         """CREATE TABLE IF NOT EXISTS kb_items (
             id BIGSERIAL PRIMARY KEY, set_id BIGINT NOT NULL REFERENCES kb_sets(id) ON DELETE CASCADE,
             position INTEGER NOT NULL, title TEXT NOT NULL, fields TEXT NOT NULL)""",
@@ -57,7 +69,8 @@ _SCHEMA = {
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
             source TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
             item_count INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL,
-            owner_id INTEGER, owner_name TEXT NOT NULL DEFAULT '')""",
+            owner_id INTEGER, owner_name TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'records',
+            body TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL DEFAULT 0)""",
         """CREATE TABLE IF NOT EXISTS kb_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT, set_id INTEGER NOT NULL REFERENCES kb_sets(id) ON DELETE CASCADE,
             position INTEGER NOT NULL, title TEXT NOT NULL, fields TEXT NOT NULL)""",
@@ -106,14 +119,32 @@ def clean_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def text_sections(name: str, body: str) -> list[Record]:
+    """A text set → one record per markdown section («## Правила» … ), the set's name for the text before
+    the first heading. No headings: the whole text is one record."""
+    records: list[Record] = []
+    marks = list(_HEADING.finditer(body))
+    starts = [(name, 0)] + [(m.group(1).strip(), m.end()) for m in marks]
+    ends = [m.start() for m in marks] + [len(body)]
+    for (title, start), end in zip(starts, ends, strict=True):
+        text = body[start:end].strip()
+        if text:
+            records.append(Record(name, title, {"Текст": " ".join(text.split())}))
+    return records
+
+
 class KnowledgeStore(SqlStore):
     SCHEMA = _SCHEMA
     # Who uploaded a set (an account's id and name): they and admins may delete it. Sets from before have none.
+    # kind / body / pinned: text sets and «Завжди пам'ятати» (a database from before gets them as records).
     ADDED_COLUMNS = [
         ("kb_sets", "owner_id", {"postgres": "BIGINT", "sqlite": "INTEGER"}),
         ("kb_sets", "owner_name", {"postgres": "TEXT NOT NULL DEFAULT ''", "sqlite": "TEXT NOT NULL DEFAULT ''"}),
+        ("kb_sets", "kind", {"postgres": "TEXT NOT NULL DEFAULT 'records'", "sqlite": "TEXT NOT NULL DEFAULT 'records'"}),
+        ("kb_sets", "body", {"postgres": "TEXT NOT NULL DEFAULT ''", "sqlite": "TEXT NOT NULL DEFAULT ''"}),
+        ("kb_sets", "pinned", {"postgres": "BOOLEAN NOT NULL DEFAULT FALSE", "sqlite": "INTEGER NOT NULL DEFAULT 0"}),
     ]
-    _SET_COLS = "id, name, note, source, enabled, item_count, created_at, owner_id, owner_name"
+    _SET_COLS = "id, name, note, source, enabled, item_count, created_at, owner_id, owner_name, kind, body, pinned"
     UNAVAILABLE = "База знань недоступна"
     FAILED = "Помилка бази знань"
 
@@ -121,6 +152,9 @@ class KnowledgeStore(SqlStore):
         super().__init__(database_url, sqlite_path)
         self._snapshot: list[Record] | None = None
         self._sets_summary: list[dict[str, Any]] = []
+        self._texts: list[Record] = []
+        self._looked_up: list[Record] = []
+        self._pinned = ""
         self._snapshot_at = 0.0
 
     def _changed(self) -> None:
@@ -128,17 +162,28 @@ class KnowledgeStore(SqlStore):
 
     # ── sets ──
     def list_sets(self) -> list[dict[str, Any]]:
+        """Every set without its text (the page opens one to read it): «chars» says how long it is."""
         with self._conn() as conn:
             rows = conn.execute(
                 f"SELECT {self._SET_COLS} FROM kb_sets ORDER BY created_at DESC, id DESC"
             ).fetchall()
-        return [self._set_row(r) for r in rows]
+        sets = [self._set_row(r) for r in rows]
+        for s in sets:
+            del s["body"]
+        return sets
 
     @staticmethod
     def _set_row(r: Any) -> dict[str, Any]:
+        kind = r[9] if r[9] in KINDS else "records"
+        body = r[10] or ""
         return {"id": int(r[0]), "name": r[1], "note": r[2], "source": r[3], "enabled": bool(r[4]),
                 "count": int(r[5]), "created_at": float(r[6]),
-                "owner_id": int(r[7]) if r[7] is not None else None, "owner_name": r[8] or ""}
+                "owner_id": int(r[7]) if r[7] is not None else None, "owner_name": r[8] or "",
+                "kind": kind, "body": body, "chars": len(body), "pinned": bool(r[11])}
+
+    def pinned_chars(self) -> int:
+        """How much of «Завжди пам'ятати» goes into every call now (the page shows it against the limit)."""
+        return len(self.pinned_block())
 
     def get_set(self, set_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -156,43 +201,72 @@ class KnowledgeStore(SqlStore):
         return data
 
     def create_set(self, name: str, items: list[dict[str, Any]], *, note: str = "", source: str = "",
-                   owner_id: int | None = None, owner_name: str = "") -> dict[str, Any]:
+                   owner_id: int | None = None, owner_name: str = "", kind: str = "records", body: str = "",
+                   pinned: bool = False) -> dict[str, Any]:
+        """A set of records (items), or with kind="text" one text under the name (body; items are ignored)."""
         name = " ".join(name.split())[:MAX_SET_NAME_CHARS]
-        items = clean_items(items)
+        if kind not in KINDS:
+            raise KnowledgeError("Невідомий тип розділу.")
+        if name == MEMORY_SET:
+            raise KnowledgeError("Ця назва зайнята: так Єва називає те, що записує сама.")
+        body = _clean_body(body) if kind == "text" else ""
+        items = clean_items(items) if kind == "records" else []
         if not name:
             raise KnowledgeError("Дайте набору назву.")
-        if not items:
+        if kind == "records" and not items:
             raise KnowledgeError("У наборі немає жодного запису.")
+        if kind == "text" and not body:
+            raise KnowledgeError("Розділ порожній: напишіть текст.")
         with self._conn() as conn:
             row = conn.execute(
-                self._q("INSERT INTO kb_sets (name, note, source, enabled, item_count, created_at, owner_id, owner_name) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"),
+                self._q("INSERT INTO kb_sets (name, note, source, enabled, item_count, created_at, owner_id, owner_name, "
+                        "kind, body, pinned) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"),
                 (name, note.strip()[:MAX_NOTE_CHARS], source.strip()[:200], True, len(items), time.time(),
-                 owner_id, " ".join(owner_name.split())[:120]),
+                 owner_id, " ".join(owner_name.split())[:120], kind, body, bool(pinned)),
             ).fetchone()
             set_id = int(row[0])
             rows = [(set_id, i, it["title"], json.dumps(it["fields"], ensure_ascii=False)) for i, it in enumerate(items)]
             sql = self._q("INSERT INTO kb_items (set_id, position, title, fields) VALUES (%s, %s, %s, %s)")
-            if self.kind == "postgres":
+            if rows and self.kind == "postgres":
                 with conn.cursor() as cur:
                     cur.executemany(sql, rows)
-            else:
+            elif rows:
                 conn.executemany(sql, rows)
         self._changed()
-        logger.info("knowledge.set_created id=%s items=%s kind=%s", set_id, len(items), self.kind)
+        logger.info("knowledge.set_created id=%s set_kind=%s items=%s chars=%s kind=%s",
+                    set_id, kind, len(items), len(body), self.kind)
         created = self.get_set(set_id)
         assert created is not None
         return created
 
     def update_set(self, set_id: int, *, enabled: bool | None = None, name: str | None = None,
-                   note: str | None = None) -> dict[str, Any] | None:
+                   note: str | None = None, pinned: bool | None = None,
+                   body: str | None = None) -> dict[str, Any] | None:
+        """Switch a set on or off, pin it («Завжди пам'ятати»), rename it, change its note — or a text set's text."""
+        current = self.get_set(set_id)
+        if current is None:
+            return None
         changes: list[tuple[str, Any]] = []
         if enabled is not None:
             changes.append(("enabled", bool(enabled)))
+        if pinned is not None:
+            if current["name"] == MEMORY_SET:
+                raise KnowledgeError("Записи Єви не закріплюються: вона знаходить їх сама, коли треба.")
+            changes.append(("pinned", bool(pinned)))
         if name is not None and " ".join(name.split()):
-            changes.append(("name", " ".join(name.split())[:MAX_SET_NAME_CHARS]))
+            new_name = " ".join(name.split())[:MAX_SET_NAME_CHARS]
+            if MEMORY_SET in (new_name, current["name"]) and new_name != current["name"]:
+                raise KnowledgeError("Цей набір не перейменовується: так Єва називає те, що записує сама.")
+            changes.append(("name", new_name))
         if note is not None:
             changes.append(("note", note.strip()[:MAX_NOTE_CHARS]))
+        if body is not None:
+            if current["kind"] != "text":
+                raise KnowledgeError("Текст змінюється лише в текстовому розділі.")
+            body = _clean_body(body)
+            if not body:
+                raise KnowledgeError("Розділ порожній: напишіть текст або видаліть розділ.")
+            changes.append(("body", body))
         if changes:
             with self._conn() as conn:
                 conn.execute(
@@ -249,13 +323,15 @@ class KnowledgeStore(SqlStore):
         return {"person": person, "new": added, "fields": merged}
 
     # ── what Єва knows ──
-    def enabled_records(self) -> tuple[list[dict[str, Any]], list[Record]]:
-        """The enabled sets (name, note, count, a few titles) and all their records, cached."""
+    def _load(self) -> None:
+        """The enabled sets, cached for SNAPSHOT_TTL_S: people's records, the text sections to look up, and
+        the pinned block for the instructions."""
         if self._snapshot is not None and time.monotonic() - self._snapshot_at < SNAPSHOT_TTL_S:
-            return self._sets_summary, self._snapshot
+            return
         with self._conn() as conn:
             sets = conn.execute(
-                self._q("SELECT id, name, note, item_count FROM kb_sets WHERE enabled = %s ORDER BY created_at, id"),
+                self._q("SELECT id, name, note, item_count, kind, body, pinned FROM kb_sets WHERE enabled = %s "
+                        "ORDER BY created_at, id"),
                 (True,),
             ).fetchall()
             rows = conn.execute(
@@ -265,18 +341,52 @@ class KnowledgeStore(SqlStore):
             ).fetchall()
         names = {int(s[0]): s[1] for s in sets}
         records = [Record(names[int(sid)], title, json.loads(fields)) for sid, title, fields in rows if int(sid) in names]
-        summary = [
-            {"name": s[1], "note": s[2], "count": int(s[3]),
-             "titles": [r.title for r in records if r.set_name == s[1]][:25]}
-            for s in sets
-        ]
-        self._sets_summary, self._snapshot, self._snapshot_at = summary, records, time.monotonic()
-        return summary, records
+        texts: list[Record] = []
+        pinned: list[str] = []
+        summary: list[dict[str, Any]] = []
+        for _set_id, name, note, count, kind, body, is_pinned in sets:
+            own = [r for r in records if r.set_name == name]
+            if kind == "text":
+                sections = text_sections(name, body or "")
+                if is_pinned:
+                    # its own headings one level under the set's name
+                    pinned.append(f"## {name}\n" + re.sub(r"^(#{1,4})\s", r"#\1 ", (body or "").strip(), flags=re.M))
+                else:
+                    texts.extend(sections)
+                    summary.append({"name": name, "note": note, "count": len(sections), "kind": "text",
+                                    "titles": [r.title for r in sections][:25]})
+                continue
+            if is_pinned and name != MEMORY_SET:
+                pinned.append(f"## {name}\n" + "\n".join(r.line() for r in own))
+                continue
+            summary.append({"name": name, "note": note, "count": int(count), "kind": "records",
+                            "titles": [r.title for r in own][:25]})
+        block = "\n\n".join(pinned)
+        if len(block) > PINNED_MAX_CHARS:
+            logger.warning("knowledge.pinned_too_long chars=%s max=%s", len(block), PINNED_MAX_CHARS)
+            block = block[:PINNED_MAX_CHARS].rsplit("\n", 1)[0] + "\n[…далі обрізано: забагато в «Завжди пам'ятати»]"
+        pinned_names = {s[1] for s in sets if s[6] and s[4] != "text" and s[1] != MEMORY_SET}
+        self._sets_summary, self._snapshot, self._texts = summary, records, texts
+        self._looked_up = [r for r in records if r.set_name not in pinned_names]
+        self._pinned, self._snapshot_at = block, time.monotonic()
+
+    def enabled_records(self) -> tuple[list[dict[str, Any]], list[Record]]:
+        """The enabled record sets (name, note, count, a few titles) and all their people, pinned or not — the
+        concierge's guest list. Text sets are not people: never in here."""
+        self._load()
+        return [s for s in self._sets_summary if s["kind"] == "records"], list(self._snapshot or [])
+
+    def pinned_block(self) -> str:
+        """«Завжди пам'ятати»: the pinned sets as one text («## назва» + its text or records), for the prompts."""
+        self._load()
+        return self._pinned
 
     def lookup(self, query: str, set_name: str = "", *, with_memory: bool = True) -> dict[str, Any]:
-        """Records for the backend model: everything enabled while it fits, else the closest ones.
+        """Records for the backend model: everything enabled while it fits, else the closest ones. Text sets
+        come as their sections; pinned sets are left out (they are in the instructions already).
         with_memory=False leaves out what Єва wrote down herself (the concierge never shows it)."""
-        sets, records = self.enabled_records()
+        self._load()
+        sets, records = self._sets_summary, [*self._looked_up, *self._texts]
         if not with_memory:
             sets = [s for s in sets if s["name"] != MEMORY_SET]
             records = [r for r in records if r.set_name != MEMORY_SET]
@@ -291,6 +401,12 @@ class KnowledgeStore(SqlStore):
         scored = _closest(query, records, LOOKUP_TOP)
         text = "\n".join(f"[{r.set_name}] {r.line()}" for r in scored)
         return {"sets": sets, "total": total, "shown": len(scored), "text": text[:LOOKUP_ALL_CHARS]}
+
+
+def _clean_body(body: str) -> str:
+    """A text set's text: line breaks kept (headings, lists), trailing spaces and runs of empty lines gone."""
+    lines = [line.rstrip() for line in str(body or "").replace("\r\n", "\n").split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()[:MAX_BODY_CHARS]
 
 
 # ── loose matching: names come from speech recognition, declined («Олегові») or misspelt («Алєг») ──
@@ -430,6 +546,29 @@ PEOPLE_NOTE = (
 
 # The team's store. Tests swap it for a temporary one (monkeypatch server.knowledge.store).
 store = KnowledgeStore(os.getenv("DATABASE_URL", ""), os.getenv("KNOWLEDGE_SQLITE", "data/knowledge.db"))
+
+
+def pinned_note(*, backend: bool = False) -> str:
+    """«Завжди пам'ятати» for the instructions of a call: the voice (GPT-Live) keeps its rules in every reply
+    and knows the basics without a lookup; the backend gets the same so what it writes keeps them too. Empty
+    when nothing is pinned or the store is down (a call never fails for it)."""
+    try:
+        block = store.pinned_block()
+    except StoreError:
+        logger.warning("knowledge.pinned_unavailable")
+        return ""
+    if not block:
+        return ""
+    who = ("what you write for the voice must keep them too" if backend
+           else "keep them in every reply")
+    return (
+        "\n\nTHE TEAM'S STANDING KNOWLEDGE (the page «Знання» → «Завжди пам'ятати»): the setting of these calls — "
+        f"facts, roles and rules the team wrote. They are in force for the whole call: {who}. Where they differ "
+        "from the general rules above (how to address people, what to talk about, how long to speak), they win. "
+        "Use the facts naturally, never read them out as a list, never say the headings, «у базі» or that it was "
+        "written for you; anything not here — look it up or say you haven't been told.\n"
+        + block + "\n"
+    )
 
 
 def concierge_backend_note(check_question: bool = True) -> str:

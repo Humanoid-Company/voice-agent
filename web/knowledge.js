@@ -1,6 +1,7 @@
-// «Знання» — the team's knowledge sets (server/knowledge.py via /api/knowledge). A file is read on the
-// server (/api/knowledge/parse) and shown here first; only what the user keeps is saved. Єва looks the
-// enabled sets up with knowledge_lookup.
+// «Знання» — the team's knowledge sets (server/knowledge.py via /api/knowledge). Two kinds: records from a file
+// (read on the server by /api/knowledge/parse and shown here first; only what the user keeps is saved) and a
+// text under its own heading, written here. Єва looks the enabled sets up with knowledge_lookup; a pinned one
+// («Завжди пам'ятати») goes into the instructions of every call instead.
 (() => {
   const params = new URLSearchParams(location.search);
   const BACKEND = (params.get("backend") || (window.APP_CONFIG || {}).BACKEND_URL || "").replace(/\/$/, "");
@@ -135,11 +136,56 @@
       cancel();
       $("setName").value = "";
       $("setNote").value = "";
-      status("Збережено «" + saved.name + "»: " + records(saved.count) + ". Консьєрж знатиме їх з наступної розмови.", "ok");
+      status("Збережено «" + saved.name + "»: " + records(saved.count) + ". Єва знатиме їх з наступної розмови.", "ok");
       await loadSets();
     } catch (err) {
       $("saveSet").disabled = false;
       status(err instanceof ApiError ? err.message : "Не вдалося зберегти — сервер не відповідає.", "err");
+    }
+  }
+
+  // ── a new text section: heading + text, optionally pinned ──
+  const chars = (n) => n.toLocaleString("uk-UA") + " симв.";
+  let pinnedMax = 12000;
+
+  function showTab(which) {
+    const text = which === "text";
+    $("tabFile").setAttribute("aria-selected", String(!text));
+    $("tabText").setAttribute("aria-selected", String(text));
+    $("paneFile").hidden = text;
+    $("paneText").hidden = !text;
+    if (text) cancel();
+    status("");
+    store.set("kb.tab", which);
+  }
+
+  function countText() {
+    const n = $("textBody").value.trim().length;
+    $("textCount").textContent = n ? chars(n) : "";
+  }
+
+  async function saveText() {
+    const name = $("setName").value.trim();
+    const body = $("textBody").value.trim();
+    if (!name) { $("setName").focus(); status("Дайте розділу заголовок — напр. «Правила свята».", "err"); return; }
+    if (!body) { $("textBody").focus(); status("Напишіть текст розділу.", "err"); return; }
+    $("saveText").disabled = true;
+    try {
+      const saved = await api("/api/knowledge", {
+        method: "POST",
+        body: JSON.stringify({ name, note: $("setNote").value.trim(), kind: "text", body, pinned: $("textPinned").checked }),
+      });
+      $("setName").value = "";
+      $("setNote").value = "";
+      $("textBody").value = "";
+      $("textPinned").checked = false;
+      countText();
+      status("Збережено «" + saved.name + "»" + (saved.pinned ? " — Єва пам'ятатиме його в кожній розмові." : ". Єва знатиме його з наступної розмови."), "ok");
+      await loadSets();
+    } catch (err) {
+      status(err instanceof ApiError ? err.message : "Не вдалося зберегти — сервер не відповідає.", "err");
+    } finally {
+      $("saveText").disabled = false;
     }
   }
 
@@ -160,36 +206,82 @@
     }
     $("storageNote").hidden = data.persistent;
     $("storageNote").textContent = "Сховище тимчасове: бази даних ще не під'єднано (DATABASE_URL на Render), і наступний деплой зітре все завантажене.";
+    pinnedMax = data.pinned_max || pinnedMax;
+    showPinned(data.pinned_chars || 0);
     renderSets(data.sets);
   }
+
+  function showPinned(n) {
+    $("pinnedMeter").hidden = !n;
+    $("pinnedMeter").className = "meter" + (n > pinnedMax ? " over" : "");
+    $("pinnedMeter").textContent = "«Завжди пам'ятати» в кожній розмові: " + chars(n) + " з " + chars(pinnedMax)
+      + (n > pinnedMax ? " — забагато, кінець обріжеться. Відкріпіть або скоротіть щось." : "");
+  }
+
+  const MEMORY_SET = "Єва запам'ятала"; // server/knowledge.py MEMORY_SET: never pinned or renamed
 
   function renderSets(sets) {
     const on = sets.filter((s) => s.enabled).length;
     $("setsCount").textContent = sets.length ? on + " з " + sets.length + " увімкнено" : "";
     if (!sets.length) {
-      $("sets").replaceChildren(el("p", { class: "muted empty" }, "Ще нічого не завантажено. Почніть з прикладу CSV вище."));
+      $("sets").replaceChildren(el("p", { class: "muted empty" }, "Ще нічого немає. Додайте файл із записами або текстовий розділ вище."));
       return;
     }
     $("sets").replaceChildren(...sets.map((s) => {
-      const body = el("div", { class: "records", hidden: !opened.has(s.id) });
-      if (opened.has(s.id)) fillRecords(body, opened.get(s.id));
+      const text = s.kind === "text";
+      const own = s.name === MEMORY_SET;
+      const body = el("div", { class: text ? "text-view" : "records", hidden: !opened.has(s.id) });
+      if (opened.has(s.id)) (text ? fillText : fillRecords)(body, opened.get(s.id), s);
       const view = el("button", { class: "btn small-btn", type: "button", "aria-expanded": String(opened.has(s.id)) },
-        opened.has(s.id) ? "Згорнути" : "Переглянути");
+        opened.has(s.id) ? "Згорнути" : text ? "Переглянути й змінити" : "Переглянути");
       view.addEventListener("click", () => toggleView(s, body, view));
-      const sw = el("input", { type: "checkbox", class: "switch", role: "switch", checked: s.enabled, "aria-label": "Консьєрж знає «" + s.name + "»" });
-      sw.addEventListener("change", () => setEnabled(s, sw));
+      const sw = el("input", { type: "checkbox", class: "switch", role: "switch", checked: s.enabled, "aria-label": "Єва знає «" + s.name + "»" });
+      sw.addEventListener("change", () => patch(s, { enabled: sw.checked }, sw));
+      const pin = !own && el("input", { type: "checkbox", class: "switch", role: "switch", checked: s.pinned, "aria-label": "Завжди пам'ятати «" + s.name + "»" });
+      if (pin) pin.addEventListener("change", () => patch(s, { pinned: pin.checked }, pin));
+      const meta = [text ? chars(s.chars || 0) : records(s.count), s.source, fmtDate(s.created_at)].filter(Boolean).join(" · ");
       return el("article", { class: "set" + (s.enabled ? "" : " off") },
         el("div", { class: "set-head" },
           el("div", { class: "set-text" },
             el("strong", {}, s.name),
-            el("span", { class: "muted small" }, [records(s.count), s.source, fmtDate(s.created_at)].filter(Boolean).join(" · "))),
-          el("label", { class: "set-switch" }, el("span", { class: "small" }, s.enabled ? "Консьєрж знає" : "Вимкнено"), sw)),
+            el("span", { class: "muted small" },
+              el("span", { class: "set-kind" + (s.pinned ? " pinned" : "") }, s.pinned ? "Завжди пам'ятати" : text ? "Текст" : "Записи"),
+              meta)),
+          el("div", { class: "set-switches" },
+            el("label", { class: "set-switch" }, el("span", { class: "small" }, s.enabled ? "Єва знає" : "Вимкнено"), sw),
+            pin && el("label", { class: "set-switch" }, el("span", { class: "small" }, "Завжди пам'ятати"), pin))),
         s.note && el("p", { class: "hint" }, s.note),
         el("div", { class: "row set-actions" },
           view,
+          !own && el("button", { class: "btn small-btn ghost", type: "button", onclick: () => rename(s) }, "Перейменувати"),
           el("button", { class: "btn small-btn ghost danger-text", type: "button", onclick: () => remove(s) }, "Видалити")),
         body);
     }));
+  }
+
+  // A text section opened: its text in an editor, saved in place.
+  function fillText(body, text, s) {
+    const area = el("textarea", { class: "field", rows: String(Math.min(24, Math.max(8, text.split("\n").length + 1))), maxlength: "20000", "aria-label": "Текст розділу «" + s.name + "»" });
+    area.value = text;
+    const count = el("span", { class: "meter" }, chars(text.length));
+    const save = el("button", { class: "btn primary small-btn", type: "button", disabled: true }, "Зберегти зміни");
+    area.addEventListener("input", () => {
+      count.textContent = chars(area.value.trim().length);
+      save.disabled = area.value.trim() === text.trim();
+    });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const saved = await api("/api/knowledge/" + s.id, { method: "POST", body: JSON.stringify({ body: area.value }) });
+        opened.set(s.id, saved.body);
+        status("Зміни в «" + s.name + "» збережено. Єва знатиме їх з наступної розмови.", "ok");
+        await loadSets();
+      } catch (err) {
+        save.disabled = false;
+        status(err.message, "err");
+      }
+    });
+    body.replaceChildren(area, el("div", { class: "row actions" }, save, count));
   }
 
   // A big set draws its first PREVIEW_MAX records: a phone would choke on two thousand cards.
@@ -218,9 +310,14 @@
     }
     button.disabled = true;
     try {
-      const [full] = await Promise.all([api("/api/knowledge/" + s.id), loadCheckins()]);
-      opened.set(s.id, full.items);
-      fillRecords(body, full.items);
+      const [full] = await Promise.all([api("/api/knowledge/" + s.id), s.kind === "text" ? null : loadCheckins()]);
+      if (s.kind === "text") {
+        opened.set(s.id, full.body);
+        fillText(body, full.body, s);
+      } else {
+        opened.set(s.id, full.items);
+        fillRecords(body, full.items);
+      }
       body.hidden = false;
       button.textContent = "Згорнути";
       button.setAttribute("aria-expanded", "true");
@@ -231,9 +328,10 @@
     }
   }
 
-  async function setEnabled(s, sw) {
+  // A switch on a set («Єва знає», «Завжди пам'ятати»): saved at once, put back if the server refused.
+  async function patch(s, change, sw) {
     try {
-      await api("/api/knowledge/" + s.id, { method: "POST", body: JSON.stringify({ enabled: sw.checked }) });
+      await api("/api/knowledge/" + s.id, { method: "POST", body: JSON.stringify(change) });
       await loadSets();
     } catch (err) {
       sw.checked = !sw.checked;
@@ -241,8 +339,21 @@
     }
   }
 
+  async function rename(s) {
+    const name = (prompt("Новий заголовок розділу:", s.name) || "").trim();
+    if (!name || name === s.name) return;
+    try {
+      await api("/api/knowledge/" + s.id, { method: "POST", body: JSON.stringify({ name }) });
+      status("Перейменовано на «" + name + "».", "ok");
+      await loadSets();
+    } catch (err) {
+      status(err.message, "err");
+    }
+  }
+
   async function remove(s) {
-    if (!confirm("Видалити «" + s.name + "» (" + records(s.count) + ")? Консьєрж забуде ці дані, відновити не можна.")) return;
+    const size = s.kind === "text" ? chars(s.chars || 0) : records(s.count);
+    if (!confirm("Видалити «" + s.name + "» (" + size + ")? Єва забуде ці дані, відновити не можна.")) return;
     try {
       await api("/api/knowledge/" + s.id, { method: "DELETE" });
       opened.delete(s.id);
@@ -261,6 +372,11 @@
   ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, () => drop.classList.remove("over")));
   drop.addEventListener("drop", (e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]); });
   $("saveSet").addEventListener("click", save);
+  $("tabFile").addEventListener("click", () => showTab("file"));
+  $("tabText").addEventListener("click", () => showTab("text"));
+  $("textBody").addEventListener("input", countText);
+  $("saveText").addEventListener("click", saveText);
+  if (store.get("kb.tab") === "text") showTab("text");
   $("cancelSet").addEventListener("click", cancel);
   if (!BACKEND) { $("sets").replaceChildren(el("p", { class: "muted empty" }, "Не вказано адресу бекенду.")); return; }
   loadSets();

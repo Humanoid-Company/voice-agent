@@ -47,7 +47,7 @@ h2 { font-size: 1.05rem; margin: 0 0 8px; }
 }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .row[hidden] { display: none; }
-input, select {
+input, select, textarea {
   flex: 1 1 200px;
   min-width: 0;
   padding: 10px 12px;
@@ -227,6 +227,20 @@ h3 { font-size: 1rem; margin: 0; }
 .set-switch { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: normal; cursor: pointer; flex: 0 0 auto; }
 .set-actions { margin-top: 10px; }
 .danger-text { color: var(--err); }
+textarea { display: block; width: 100%; resize: vertical; line-height: 1.45; }
+.set-switches { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: 0 0 auto; }
+.set-kind { display: inline-block; margin-right: 6px; font-size: 0.75rem; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); }
+.set-kind.pinned { border-color: var(--accent); color: var(--accent); }
+.text-view { margin-top: 10px; }
+.text-view[hidden] { display: none; }
+.meter.over { color: var(--err); font-weight: 600; }
+.mode-tabs + [role="tabpanel"] { margin-top: 4px; }
+@media (max-width: 520px) {
+  .set-head { flex-direction: column; }
+  .set-switches { align-items: stretch; width: 100%; }
+  .set-switch { justify-content: space-between; }
+}
 
 /* «Історія» (web/history.html): a conversation per card, opened in place */
 .conv-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; width: 100%;

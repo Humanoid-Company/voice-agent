@@ -2365,7 +2365,7 @@
   // on a computer. Not on an iPhone: iOS routes a call's sound with its mic, and WebKit takes setSinkId
   // only in a tap and replayed the voice sample on every pick. Whether there is anything to pick shows
   // only in the list: when the browser lists no output, the page says where the sound goes instead.
-  const canPickSpeaker = !IOS && "setSinkId" in HTMLMediaElement.prototype;
+  const canPickSpeaker = "setSinkId" in HTMLMediaElement.prototype;
   if (!canPickSpeaker && speakerId) { speakerId = ""; store.set("va-speaker", ""); } // picked before this
   // False once the names are known and the browser lists no output to pick: the system chooses, and
   // the page says where the sound goes instead of a dropdown that opens on one «За замовчуванням».
@@ -2417,13 +2417,13 @@
     const cameras = fill("cameraSelect", "videoinput", cameraId, "Камера");
     const named = devices.some((d) => d.label);
     devicesNamed = named;
-    speakerPickable = canPickSpeaker && (outputs > 0 || !named);
+    speakerPickable = canPickSpeaker && outputs > 0;
     // Nothing to pick: words, not a dead dropdown (feedback: «кнопка вибору динаміка не працює»).
     // The dropdown is always there; where the browser lists no outputs it holds only «За замовчуванням»,
     // and the button opens the system's own picker (Android Chrome, iOS AirPlay) beside the words.
     $("speakerSelect").hidden = false;
     $("speakerSelect").disabled = false; // a tap on it opens the system picker when there is no list
-    $("speakerFixed").hidden = speakerPickable;
+    $("speakerFixed").hidden = true; // a dropdown like the microphone's; «Зараз: …» says where the sound goes
     $("speakerSystem").hidden = false; // always: the list may hold only the default
     // Names come only once the browser has given the mic: one tap asks for it without starting a call.
     $("devicesAllow").hidden = named || !md.getUserMedia;

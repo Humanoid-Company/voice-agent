@@ -2422,9 +2422,9 @@
     // The dropdown is always there; where the browser lists no outputs it holds only «За замовчуванням»,
     // and the button opens the system's own picker (Android Chrome, iOS AirPlay) beside the words.
     $("speakerSelect").hidden = false;
-    $("speakerSelect").disabled = !speakerPickable;
+    $("speakerSelect").disabled = false; // a tap on it opens the system picker when there is no list
     $("speakerFixed").hidden = speakerPickable;
-    $("speakerSystem").hidden = speakerPickable && outputs > 1;
+    $("speakerSystem").hidden = false; // always: the list may hold only the default
     // Names come only once the browser has given the mic: one tap asks for it without starting a call.
     $("devicesAllow").hidden = named || !md.getUserMedia;
     showDevicesNow();
@@ -2852,6 +2852,13 @@
     $("micSelect").addEventListener("change", changeMic);
     $("speakerSelect").addEventListener("change", changeSpeaker);
     $("speakerSystem").addEventListener("click", pickSystemOutput);
+    // No list to open (phones): a tap on the dropdown opens the system's picker instead of nothing.
+    const noList = (e) => {
+      if (speakerPickable && $("speakerSelect").options.length > 1) return;
+      e.preventDefault(); $("speakerSelect").blur(); pickSystemOutput();
+    };
+    $("speakerSelect").addEventListener("mousedown", noList);
+    $("speakerSelect").addEventListener("touchstart", noList, { passive: false });
     $("cameraSelect").addEventListener("change", changeCamera);
     $("knowledgeLink").href = "knowledge.html" + location.search; // keep ?backend=… for a test backend
     $("historyLink").href = "history.html" + location.search;

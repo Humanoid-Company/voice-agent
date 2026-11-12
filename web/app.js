@@ -2361,11 +2361,11 @@
     { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     micId ? { deviceId: { exact: micId } } : {},
   );
-  // Chrome, Edge, Firefox 116+, Safari 18.4+ on a computer. Not on a phone: there the system routes a
-  // call's sound with its mic (headphones in → headphones), and a pick did nothing (feedback, in headphones:
-  // «вивід не міняється на динамік телефону»); WebKit also takes setSinkId only in a tap and replayed
-  // the voice sample on every pick. Whether there is anything to pick shows only in the list.
-  const canPickSpeaker = !IOS && !ANDROID && "setSinkId" in HTMLMediaElement.prototype;
+  // Chrome (also on Android: a connected speaker / Bluetooth can be picked), Edge, Firefox 116+, Safari 18.4+
+  // on a computer. Not on an iPhone: iOS routes a call's sound with its mic, and WebKit takes setSinkId
+  // only in a tap and replayed the voice sample on every pick. Whether there is anything to pick shows
+  // only in the list: when the browser lists no output, the page says where the sound goes instead.
+  const canPickSpeaker = !IOS && "setSinkId" in HTMLMediaElement.prototype;
   if (!canPickSpeaker && speakerId) { speakerId = ""; store.set("va-speaker", ""); } // picked before this
   // False once the names are known and the browser lists no output to pick: the system chooses, and
   // the page says where the sound goes instead of a dropdown that opens on one «За замовчуванням».
@@ -2430,8 +2430,8 @@
         ? "На iPhone звук розмови спрямовує система, сторінка його не перемикає: з навушниками він іде в навушники. " +
           "Щоб на динамік телефону — вийміть навушники або вимкніть Bluetooth (чи оберіть iPhone у Пункті керування, значок AirPlay)."
         : ANDROID
-          ? "На Android звук розмови спрямовує система, сторінка його не перемикає: з навушниками він іде в навушники. " +
-            "Щоб на динамік телефону — вийміть навушники або вимкніть Bluetooth."
+          ? "Цей телефон не показує список динаміків: звук іде туди, куди спрямовує система (підключена колонка чи навушники). " +
+            "Обрати колонку можна в швидких налаштуваннях Android (меню звуку), або вимкніть Bluetooth — тоді звук піде на динамік телефону."
           : "Динамік у цьому браузері не вибирається (потрібен Chrome, Edge або Safari 18.4+) — звук іде в системний.",
       named && !cameras ? "Камери не знайдено." : "",
       btMicTip(devicesNow().input),

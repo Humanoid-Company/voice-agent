@@ -2419,8 +2419,12 @@
     devicesNamed = named;
     speakerPickable = canPickSpeaker && (outputs > 0 || !named);
     // Nothing to pick: words, not a dead dropdown (feedback: «кнопка вибору динаміка не працює»).
-    $("speakerSelect").hidden = !speakerPickable;
+    // The dropdown is always there; where the browser lists no outputs it holds only «За замовчуванням»,
+    // and the button opens the system's own picker (Android Chrome, iOS AirPlay) beside the words.
+    $("speakerSelect").hidden = false;
+    $("speakerSelect").disabled = !speakerPickable;
     $("speakerFixed").hidden = speakerPickable;
+    $("speakerSystem").hidden = speakerPickable && outputs > 1;
     // Names come only once the browser has given the mic: one tap asks for it without starting a call.
     $("devicesAllow").hidden = named || !md.getUserMedia;
     showDevicesNow();
@@ -2578,6 +2582,30 @@
     old.getTracks().forEach((t) => t.stop());
     if (eva.recognizer) { stopPhraseListener(); startPhraseListener(); } // it follows the mic
     return true;
+  }
+
+  // The system's output picker: the browser's own (selectAudioOutput), AirPlay on iOS, else the hint.
+  async function pickSystemOutput() {
+    const md = navigator.mediaDevices;
+    const remote = $("remote");
+    try {
+      if (md && md.selectAudioOutput) {
+        const d = await md.selectAudioOutput();
+        if (d && d.deviceId && remote.setSinkId) {
+          await remote.setSinkId(d.deviceId);
+          setDevice("speaker", d.deviceId);
+          await listDevices();
+          if (eva.mode !== "off") addLine("system", "Звук: " + (d.label || devicesNow().output) + ".");
+        }
+        return;
+      }
+      if (remote.webkitShowPlaybackTargetPicker) { remote.webkitShowPlaybackTargetPicker(); return; }
+    } catch (err) {
+      if (err && err.name === "NotAllowedError") return; // closed without a pick
+    }
+    addLine("system", IOS
+      ? "Вихід звуку на iPhone обирає система: Пункт керування → значок AirPlay (колонка, навушники, iPhone)."
+      : "Вихід звуку обирає система: швидкі налаштування Android → меню звуку (колонка, Bluetooth, телефон).");
   }
 
   async function changeSpeaker() {
@@ -2823,6 +2851,7 @@
     });
     $("micSelect").addEventListener("change", changeMic);
     $("speakerSelect").addEventListener("change", changeSpeaker);
+    $("speakerSystem").addEventListener("click", pickSystemOutput);
     $("cameraSelect").addEventListener("change", changeCamera);
     $("knowledgeLink").href = "knowledge.html" + location.search; // keep ?backend=… for a test backend
     $("historyLink").href = "history.html" + location.search;

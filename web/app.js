@@ -2357,8 +2357,12 @@
 
   // ── devices: microphone (in), speaker (out), camera ──
   // Browser echo cancellation keeps the agent from hearing (and interrupting) itself.
+  // ?aec=off — a test for a Bluetooth speaker on Android: with the mic's processing on, Chrome puts the
+  // phone into call mode, and a music-only (A2DP) speaker is not a call device — her voice comes from
+  // the phone. Without it the sound should go out as media. The price: she may hear herself.
+  const AEC_OFF = params.get("aec") === "off";
   const micConstraints = () => Object.assign(
-    { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    { echoCancellation: !AEC_OFF, noiseSuppression: !AEC_OFF, autoGainControl: !AEC_OFF },
     micId ? { deviceId: { exact: micId } } : {},
   );
   // Chrome (also on Android: a connected speaker / Bluetooth can be picked), Edge, Firefox 116+, Safari 18.4+
@@ -2370,6 +2374,17 @@
   // False once the names are known and the browser lists no output to pick: the system chooses, and
   // the page says where the sound goes instead of a dropdown that opens on one «За замовчуванням».
   let speakerPickable = canPickSpeaker;
+  // Android Chrome lists no outputs, but in a call the sound follows the mic's device (phone speaker,
+  // earpiece, wired, Bluetooth headset): there the speaker list offers those, and a pick moves the mic.
+  let speakerViaMic = false;
+  const ROUTE_NAMES = [
+    [/speakerphone/i, "Динамік телефону (гучний зв'язок)"],
+    [/earpiece/i, "Розмовний динамік (біля вуха)"],
+    [/wired/i, "Дротові навушники / AUX"],
+    [/bluetooth/i, "Bluetooth (гарнітура або колонка з мікрофоном)"],
+    [/usb/i, "USB-аудіо"],
+  ];
+  const routeName = (label) => { const hit = ROUTE_NAMES.find(([re]) => re.test(label)); return hit ? hit[1] : label; };
   let devicesNamed = false; // the browser gave the names (the mic was allowed)
   const deviceKeys = { mic: "va-mic", speaker: "va-speaker", camera: "va-camera" };
 
@@ -2418,6 +2433,15 @@
     const named = devices.some((d) => d.label);
     devicesNamed = named;
     speakerPickable = canPickSpeaker && outputs > 0;
+    const routes = ANDROID && !outputs
+      ? devices.filter((d) => d.kind === "audioinput" && d.deviceId && d.label && d.deviceId !== "default" && d.deviceId !== "communications")
+      : [];
+    speakerViaMic = routes.length > 0;
+    if (speakerViaMic) {
+      $("speakerSelect").replaceChildren(new Option("За замовчуванням", ""),
+        ...routes.map((d) => new Option(routeName(d.label), d.deviceId)));
+      $("speakerSelect").value = routes.some((d) => d.deviceId === micId) ? micId : "";
+    }
     // Nothing to pick: words, not a dead dropdown (feedback: «кнопка вибору динаміка не працює»).
     // The dropdown is always there; where the browser lists no outputs it holds only «За замовчуванням»,
     // and the button opens the system's own picker (Android Chrome, iOS AirPlay) beside the words.
@@ -2433,6 +2457,9 @@
       speakerPickable ? "" : IOS
         ? "На iPhone звук розмови спрямовує система, сторінка його не перемикає: з навушниками він іде в навушники. " +
           "Щоб на динамік телефону — вийміть навушники або вимкніть Bluetooth (чи оберіть iPhone у Пункті керування, значок AirPlay)."
+        : speakerViaMic
+          ? "На Android звук розмови йде туди ж, де мікрофон: вибір у списку «Динамік» перемикає обидва. " +
+            "Колонка без мікрофона (лише для музики) у розмові недоступна, тому в списку її немає — підключіть її дротом."
         : ANDROID
           ? "Цей телефон не показує список динаміків: звук іде туди, куди спрямовує система (підключена колонка чи навушники). " +
             "Обрати колонку можна в швидких налаштуваннях Android (меню звуку), або вимкніть Bluetooth — тоді звук піде на динамік телефону."
@@ -2458,7 +2485,8 @@
     const picked = (id) => ($(id).selectedOptions[0] || {}).textContent || "За замовчуванням";
     const track = mic && mic.getAudioTracks().find((t) => t.readyState === "live");
     const input = deviceName(track && track.label ? track.label : picked("micSelect"));
-    const output = speakerPickable ? deviceName(picked("speakerSelect")) : systemOutput(input);
+    const output = speakerPickable || (speakerViaMic && $("speakerSelect").value)
+      ? deviceName(picked("speakerSelect")) : systemOutput(input);
     return { input, output, live: Boolean(track) };
   }
   function showDevicesNow() {
@@ -2608,8 +2636,27 @@
       : "Вихід звуку обирає система: швидкі налаштування Android → меню звуку (колонка, Bluetooth, телефон).");
   }
 
+  // The button beside the list: the list itself where there is one, else the system's picker.
+  async function openSpeakerList() {
+    if (!devicesNamed) await allowDevices(); // the names (and Android's routes) come with the mic
+    const select = $("speakerSelect");
+    if (select.options.length > 1) {
+      try { select.showPicker(); } catch { select.focus(); } // no showPicker / the tap is spent: a tap on the list opens it
+      return;
+    }
+    pickSystemOutput();
+  }
+
   async function changeSpeaker() {
     const id = $("speakerSelect").value;
+    if (speakerViaMic) { // Android: the sound goes with the mic's device
+      setDevice("mic", id);
+      await listDevices();
+      const swapped = await swapMic();
+      showDevicesNow();
+      if (swapped) addLine("system", "Звук і мікрофон: " + devicesNow().output + ".");
+      return;
+    }
     try {
       await $("remote").setSinkId(id);
     } catch (err) {
@@ -2851,10 +2898,10 @@
     });
     $("micSelect").addEventListener("change", changeMic);
     $("speakerSelect").addEventListener("change", changeSpeaker);
-    $("speakerSystem").addEventListener("click", pickSystemOutput);
+    $("speakerSystem").addEventListener("click", openSpeakerList);
     // No list to open (phones): a tap on the dropdown opens the system's picker instead of nothing.
     const noList = (e) => {
-      if (speakerPickable && $("speakerSelect").options.length > 1) return;
+      if ($("speakerSelect").options.length > 1) return;
       e.preventDefault(); $("speakerSelect").blur(); pickSystemOutput();
     };
     $("speakerSelect").addEventListener("mousedown", noList);

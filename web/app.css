@@ -339,3 +339,11 @@ body.drawer-open { overflow: hidden; }
                 0 0 0 42px color-mix(in srgb, var(--tone) 8%, transparent); }
   .layout { padding-top: 12px; padding-bottom: 16px; }
 }
+
+/* Phone: «Почати розмову», then the volume, then the songs (on a wide screen the order is the page's). */
+@media (max-width: 560px) {
+  .stage-bottom .controls { order: 1; }
+  .stage-bottom .device-row { order: 2; }
+  .stage-bottom .player { order: 3; }
+  .stage-bottom .wake-hint { order: 4; }
+}

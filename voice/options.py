@@ -76,6 +76,11 @@ class VoicePersona:
         """Every character but Кішка (a talking cat) is a living person, and plays it."""
         return self.id != "kit"
 
+    @property
+    def is_humanoid(self) -> bool:
+        """Степан (all three variants) thinks he is a humanoid — not a voice assistant, not a cat."""
+        return self.group == "blunt"
+
     def voice_line(self, old_voice: bool = False) -> str:
         """«Voice: …» for the instructions; empty unless the own voice speaks (the preset sounds as it does)."""
         if not old_voice and self.custom_voice_id and self.voice_description:

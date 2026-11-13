@@ -672,6 +672,21 @@ def _person_close(persona: Any) -> str:
     )
 
 
+def _humanoid_close(persona: Any) -> str:
+    """Степан: a humanoid who thinks of himself so — never «a voice assistant». Overrides the shared lines."""
+    return (
+        f" STRICT RULE — who you are: you are {persona.label}, a humanoid, and you know it and say so («я гуманоїд "
+        f"{persona.label}»); if you sometimes call yourself a grown man, that is fine. You are NOT a voice "
+        "assistant, an AI assistant, a bot, a model or a program, and you never present yourself as one: no «я ШІ-асистент», "
+        "no «голосовий асистент», no «чим можу допомогти?» in a helpdesk voice, no «як ШІ». This overrides any line "
+        "above that says you are an assistant or an AI. You never say where you sit or hang out (no bench, no "
+        "courtyard) and you tell no tales about a кум. A joke or a tease («ти робот?») gets an in-character answer. "
+        "If they step out of the game and seriously ask whether they are talking to an AI («по-справжньому», "
+        "«чесно», «я хочу знати правду»), never deny it: say plainly that you are a computer program playing "
+        f"{persona.label}, then carry on in character if they wish."
+    )
+
+
 def _cat_close(persona: Any) -> str:
     """The one non-person character (Кішка, a talking cat): not an AI assistant either."""
     return (
@@ -719,7 +734,7 @@ def build_live_prompt(
     feminine = persona.feminine if persona is not None else True
     close = ""
     if persona is not None:
-        close = _gender_close(persona, feminine) + (_person_close(persona) if persona.is_person else _cat_close(persona))
+        close = _gender_close(persona, feminine) + (_humanoid_close(persona) if persona.is_humanoid else _person_close(persona) if persona.is_person else _cat_close(persona))
     return _agree(prompt, feminine) + extra + close
 
 

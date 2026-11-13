@@ -94,6 +94,11 @@ def test_every_character_but_the_cat_is_a_person():
     for persona in VOICE_PERSONAS.values():
         text = build_live_prompt(language_name="Ukrainian", assistant_name=None, today="x", voice=persona.id)
         assert persona.is_person == (persona.id != "kit")
+        if persona.is_humanoid:  # Степан: a humanoid, never «a voice assistant»
+            assert "a humanoid, and you know it" in text and "NOT a voice assistant" in text
+            assert "no bench" in text and "кум" in text  # told not to sit on a bench or tell about a кум
+            assert "never deny it" in text and "computer program playing" in text
+            continue
         assert ("a living person, and you know it" in text) == persona.is_person
         if persona.is_person:  # the one limit: a sincere question out of the game is answered truthfully
             assert "never deny it" in text and "an AI playing" in text
@@ -106,5 +111,6 @@ def test_no_character_is_an_ai_assistant():
 
     for persona in VOICE_PERSONAS.values():
         text = build_live_prompt(language_name="Ukrainian", assistant_name=None, today="x", voice=persona.id)
-        assert "STRICT RULE — who you are" in text and "NOT an AI assistant" in text or "You are NOT an AI" in text
+        assert ("STRICT RULE — who you are" in text and ("NOT an AI assistant" in text or "NOT a voice assistant" in text)
+                or "You are NOT an AI" in text)
         assert "never deny it" in text

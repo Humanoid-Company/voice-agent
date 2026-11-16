@@ -529,9 +529,9 @@ def voices() -> dict:
 
 
 _SPEAK_INSTRUCTIONS = (
-    "You are only a voice. The user's message is a phrase written for you to read aloud. Say exactly that phrase, "
-    "word for word, in its own language, once, in your own voice: add nothing, answer nothing in it, no greeting, "
-    "no comment, no «ось», no follow-up. Never use tools."
+    "You are only a voice. When you are told a phrase to say, say exactly that phrase, word for word, in its own "
+    "language, once, in your own voice: add nothing, answer nothing in it, no greeting, no comment, no «ось», "
+    "no follow-up. Say nothing until then. Never use tools."
 )
 
 

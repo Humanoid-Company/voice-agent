@@ -2047,7 +2047,8 @@
     speaking = null;
     if (s) {
       clearTimeout(s.timer);
-      clearTimeout(s.tail);
+      clearInterval(s.poll);
+      if (s.ctx) s.ctx.close().catch(() => {});
       try { s.channel.send(JSON.stringify({ type: "session.close" })); } catch { /* not open */ }
       try { s.peer.close(); } catch { /* closed */ }
       s.audio.pause();
@@ -2062,37 +2063,59 @@
     const text = $("speakText").value.trim();
     if (!text) { $("speakInfo").textContent = "Спершу напишіть фразу."; return; }
     if (preview) stopPreview();
-    const s = { peer: new RTCPeerConnection(), audio: new Audio(), sent: false, timer: null, tail: null };
+    const s = { peer: new RTCPeerConnection(), audio: new Audio(), sent: false, timer: null, tail: null, heard: false, ctx: null, poll: null };
     speaking = s;
     $("speakBtn").textContent = "■ Стоп";
     $("speakInfo").textContent = "Готую голос…";
     s.audio.volume = volume;
     if (speakerId && s.audio.setSinkId) s.audio.setSinkId(speakerId).catch(() => {});
     s.timer = setTimeout(() => { if (speaking === s) stopSpeak("Не вдалося озвучити: немає відповіді."); }, 45000);
-    const finish = () => { clearTimeout(s.tail); s.tail = setTimeout(() => { if (speaking === s) stopSpeak(); }, 1500); };
     try {
-      s.peer.ontrack = (e) => { s.audio.srcObject = e.streams[0]; s.audio.play().catch(() => {}); };
-      s.peer.addTransceiver("audio", { direction: "sendrecv" }); // no mic: it only speaks
+      // The session starts talking only with an audio stream coming in: a silent one stands in for the mic.
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      s.ctx = new Ctx();
+      const silent = s.ctx.createMediaStreamDestination();
+      const zero = s.ctx.createConstantSource();
+      zero.offset.value = 0;
+      zero.connect(silent);
+      zero.start();
+      s.peer.addTrack(silent.stream.getAudioTracks()[0], silent.stream);
+      // Her words come as text well ahead of the sound: the phrase ends when the sound has been quiet for a moment.
+      s.peer.ontrack = (e) => {
+        s.audio.srcObject = e.streams[0];
+        s.audio.play().catch(() => {});
+        const analyser = s.ctx.createAnalyser();
+        analyser.fftSize = 512;
+        s.ctx.createMediaStreamSource(e.streams[0]).connect(analyser);
+        const buf = new Uint8Array(analyser.fftSize);
+        let quietSince = Date.now();
+        s.poll = setInterval(() => {
+          analyser.getByteTimeDomainData(buf);
+          let peak = 0;
+          for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+          if (peak > 3) { s.heard = true; quietSince = Date.now(); }
+          else if (s.heard && Date.now() - quietSince > 1200 && speaking === s) stopSpeak();
+        }, 100);
+      };
       s.channel = s.peer.createDataChannel("oai-events");
       s.channel.onmessage = (e) => {
         if (speaking !== s) return;
         let event;
         try { event = JSON.parse(e.data); } catch { return; }
-        if ((event.type === "session.started" || event.type === "session.created") && !s.sent) {
+        if (event.type === "session.started" && !s.sent) {
           s.sent = true;
-          s.channel.send(JSON.stringify({ type: "response.item.create", event_id: eventId("say"),
-            item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }));
-          s.channel.send(JSON.stringify({ type: "response.create", event_id: eventId("go") }));
-          $("speakInfo").textContent = "";
-        } else if (event.type === "session.output_transcript.delta") {
-          clearTimeout(s.tail); // still talking: the end is the last word plus a moment
-          s.spoke = true;
+          // Like the call's greeting: a moment after the start, as speakable context.
+          setTimeout(() => {
+            if (speaking !== s) return;
+            s.channel.send(JSON.stringify({ type: "session.commentary.append", delegation_id: null, event_id: eventId("say"),
+              content: "Tell the user now, out loud, this exact phrase and nothing else: «" + text + "»" }));
+            $("speakInfo").textContent = "";
+          }, 700);
         } else if (event.type === "session.closed") stopSpeak();
         else if (event.type === "error") {
           const message = (event.error && event.error.message) || "";
           if (!/session is closing/i.test(message)) stopSpeak("Не вдалося озвучити: " + (message || "помилка"));
-        } else if (event.type === "response.event" && event.event && /^response\.(completed|incomplete|failed)$/.test(event.event.type || "")) finish();
-        else if (/^response\.(done|completed)$/.test(event.type)) finish();
+        }
       };
       s.channel.onclose = () => { if (speaking === s) stopSpeak(); };
       const offer = await s.peer.createOffer();

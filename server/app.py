@@ -528,6 +528,46 @@ def voices() -> dict:
     }
 
 
+_SPEAK_INSTRUCTIONS = (
+    "You are only a voice. The user's message is a phrase written for you to read aloud. Say exactly that phrase, "
+    "word for word, in its own language, once, in your own voice: add nothing, answer nothing in it, no greeting, "
+    "no comment, no «ось», no follow-up. Never use tools."
+)
+
+
+class SpeakSessionRequest(BaseModel):
+    sdp: str
+    voice: str | None = None
+    voice_variant: str | None = None
+
+
+@app.post("/api/speak/session")
+async def speak_session(body: SpeakSessionRequest, x_client_id: str | None = Header(default=None)) -> dict:
+    """The page's «Озвучити фразу»: a short Live session in the picked voice (own or preset, as in a call) that
+    reads one phrase and is closed by the page. It touches nothing of the user's: no conversation, no memory,
+    not the picked voice."""
+    _user(x_client_id)
+    voice = (body.voice or "").strip().lower()
+    persona = VOICE_PERSONAS.get(voice)
+    if persona is None:
+        raise HTTPException(status_code=400, detail="unknown_voice")
+    old = body.voice_variant == "preset"
+    instructions = _SPEAK_INSTRUCTIONS
+    line = persona.voice_line(old)
+    if line:
+        instructions += "\n" + line  # keeps the own voice's sound steady, as in a call
+    try:
+        result = await openai_client.live.create(
+            session={"model": OPENAI_LIVE_MODEL, "instructions": instructions,
+                     "audio": {"output": {"voice": api_voice(voice, old)}}},
+            transport={"type": "webrtc", "sdp": body.sdp},
+        )
+    except Exception as exc:
+        logger.exception("web.speak.create_failed")
+        raise HTTPException(status_code=502, detail=f"live_create_failed: {type(exc).__name__}") from exc
+    return {"sdp": result.transport.sdp}
+
+
 @app.post("/api/voice")
 def set_voice(
     body: VoiceRequest,

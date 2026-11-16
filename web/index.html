@@ -128,6 +128,14 @@
           <button id="talk" class="btn primary big">Почати розмову</button>
           <button id="nextGuest" class="btn" hidden>Наступний гість</button>
         </div>
+        <section id="speakCard" class="player speak" aria-label="Озвучити фразу">
+          <label for="speakText" class="speak-title">Озвучити фразу — голос: <span id="speakVoiceName"></span></label>
+          <textarea id="speakText" rows="2" maxlength="300" placeholder="Напишіть фразу…" aria-label="Фраза"></textarea>
+          <div class="player-row">
+            <button id="speakBtn" class="song-play" type="button" disabled>▶ Озвучити</button>
+            <p id="speakInfo" class="player-info" aria-live="polite"></p>
+          </div>
+        </section>
         <p id="wakeHint" class="wake-hint">Покличте помічника на ім'я — «…, скажи», «Привіт, …». «Дякую, …» — пауза.</p>
       </div>
     </section>

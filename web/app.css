@@ -347,7 +347,8 @@ body.drawer-open { overflow: hidden; }
   .stage-bottom .controls { order: 1; }
   .stage-bottom .device-row { order: 2; }
   .stage-bottom .player { order: 3; }
-  .stage-bottom .wake-hint { order: 4; }
+  .stage-bottom .speak { order: 4; }
+  .stage-bottom .wake-hint { order: 5; }
 }
 
 /* The page never slides sideways or rubber-bands past its edge (Android Chrome). */
@@ -363,3 +364,10 @@ html, body { max-width: 100%; overflow-x: hidden; overscroll-behavior: none; }
 .home #talk.danger::before { width: 40px; height: 40px; }
 .home #talk.danger::after { top: 8px; width: 20px; height: 20px; margin-left: -10px; }
 .home .controls #talk.danger { margin-top: 18px; }
+
+/* «Озвучити фразу»: the last card of the page. */
+.speak-title { font-size: 13px; font-weight: 700; color: var(--muted); }
+.home .speak select { height: 40px; flex: 0 0 auto; width: 100%; padding: 0 10px; border: 1px solid var(--soft-line); background: var(--card); border-radius: 12px; }
+.speak textarea { width: 100%; resize: vertical; min-height: 56px; padding: 10px 12px; border: 1px solid var(--soft-line); border-radius: 12px;
+  background: var(--card); color: var(--text); font: inherit; font-size: 15px; }
+.speak .player-info { margin: 0; flex: 1 1 auto; min-width: 0; }

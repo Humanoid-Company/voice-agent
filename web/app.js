@@ -1550,6 +1550,7 @@
   function showVoice(keepSelection = false) {
     const applied = voices.find((x) => x.id === voice);
     setWakeNames(applied && applied.wake);
+    showSpeakVoice();
     callName = applied ? applied.label : "Єва";
     store.set("va-call-name", callName);
     showWakeHint();
@@ -1652,6 +1653,7 @@
       if (!voices.some((x) => x.id === voice)) voice = voices.some((x) => x.id === data.default) ? data.default : "";
       if (!voices.some((x) => x.id === voice) && voices.length) voice = voices[0].id;
       $("voice").replaceChildren(...voices.map((x) => new Option(x.label, x.id)));
+      showSpeakVoice();
       // One tab per group: both Степани sit under «Степан», the «Голос» list picks between them.
       $("characters").replaceChildren(...voices.filter((x, i) => voices.findIndex((m) => groupOf(m) === groupOf(x)) === i).map((x) => {
         const b = document.createElement("button");
@@ -2029,6 +2031,80 @@
     preview = audio;
     $("voicePreview").textContent = "■ Стоп";
     audio.play().catch(stopPreview);
+  }
+
+  // ── «Озвучити фразу»: a written phrase in the picked voice ──
+  // A short Live session of its own (POST /api/speak/session: the picked voice, own or preset, as in a call): it
+  // reads the phrase and is closed here. It never touches the call, the conversation or the picked voice.
+  let speaking = null;
+  function showSpeakVoice() {
+    const picked = voices.find((x) => x.id === voice);
+    $("speakVoiceName").textContent = picked ? voiceLabel(voice) + (picked.own_voice ? (variantOf(voice) === "own" ? " (новий голос)" : " (старий голос)") : "") : "";
+    if (!speaking) $("speakBtn").disabled = !picked;
+  }
+  function stopSpeak(message = "") {
+    const s = speaking;
+    speaking = null;
+    if (s) {
+      clearTimeout(s.timer);
+      clearTimeout(s.tail);
+      try { s.channel.send(JSON.stringify({ type: "session.close" })); } catch { /* not open */ }
+      try { s.peer.close(); } catch { /* closed */ }
+      s.audio.pause();
+      s.audio.srcObject = null;
+    }
+    $("speakBtn").textContent = "▶ Озвучити";
+    $("speakInfo").textContent = message;
+    showSpeakVoice();
+  }
+  async function speakPhrase() {
+    if (speaking) { stopSpeak(); return; }
+    const text = $("speakText").value.trim();
+    if (!text) { $("speakInfo").textContent = "Спершу напишіть фразу."; return; }
+    if (preview) stopPreview();
+    const s = { peer: new RTCPeerConnection(), audio: new Audio(), sent: false, timer: null, tail: null };
+    speaking = s;
+    $("speakBtn").textContent = "■ Стоп";
+    $("speakInfo").textContent = "Готую голос…";
+    s.audio.volume = volume;
+    if (speakerId && s.audio.setSinkId) s.audio.setSinkId(speakerId).catch(() => {});
+    s.timer = setTimeout(() => { if (speaking === s) stopSpeak("Не вдалося озвучити: немає відповіді."); }, 45000);
+    const finish = () => { clearTimeout(s.tail); s.tail = setTimeout(() => { if (speaking === s) stopSpeak(); }, 1500); };
+    try {
+      s.peer.ontrack = (e) => { s.audio.srcObject = e.streams[0]; s.audio.play().catch(() => {}); };
+      s.peer.addTransceiver("audio", { direction: "sendrecv" }); // no mic: it only speaks
+      s.channel = s.peer.createDataChannel("oai-events");
+      s.channel.onmessage = (e) => {
+        if (speaking !== s) return;
+        let event;
+        try { event = JSON.parse(e.data); } catch { return; }
+        if ((event.type === "session.started" || event.type === "session.created") && !s.sent) {
+          s.sent = true;
+          s.channel.send(JSON.stringify({ type: "response.item.create", event_id: eventId("say"),
+            item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }));
+          s.channel.send(JSON.stringify({ type: "response.create", event_id: eventId("go") }));
+          $("speakInfo").textContent = "";
+        } else if (event.type === "session.output_transcript.delta") {
+          clearTimeout(s.tail); // still talking: the end is the last word plus a moment
+          s.spoke = true;
+        } else if (event.type === "session.closed") stopSpeak();
+        else if (event.type === "error") {
+          const message = (event.error && event.error.message) || "";
+          if (!/session is closing/i.test(message)) stopSpeak("Не вдалося озвучити: " + (message || "помилка"));
+        } else if (event.type === "response.event" && event.event && /^response\.(completed|incomplete|failed)$/.test(event.event.type || "")) finish();
+        else if (/^response\.(done|completed)$/.test(event.type)) finish();
+      };
+      s.channel.onclose = () => { if (speaking === s) stopSpeak(); };
+      const offer = await s.peer.createOffer();
+      await s.peer.setLocalDescription(offer);
+      const res = await fetch(BACKEND + "/api/speak/session", { method: "POST", headers: headers(),
+        body: JSON.stringify({ sdp: withClearOpus(offer.sdp), voice, voice_variant: variantFor(voice) }) });
+      if (speaking !== s) return;
+      if (!res.ok) throw new Error("Сервер відповів " + res.status);
+      await s.peer.setRemoteDescription({ type: "answer", sdp: (await res.json()).sdp });
+    } catch (err) {
+      if (speaking === s) stopSpeak("Не вдалося озвучити: " + ((err && err.message) || err));
+    }
   }
 
   // ── Музика ──
@@ -2882,6 +2958,7 @@
     $("voice").addEventListener("change", () => { stopPreview(); showVoice(true); });
     $("voiceVariant").addEventListener("change", applyVoiceVariant);
     $("voicePreview").addEventListener("click", togglePreview);
+    $("speakBtn").addEventListener("click", speakPhrase);
     $("voiceApply").addEventListener("click", applyVoice);
     $("speed").value = speed;
     $("style").value = style;

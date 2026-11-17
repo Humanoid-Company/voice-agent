@@ -2459,9 +2459,12 @@
   // ?aec=off — a test for a Bluetooth speaker on Android: with the mic's processing on, Chrome puts the
   // phone into call mode, and a music-only (A2DP) speaker is not a call device — her voice comes from
   // the phone. Without it the sound should go out as media. The price: she may hear herself.
-  const AEC_OFF = params.get("aec") === "off";
+  // Remembered (the «Bluetooth-колонка» switch in the settings, or ?aec=off once): a page opened again without
+  // the address parameter (the bookmark, the home-screen icon) went back to call mode and the speaker dropped.
+  if (params.get("aec")) store.set("va-aec", params.get("aec") === "off" ? "off" : "on");
+  let aecOff = store.get("va-aec") === "off";
   const micConstraints = () => Object.assign(
-    { echoCancellation: !AEC_OFF, noiseSuppression: !AEC_OFF, autoGainControl: !AEC_OFF },
+    { echoCancellation: !aecOff, noiseSuppression: !aecOff, autoGainControl: !aecOff },
     micId ? { deviceId: { exact: micId } } : {},
   );
   // Chrome (also on Android: a connected speaker / Bluetooth can be picked), Edge, Firefox 116+, Safari 18.4+
@@ -3016,6 +3019,12 @@
       $(id).addEventListener("focus", namesFirst); // iPhone: its own picker opens anyway; asked at once
     }
     $("camera").addEventListener("change", toggleCamera);
+    $("btSpeaker").checked = aecOff;
+    $("btSpeaker").addEventListener("change", async () => {
+      aecOff = $("btSpeaker").checked;
+      store.set("va-aec", aecOff ? "off" : "on");
+      if (mic) await swapMic(); // a call is on: the mic opens again with the new processing
+    });
     for (const b of $("cameraFacing").querySelectorAll("button")) {
       b.addEventListener("click", () => pickFacing(b.dataset.facing));
     }

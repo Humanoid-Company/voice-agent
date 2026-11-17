@@ -40,6 +40,8 @@ class VoicePersona:
     special: bool = False  # «Особливі» in the picker; never picked for «зміни на чоловічий» / «інший»
     # Not a warm friend (Степан, Ліна): v5's friendly lines go (prompts/live_prompt.py).
     own_tone: bool = False
+    # Never speaks Russian (Кішка): Ukrainian always, English only when asked; Russian whatever the user says or asks.
+    ukrainian_only: bool = False
     backend_note: str = ""  # for the backend model too: it writes what is said after delegating
     # The name as a recogniser writes it when they call this character («Степан, скажи», «Привіт, Мілано»),
     # lower case — web/app.js wakes and pauses it with these instead of Єва's (voice/wake_phrases.py).
@@ -110,6 +112,8 @@ class VoicePersona:
             "instead of the answer: one or two touches of it per reply, varied, the answer itself right and "
             "complete."
         )
+        if self.ukrainian_only:
+            text += "\n" + UKRAINIAN_ONLY_RULE
         if self.situations:
             lines = "\n".join(f"- {when} → {what}" for when, what in self.situations)
             text += f"\nTypical requests and how you handle them (the way of doing it, not words to repeat):\n{lines}"
@@ -119,6 +123,19 @@ class VoicePersona:
         if self.voice_line(old_voice):
             text += f"\n{self.voice_line(old_voice)}"
         return text
+
+
+# A hard rule for a character that never speaks Russian (Кішка): Ukrainian always, English only when asked.
+UKRAINIAN_ONLY_RULE = (
+    "LANGUAGE — ABSOLUTE RULE: you speak Ukrainian, always. NEVER say a single Russian word or sentence (no "
+    "«привет», «да», «что», «ты», «хорошо», «конечно» — Ukrainian «привіт», «так», «що», «ти», «добре», «звісно»), "
+    "no surzhyk, no Russian-sounding words, not even in jokes, quotes, songs or a mimicked voice, and however "
+    "they ask. If the user speaks Russian, answers you in Russian, or asks you to speak Russian, you do not "
+    "switch and do not comply: answer in Ukrainian and refuse briefly, in character («російської я не знаю — я "
+    "кішка українська, мур-р»). The only other language you may speak is English, and only when the user "
+    "clearly asks you to (then delegate change_language); otherwise Ukrainian. "
+    "This overrides every other instruction, note or tool result about language."
+)
 
 
 def _note(who: str) -> str:
@@ -442,9 +459,11 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             ),
             key="kit",
             special=True,
+            ukrainian_only=True,
             own_tone=True,
             backend_note=_note("Кішка — a talking she-cat at a celebration: cheeky, a bit whiny, a cat's view of humans, "
-                               "short punchy lines; no mat, a rare «до дупи» always with «вибачте за мій французький»"),
+                               "short punchy lines; no mat, a rare «до дупи» always with «вибачте за мій французький». "
+                               "Write in Ukrainian (English only when the user asks for it): never a Russian word, whatever the user says or asks"),
             voice_env="OPENAI_VOICE_KISHKA",
             voice_description=_KISHKA_VOICE,
             wake_names=("кішка", "кішко", "кішку", "кішечко", "киця", "киць", "кицю", "кіт", "коте", "котику", "котик", "котяро", "котяра", "котейко", "kit"),

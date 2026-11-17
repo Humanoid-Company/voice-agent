@@ -611,3 +611,28 @@ def test_three_toliks_safe_rough_and_unsafe(client):
     assert "You are Степан" in rough_cfg["instructions"] and "Your name is Степан" in rough_cfg["instructions"]
     assert "no swearing at all" in safe_cfg["delegation"]["responses"]["instructions"]
     assert "no swearing at all" not in rough_cfg["delegation"]["responses"]["instructions"]
+
+
+def test_kit_never_speaks_russian():
+    """Кішка speaks only Ukrainian: a hard rule in her prompt, and change_language is refused for her even when asked."""
+    from prompts.live_prompt import build_live_prompt
+    from voice.options import UKRAINIAN_ONLY_RULE, VOICE_PERSONAS
+
+    assert VOICE_PERSONAS["kit"].ukrainian_only
+    prompt = build_live_prompt(language_name="українською", assistant_name="Єва", today="2026-01-01", voice="kit",
+                               delivery="", variant="v5", old_voice=False)
+    assert UKRAINIAN_ONLY_RULE in prompt
+    assert UKRAINIAN_ONLY_RULE not in build_live_prompt(language_name="українською", assistant_name="Єва",
+                                                        today="2026-01-01", voice="willow", delivery="",
+                                                        variant="v5", old_voice=False)
+
+    user = web.users.get("kit-ukrainian-only-0123456")
+    user.voice = "kit"
+    said = lambda *u: ToolExecutionContext(session_id="s", user_utterances=list(u))  # noqa: E731
+    refused = asyncio.run(user.executor.execute("change_language", {"language": "ru"}, said("говори по-русски")))
+    assert not refused.ok and user.language == "uk" and "російською" in refused.message
+    user.language = "ru"  # a language left over from before: she still speaks Ukrainian
+    assert user.speech_language == "uk" and user.language_name == "українською"
+    user.language = "uk"
+    asked = asyncio.run(user.executor.execute("change_language", {"language": "en"}, said("давай англійською")))
+    assert asked.ok and user.speech_language == "en"  # English on request is fine

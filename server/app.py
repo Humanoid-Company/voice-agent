@@ -226,7 +226,7 @@ def _session_config(user: WebUser, *, concierge: bool = False) -> dict:
     """The assistant knows people the way an acquaintance does (knowledge_lookup, remember_person, no check-in);
     the concierge has its own protocol (_concierge_config) and never sees what Єва wrote down herself."""
     user.sync_character()  # a call always opens with the picked character's own memory
-    language = LANGUAGE_OPTIONS.get(user.language, LANGUAGE_OPTIONS["uk"])
+    language = user.language_name
     today = local_today()
     voice = _user_voice(user)
     if concierge:

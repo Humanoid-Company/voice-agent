@@ -134,8 +134,18 @@ class WebUser:
         self.scene.reset()
 
     @property
+    def ukrainian_only(self) -> bool:
+        persona = VOICE_PERSONAS.get(self.voice or DEFAULT_PERSONA)
+        return bool(persona and persona.ukrainian_only)
+
+    @property
+    def speech_language(self) -> str:
+        """The language she speaks: the picked one, but never Russian for a character that does not speak it."""
+        return "uk" if self.ukrainian_only and self.language == "ru" else self.language
+
+    @property
     def language_name(self) -> str:
-        return LANGUAGE_OPTIONS.get(self.language, LANGUAGE_OPTIONS["uk"])
+        return LANGUAGE_OPTIONS.get(self.speech_language, LANGUAGE_OPTIONS["uk"])
 
     def _describe_scene(self, jpeg: bytes, previous: str) -> str | None:
         return vision.scene(jpeg, previous, language=self.language_name)
@@ -333,6 +343,13 @@ def _build_executor(user: WebUser) -> ToolExecutor:
         language = str(args.get("language") or "").strip().lower()
         if language not in LANGUAGE_OPTIONS:
             return ToolResult(ok=False, status="needs_more_info", message="Доступні мови: uk, ru, en.")
+        if language == "ru" and user.ukrainian_only:
+            logger.info("web.language.tool_refused language=ru (the character never speaks Russian)")
+            return ToolResult(
+                ok=False, status="error",
+                message="Цей персонаж ніколи не говорить російською — не змінюй мову на російську, ні за яких умов: "
+                "відмов коротко, в образі, і говори далі українською.",
+            )
         if not asked_for_language(language, ctx.user_utterances):
             # They spoke Russian (or English) — not a request: it stuck for every next call.
             logger.info("web.language.tool_refused language=%s (user didn't ask for it)", language)

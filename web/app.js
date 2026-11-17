@@ -3019,6 +3019,31 @@
       $(id).addEventListener("focus", namesFirst); // iPhone: its own picker opens anyway; asked at once
     }
     $("camera").addEventListener("change", toggleCamera);
+    // «Закріпити сторінку»: the page stays where it is (no scroll either way), the buttons keep working.
+    // The body is pinned at the current offset (position: fixed; top: -y) — the reliable way on iOS and Android;
+    // touchmove is cancelled too, except inside the drawer and the conversation (they scroll on their own).
+    const lockBtn = $("lockView");
+    const stopTouchScroll = (e) => { if (!e.target.closest(".drawer, .log")) e.preventDefault(); };
+    const setViewLock = (on) => {
+      const root = document.documentElement;
+      if (on === root.classList.contains("view-locked")) return;
+      if (on) {
+        lockScroll = { x: window.scrollX, y: window.scrollY };
+        document.body.style.top = -lockScroll.y + "px";
+        document.body.style.left = -lockScroll.x + "px";
+        root.classList.add("view-locked");
+        document.addEventListener("touchmove", stopTouchScroll, { passive: false });
+      } else {
+        root.classList.remove("view-locked");
+        document.body.style.top = document.body.style.left = "";
+        document.removeEventListener("touchmove", stopTouchScroll);
+        window.scrollTo(lockScroll.x, lockScroll.y);
+      }
+      lockBtn.setAttribute("aria-pressed", String(on));
+      lockBtn.title = on ? "Сторінка закріплена — натисніть, щоб відкріпити" : "Закріпити сторінку: вона зупиниться на цьому місці й не рухатиметься, кнопки працюють";
+    };
+    let lockScroll = { x: 0, y: 0 };
+    lockBtn.addEventListener("click", () => setViewLock(lockBtn.getAttribute("aria-pressed") !== "true"));
     $("btSpeaker").checked = aecOff;
     $("btSpeaker").addEventListener("change", async () => {
       aecOff = $("btSpeaker").checked;

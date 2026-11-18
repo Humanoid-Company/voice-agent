@@ -383,7 +383,10 @@ html, body { max-width: 100%; overflow-x: hidden; overscroll-behavior: none; }
 
 /* ── «Закріпити сторінку»: the page stops where it is — no scroll in any direction — and the buttons keep working
    (a recording, a video of the screen). Set by app.js: the body is pinned at the current scroll position. ── */
-#lockView { position: relative; }
+/* Always on screen, top left, wherever the page is scrolled: the lock can be pressed at any place. */
+#lockView { position: fixed; z-index: 60; top: calc(10px + env(safe-area-inset-top)); left: calc(10px + env(safe-area-inset-left));
+  box-shadow: 0 2px 10px rgba(20, 22, 27, 0.18); }
+.topbar .brand { margin-left: 54px; }
 #lockView .lock-closed { display: none; }
 #lockView[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
 #lockView[aria-pressed="true"] .lock-closed { display: inline; }

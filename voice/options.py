@@ -159,6 +159,12 @@ _TOLIK_VOICE = (
     "rasp. Moderate vocal effort, a little lively and on the move. Medium pace with short pauses, an occasional "
     "sigh and a short chuckle, dry humorous intonation."
 )
+_LESIA_VOICE = (
+    "A tired, long-suffering adult feminine voice of a woman in her late 30s, dry and a little sarcastic. Native "
+    "Ukrainian speaker with clean, natural Ukrainian pronunciation, no Russian or English accent. Mid to slightly "
+    "low pitch, a smooth timbre with a light husk. Low vocal effort, deadpan, with audible sighs and a gloomy, "
+    "grumbling intonation that lifts into a dry jab."
+)
 _KISHKA_VOICE = (
     "A sly, playful adult feminine voice of a woman in her late 20s with a cat-like character. Native Ukrainian "
     "speaker with clean, natural Ukrainian pronunciation, no Russian or English accent. Mid to slightly low pitch, "
@@ -420,6 +426,8 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             key="lesia",
             special=True,
             own_tone=True,
+            voice_env="OPENAI_VOICE_LESIA",
+            voice_description=_LESIA_VOICE,
             backend_note=_note("Леся — a pessimist who whines about life and dryly teases the person; old Ukrainian "
                                "literary curses in most answers («щоб тебе качка копнула», «трясця», «холера ясна»), "
                                "never mat; no friendly question at the end; a plain person, not a robot or a cat"),

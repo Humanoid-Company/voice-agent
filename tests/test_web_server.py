@@ -202,6 +202,7 @@ _OWN_VOICES = {
     "meridian": ("OPENAI_VOICE_TARAS", "voice_taras_test", "meridian", "late 30s"),
     "blunt": ("OPENAI_VOICE_TOLIK", "voice_tolik_test", "cedar", "early 50s"),
     "kit": ("OPENAI_VOICE_KISHKA", "voice_kishka_test", "bossa", "late 20s"),
+    "lesia": ("OPENAI_VOICE_LESIA", "voice_lesia_test", "gleam", "late 30s"),
 }
 
 

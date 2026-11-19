@@ -34,7 +34,7 @@ def _temporary_stores(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_own_voices(monkeypatch):
     """The preset voices by default, whatever the real .env holds; a test sets OPENAI_VOICE_* to try an own voice."""
-    for name in ("OPENAI_VOICE_TARAS", "OPENAI_VOICE_TOLIK", "OPENAI_VOICE_TOLIK_RAW", "OPENAI_VOICE_KISHKA"):
+    for name in ("OPENAI_VOICE_TARAS", "OPENAI_VOICE_TOLIK", "OPENAI_VOICE_TOLIK_RAW", "OPENAI_VOICE_KISHKA", "OPENAI_VOICE_LESIA"):
         monkeypatch.delenv(name, raising=False)
 
 

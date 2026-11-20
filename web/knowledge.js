@@ -13,7 +13,7 @@
   let draft = null; // { items, file } — the parsed file before it is saved
   // The characters of the main page's picker (web/app.js CHARACTERS): a set can be made for one of them. The three
   // Степани are one character (the group), so one entry.
-  const PICKER = ["meridian", "blunt", "blunt_rough", "blunt_unsafe", "lesia", "kit"];
+  const PICKER = ["meridian", "blunt", "blunt_rough", "blunt_unsafe", "blunt_lovelace", "lesia", "kit"];
   let characters = []; // [{ id: group, label }]
   const characterName = (id) => (characters.find((c) => c.id === id) || { label: id }).label;
   async function loadCharacters() {

@@ -181,7 +181,7 @@ def test_keeps_itself_awake_only_when_deployed(monkeypatch):
 def test_voice_picker_lists_live_voices_and_saves_choice(client):
     data = client.get("/api/voices").json()
     ids = [v["id"] for v in data["voices"]]
-    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "blunt", "blunt_rough", "blunt_unsafe", "lesia", "kit"} == set(ids)
+    assert {"willow", "bossa", "marin", "lina", "meridian", "ripple", "blunt", "blunt_rough", "blunt_unsafe", "blunt_lovelace", "lesia", "kit"} == set(ids)
     assert data["default"] == "willow"  # Єва; OPENAI_LIVE_VOICE=gleam is no character any more
     assert any(v["feminine"] for v in data["voices"]) and not all(v["feminine"] for v in data["voices"])
     assert all(v["label"] and v["description"] for v in data["voices"])
@@ -637,3 +637,20 @@ def test_kit_never_speaks_russian():
     user.language = "uk"
     asked = asyncio.run(user.executor.execute("change_language", {"language": "en"}, said("давай англійською")))
     assert asked.ok and user.speech_language == "en"  # English on request is fine
+
+
+def test_lovelace_stepan_is_a_charming_person_in_the_stepan_group():
+    """Степан-ловелас: a fourth Степан (same tab and memory), a gallant flirt with hard limits — not the grumpy
+    «humanoid, never an assistant» one, and the warm rules stay."""
+    from prompts.live_prompt import build_live_prompt
+    from voice.options import VOICE_PERSONAS
+
+    persona = VOICE_PERSONAS["blunt_lovelace"]
+    assert persona.group == "blunt" and persona.label == "Степан" and not persona.is_humanoid and persona.charmer
+    prompt = build_live_prompt(language_name="українською", assistant_name="Єва", today="2026-01-01",
+                               voice="blunt_lovelace", delivery="", variant="v5", old_voice=False)
+    assert "gallant admirer" in prompt and "If you are talking to a minor" in prompt
+    assert "never ask for a phone number" in prompt and "never arrange real dates" in prompt
+    assert "you are a humanoid" not in prompt and "a living person" in prompt
+    assert "never compare girls with each other" in prompt
+    assert "never arranges real dates" in persona.backend_note

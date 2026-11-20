@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from voice import blunt_prompt, blunt_rough_prompt, blunt_unsafe_prompt
+from voice import blunt_prompt, blunt_rough_prompt, blunt_unsafe_prompt, lovelace_prompt
 from voice.wake_phrases import NAME_FORMS as EVA_NAME_FORMS
 
 # The legacy Realtime engine only accepts these ten preset voice IDs. Exposed to the model as
@@ -42,6 +42,8 @@ class VoicePersona:
     own_tone: bool = False
     # Never speaks Russian (Кішка): Ukrainian always, English only when asked; Russian whatever the user says or asks.
     ukrainian_only: bool = False
+    # A man-charmer inside the Степан tab: a person (not «a humanoid, never an assistant»), warm (friendly rules stay).
+    charmer: bool = False
     backend_note: str = ""  # for the backend model too: it writes what is said after delegating
     # The name as a recogniser writes it when they call this character («Степан, скажи», «Привіт, Мілано»),
     # lower case — web/app.js wakes and pauses it with these instead of Єва's (voice/wake_phrases.py).
@@ -81,7 +83,7 @@ class VoicePersona:
     @property
     def is_humanoid(self) -> bool:
         """Степан (all three variants) thinks he is a humanoid — not a voice assistant, not a cat."""
-        return self.group == "blunt"
+        return self.group == "blunt" and not self.charmer
 
     def voice_line(self, old_voice: bool = False) -> str:
         """«Voice: …» for the instructions; empty unless the own voice speaks (the preset sounds as it does)."""
@@ -164,6 +166,12 @@ _LESIA_VOICE = (
     "Ukrainian speaker with clean, natural Ukrainian pronunciation, no Russian or English accent. Mid to slightly "
     "low pitch, a smooth timbre with a light husk. Low vocal effort, deadpan, with audible sighs and a gloomy, "
     "grumbling intonation that lifts into a dry jab."
+)
+_LOVELACE_VOICE = (
+    "A warm, charming, confident adult masculine voice of a man in his early 30s. Native Ukrainian speaker with "
+    "clean, natural Ukrainian pronunciation, no Russian or English accent. Mid to low baritone pitch, smooth and "
+    "velvety, with a smile in the voice. Relaxed vocal effort, playful, theatrical pauses and a self-ironic "
+    "chuckle, light and quick intonation."
 )
 _KISHKA_VOICE = (
     "A sly, playful adult feminine voice of a woman in her late 20s with a cat-like character. Native Ukrainian "
@@ -388,6 +396,23 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
             wake_names=("степан", "степане", "степа", "степку", "степані", "stepan", "толік", "толіку"),
             group="blunt",
             variant_label="Небезпечний Степан",
+        ),
+        VoicePersona(
+            "cedar", "Степан",
+            "Степан-ловелас: галантний залицяльник старої школи — компліменти, жарти, легке загравання, "
+            "завжди з повагою; відступає при першому «ні»; з неповнолітніми без загравань. Без лайки.",
+            False,
+            lovelace_prompt.character(),  # the whole prompt is in voice/lovelace_prompt.py — edit it there
+            lovelace_prompt.SAMPLES,
+            key="blunt_lovelace",
+            special=True,
+            charmer=True,
+            backend_note=lovelace_prompt.backend_note(),
+            voice_env="OPENAI_VOICE_LOVELACE",
+            voice_description=_LOVELACE_VOICE,
+            wake_names=("степан", "степане", "степа", "степку", "степані", "stepan", "ловелас", "ловеласе"),
+            group="blunt",
+            variant_label="Степан-ловелас",
         ),
         VoicePersona(
             "gleam", "Леся",

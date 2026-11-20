@@ -1639,7 +1639,7 @@
     });
   }
 
-  const CHARACTERS = ["meridian", "blunt", "blunt_rough", "blunt_unsafe", "lesia", "kit"]; // Тарас, Степан (безпечний, звичайний, небезпечний), Леся, Кішка
+  const CHARACTERS = ["meridian", "blunt", "blunt_rough", "blunt_unsafe", "blunt_lovelace", "lesia", "kit"]; // Тарас, Степан (безпечний, звичайний, небезпечний, ловелас), Леся, Кішка
 
   async function loadVoices() {
     try {

@@ -1483,7 +1483,7 @@
     updateButtons();
   }
 
-  // Flic 2 button: the Flic app on the phone calls /api/flic/toggle|mute|unmute?key=…, the server
+  // Flic 2 button: the Flic app on the phone calls /api/flic/toggle|mute|unmute|pause?key=…, the server
   // passes it here over SSE. The key comes once in the link (?flic=KEY) and stays in this browser —
   // the repo is public, so it is never in config.js. Only during a call, like the «Вимкнути мікрофон» button.
   let flicSource = null;
@@ -1501,6 +1501,11 @@
       flicSource = new EventSource(BACKEND + "/api/flic/events?key=" + encodeURIComponent(key));
       flicSource.onmessage = ({ data }) => {
         if (eva.mode === "off") return;
+        if (data === "pause") { // Hold: pause like «Пауза», a second hold resumes like «Продовжити»
+          if (eva.mode === "active") pauseEva();
+          else if (eva.mode === "waiting") wakeEva("");
+          return;
+        }
         const muted = data === "toggle" ? !micMuted : data === "mute";
         if (muted !== micMuted) setMicMuted(muted);
       };

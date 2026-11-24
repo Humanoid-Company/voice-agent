@@ -716,9 +716,9 @@ def diag_get(n: int = 50) -> list[dict]:
 
 
 # ── Flic 2 button → mic on/off. The Flic app on the phone (Click → Internet Request) calls
-# GET or POST /api/flic/toggle|mute|unmute?key=FLIC_TOKEN; every page listening on /api/flic/events
+# GET or POST /api/flic/toggle|mute|unmute|pause?key=FLIC_TOKEN (pause: hold → pause / resume); every page listening on /api/flic/events
 # with the same key gets the action over SSE and mutes its own mic (setMicMuted in web/app.js).
-FLIC_ACTIONS = ("toggle", "mute", "unmute")
+FLIC_ACTIONS = ("toggle", "mute", "unmute", "pause")
 FLIC_PING_S = 20.0  # keeps the SSE stream (and Render's proxy) from timing out between presses
 _flic_listeners: set[asyncio.Queue] = set()
 

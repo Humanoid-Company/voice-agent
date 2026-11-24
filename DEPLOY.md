@@ -105,7 +105,8 @@ python -m http.server 5173 -d web   # і відкрити http://localhost:5173/
    Ключ збережеться в цьому браузері й зникне з адресного рядка.
 3. Додаток **Flic** → підключи кнопку (затисни її ~7 с) → **Click → Internet Request**:
    метод `POST` (або `GET`), URL `https://voice-agent-f3m4.onrender.com/api/flic/toggle?key=<FLIC_TOKEN>`.
-   За бажанням: Hold → `/api/flic/mute`, Double click → `/api/flic/unmute`.
+   **Hold** → той самий URL, але `/api/flic/pause` — пауза («Пауза»), ще одне затискання — «Продовжити».
+   За бажанням: Double click → `/api/flic/mute` або `/api/flic/unmute`.
 4. Під час дзвінка натискання вимикає/вмикає мікрофон так само, як кнопка «Вимкнути мікрофон».
    Поза дзвінком натискання ігнорується.
 

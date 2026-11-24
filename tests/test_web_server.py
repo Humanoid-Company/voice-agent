@@ -669,8 +669,9 @@ def test_flic_press_needs_the_key_and_a_known_action(client, monkeypatch):
     assert client.get("/api/flic/events?key=wrong").status_code == 403
     assert client.post("/api/flic/explode?key=flic-secret").status_code == 400
     for method in (client.get, client.post):  # the Flic app's Internet Request can be either
-        res = method("/api/flic/mute?key=flic-secret")
-        assert res.status_code == 200 and res.json()["action"] == "mute"
+        for action in ("mute", "pause"):
+            res = method(f"/api/flic/{action}?key=flic-secret")
+            assert res.status_code == 200 and res.json()["action"] == action
 
 
 def test_flic_press_reaches_every_listening_page(client, monkeypatch):

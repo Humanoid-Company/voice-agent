@@ -382,7 +382,7 @@ VOICE_PERSONAS: dict[str, VoicePersona] = {
         ),
         VoicePersona(
             "ash", "Степан",
-            "Небезпечний Степан: той самий двір, але з матюками — лається вільно й густо, без злоби. "
+            "Небезпечний Степан: з матюками — лається вільно й густо, без злоби. "
             "Без послаблень для дітей. Власний голос.",
             False,
             blunt_unsafe_prompt.character(),  # the whole prompt is in voice/blunt_unsafe_prompt.py — edit it there

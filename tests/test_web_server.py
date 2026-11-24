@@ -654,3 +654,28 @@ def test_lovelace_stepan_is_a_charming_person_in_the_stepan_group():
     assert "you are a humanoid" not in prompt and "a living person" in prompt
     assert "never compare girls with each other" in prompt
     assert "never arranges real dates" in persona.backend_note
+
+
+def test_flic_is_off_without_a_token(client, monkeypatch):
+    monkeypatch.setattr(web, "FLIC_TOKEN", "")
+    assert client.post("/api/flic/toggle?key=x").status_code == 404
+    assert client.get("/api/flic/events?key=x").status_code == 404
+
+
+def test_flic_press_needs_the_key_and_a_known_action(client, monkeypatch):
+    monkeypatch.setattr(web, "FLIC_TOKEN", "flic-secret")
+    assert client.post("/api/flic/toggle").status_code == 403
+    assert client.post("/api/flic/toggle?key=wrong").status_code == 403
+    assert client.get("/api/flic/events?key=wrong").status_code == 403
+    assert client.post("/api/flic/explode?key=flic-secret").status_code == 400
+    for method in (client.get, client.post):  # the Flic app's Internet Request can be either
+        res = method("/api/flic/mute?key=flic-secret")
+        assert res.status_code == 200 and res.json()["action"] == "mute"
+
+
+def test_flic_press_reaches_every_listening_page(client, monkeypatch):
+    monkeypatch.setattr(web, "FLIC_TOKEN", "flic-secret")
+    pages = [asyncio.Queue(maxsize=16), asyncio.Queue(maxsize=16)]
+    monkeypatch.setattr(web, "_flic_listeners", set(pages))
+    assert client.post("/api/flic/toggle?key=flic-secret").json()["pages"] == 2
+    assert [q.get_nowait() for q in pages] == ["toggle", "toggle"]

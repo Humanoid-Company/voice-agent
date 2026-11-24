@@ -1483,6 +1483,33 @@
     updateButtons();
   }
 
+  // Flic 2 button: the Flic app on the phone calls /api/flic/toggle|mute|unmute?key=…, the server
+  // passes it here over SSE. The key comes once in the link (?flic=KEY) and stays in this browser —
+  // the repo is public, so it is never in config.js. Only during a call, like the «Вимкнути мікрофон» button.
+  let flicSource = null;
+  function initFlic() {
+    const fromLink = params.get("flic");
+    if (fromLink) {
+      store.set("va-flic-key", fromLink);
+      params.delete("flic"); // out of the address bar: a shared link doesn't carry the key
+      history.replaceState(null, "", location.pathname + (params.toString() ? "?" + params : "") + location.hash);
+    }
+    const key = fromLink || store.get("va-flic-key");
+    if (!key || !BACKEND || !window.EventSource) return;
+    const connect = () => {
+      if (flicSource && flicSource.readyState !== EventSource.CLOSED) return;
+      flicSource = new EventSource(BACKEND + "/api/flic/events?key=" + encodeURIComponent(key));
+      flicSource.onmessage = ({ data }) => {
+        if (eva.mode === "off") return;
+        const muted = data === "toggle" ? !micMuted : data === "mute";
+        if (muted !== micMuted) setMicMuted(muted);
+      };
+    };
+    connect();
+    // A phone that slept closes the stream for good; back on screen it opens again.
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) connect(); });
+  }
+
   function stopPhraseListener() {
     const rec = eva.recognizer;
     eva.recognizer = null;
@@ -2966,6 +2993,7 @@
     });
     $("pause").addEventListener("click", pauseEva);
     $("micMute").addEventListener("click", () => setMicMuted(!micMuted));
+    initFlic();
     $("resume").addEventListener("click", () => { wakeEva(""); primeAudio(); }); // a closed call reopens here
     $("bgListen").addEventListener("change", toggleBgListen);
     showBgListen();

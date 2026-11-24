@@ -26,6 +26,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -77,6 +78,8 @@ FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS",
 SERVER_STARTED_AT = time.time()
 # The hidden /logs page reads whole conversations: only with this token (unset = logs can't be read).
 LOGS_TOKEN = os.getenv("LOGS_TOKEN", "").strip()
+# Flic 2 button: the Flic app sends /api/flic/<action>?key=… and the open pages mute the mic. Unset = off.
+FLIC_TOKEN = os.getenv("FLIC_TOKEN", "").strip()
 # Cap on one Live session (cost guard: a tab left open in a noisy room kept a call going). 10 min, not 30: a
 # real talk goes on — the page opens a new session with the whole conversation (/api/me «expired»).
 MAX_SESSION_S = float(os.getenv("MAX_SESSION_MINUTES", "10")) * 60
@@ -710,6 +713,64 @@ async def diag_post(
 @app.get("/api/diag")
 def diag_get(n: int = 50) -> list[dict]:
     return list(_diag)[-max(1, min(n, 200)):]
+
+
+# ── Flic 2 button → mic on/off. The Flic app on the phone (Click → Internet Request) calls
+# GET or POST /api/flic/toggle|mute|unmute?key=FLIC_TOKEN; every page listening on /api/flic/events
+# with the same key gets the action over SSE and mutes its own mic (setMicMuted in web/app.js).
+FLIC_ACTIONS = ("toggle", "mute", "unmute")
+FLIC_PING_S = 20.0  # keeps the SSE stream (and Render's proxy) from timing out between presses
+_flic_listeners: set[asyncio.Queue] = set()
+
+
+def _flic_auth(key: str | None) -> None:
+    if not FLIC_TOKEN:
+        raise HTTPException(status_code=404, detail="flic_disabled")
+    if not hmac.compare_digest((key or "").encode(), FLIC_TOKEN.encode()):
+        raise HTTPException(status_code=403, detail="bad_flic_key")
+
+
+def flic_broadcast(action: str) -> int:
+    """The action to every listening page; how many got it."""
+    for q in list(_flic_listeners):
+        try:
+            q.put_nowait(action)
+        except asyncio.QueueFull:  # a stuck page: it misses this press, the others don't wait
+            pass
+    return len(_flic_listeners)
+
+
+@app.get("/api/flic/events")
+async def flic_events(key: str | None = None) -> StreamingResponse:
+    _flic_auth(key)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    _flic_listeners.add(queue)
+
+    async def stream():
+        try:
+            yield ": connected\n\n"
+            while True:
+                try:
+                    action = await asyncio.wait_for(queue.get(), FLIC_PING_S)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                yield f"data: {action}\n\n"
+        finally:
+            _flic_listeners.discard(queue)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.api_route("/api/flic/{action}", methods=["GET", "POST"])
+async def flic_press(action: str, key: str | None = None) -> dict:
+    _flic_auth(key)
+    if action not in FLIC_ACTIONS:
+        raise HTTPException(status_code=400, detail="bad_flic_action")
+    pages = flic_broadcast(action)
+    logger.info("web.flic action=%s pages=%d", action, pages)
+    return {"ok": True, "action": action, "pages": pages}
 
 
 def _logs_auth(token: str | None) -> None:

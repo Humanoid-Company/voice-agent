@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>R1 — руки</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#262a33; --text:#e9ecf1; --muted:#8a93a3; --acc:#4f8cff; --warn:#e0a03a; --bad:#e5484d; --ok:#3ccf7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system,system-ui,sans-serif; padding:max(12px,env(safe-area-inset-top)) 12px 24px; }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  h1 { font-size:20px; margin:0; }
+  .status { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  .seg { display:flex; background:var(--bg); border-radius:10px; padding:3px; }
+  .seg button { flex:1; border:0; background:none; color:var(--muted); padding:10px 0; border-radius:8px; font-size:15px; }
+  .seg button.on { background:var(--acc); color:#fff; }
+  .joint { display:grid; grid-template-columns:118px 1fr 42px; align-items:center; gap:10px; padding:9px 0; }
+  .joint + .joint { border-top:1px solid var(--line); }
+  .joint label { font-size:15px; }
+  .joint output { text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; font-size:14px; }
+  input[type=range] { width:100%; height:34px; accent-color:var(--acc); }
+  .hint { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin:-2px 0 6px 128px; padding-right:52px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .grid button { border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:10px; padding:12px 4px; font-size:14px; }
+  .grid button:active { background:var(--acc); }
+  .row { display:flex; gap:10px; align-items:center; }
+  .row label { white-space:nowrap; font-size:15px; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 10px; font-weight:600; }
+  .err { color:var(--warn); font-size:13px; margin-top:8px; min-height:1em; }
+  .big { width:100%; border:0; border-radius:12px; padding:14px; font-size:16px; font-weight:600; background:#2a2f3a; color:var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>R1 · руки</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="stat">з'єднання…</span></div>
+</header>
+
+<div class="card">
+  <div class="seg" id="side">
+    <button data-side="left">Ліва</button>
+    <button data-side="both" class="on">Обидві</button>
+    <button data-side="right">Права</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Пальці</h2>
+  <div class="hint"><span>розкрито</span><span>зігнуто</span></div>
+  <div id="joints"></div>
+  <div class="err" id="err"></div>
+</div>
+
+<div class="card">
+  <h2>Жести</h2>
+  <div class="grid" id="gestures"></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <label for="speed">Швидкість</label>
+    <input type="range" id="speed" min="0.1" max="1" step="0.05" value="0.6">
+    <output id="speedv">0.60</output>
+  </div>
+</div>
+
+<button class="big" id="openAll">Розкрити обидві руки</button>
+
+<script>
+const JOINTS = ["Великий", "Великий (поворот)", "Вказівний", "Середній", "Безіменний", "Мізинець"];
+const GESTURES = [
+  ["open","Розкрити"], ["fist","Кулак"], ["grip","Напівзахват"],
+  ["point","Вказати"], ["peace","Два пальці"], ["thumbs_up","Клас"],
+  ["three","Три"], ["four","Чотири"], ["rock","Рок"], ["pinch","Щипок"],
+];
+let side = "both";
+let pose = { left:[0,0,0,0,0,0], right:[0,0,0,0,0,0] };
+const $ = id => document.getElementById(id);
+
+// sliders
+const sliders = JOINTS.map((name, i) => {
+  const row = document.createElement("div");
+  row.className = "joint";
+  row.innerHTML = `<label>${name}</label><input type="range" min="0" max="1" step="0.01" value="0"><output>0.00</output>`;
+  $("joints").appendChild(row);
+  const input = row.querySelector("input"), out = row.querySelector("output");
+  input.addEventListener("input", () => { out.textContent = (+input.value).toFixed(2); queueSend(); });
+  return { input, out };
+});
+
+function showPose(q) {
+  q.forEach((v, i) => { sliders[i].input.value = v; sliders[i].out.textContent = (+v).toFixed(2); });
+}
+function currentQ() { return sliders.map(s => +s.input.value); }
+
+// side switch
+$("side").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  side = b.dataset.side;
+  [...$("side").children].forEach(x => x.classList.toggle("on", x === b));
+  showPose(pose[side === "both" ? "left" : side]);
+});
+
+// speed
+$("speed").addEventListener("input", () => { $("speedv").textContent = (+$("speed").value).toFixed(2); });
+
+// sending: at most one request every 70 ms, the latest value always goes out
+let pending = false, inflight = false, timer = null;
+function queueSend() { pending = true; if (!timer) timer = setTimeout(flush, 0); }
+async function flush() {
+  timer = null;
+  if (!pending) return;
+  if (inflight) { timer = setTimeout(flush, 30); return; }
+  pending = false; inflight = true;
+  await post({ side, q: currentQ(), speed: +$("speed").value });
+  inflight = false;
+  timer = setTimeout(flush, 70);
+}
+
+async function post(body) {
+  try {
+    const r = await fetch("/api/hand", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (data.pose) pose = data.pose;
+    setStatus(data, r.ok ? "" : (data.error || "помилка " + r.status));
+    return data;
+  } catch (e) { setStatus(null, "немає зв'язку з роботом"); }
+}
+
+function setStatus(data, err) {
+  const ok = data && data.stream;
+  $("dot").className = "dot " + (ok ? "ok" : "bad");
+  $("stat").textContent = ok ? "підключено" : "немає зв'язку";
+  $("err").textContent = err || (data && data.error) || "";
+}
+
+// gestures
+GESTURES.forEach(([id, label]) => {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.onclick = async () => {
+    const data = await post({ side, gesture: id, speed: +$("speed").value });
+    if (data && data.pose) showPose(data.pose[side === "both" ? "left" : side]);
+  };
+  $("gestures").appendChild(b);
+});
+
+$("openAll").onclick = async () => {
+  const data = await post({ side: "both", gesture: "open", speed: +$("speed").value });
+  if (data && data.pose) showPose(data.pose[side === "both" ? "left" : side]);
+};
+
+// initial state + periodic status
+async function refresh() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    const data = await r.json();
+    setStatus(data, "");
+    return data;
+  } catch (e) { setStatus(null, "немає зв'язку з роботом"); }
+}
+refresh().then(d => { if (d) { pose = d.pose; showPose(pose.left); $("speed").value = d.speed; $("speedv").textContent = (+d.speed).toFixed(2); } });
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
